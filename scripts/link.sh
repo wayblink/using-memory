@@ -10,6 +10,11 @@ link_host() {
  local dest="$2"
  echo "Linking $name: $HERE -> $dest"
  mkdir -p "$(dirname "$dest")"
+ if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+  echo "refusing to replace existing directory: $dest" >&2
+  echo "Remove it manually or run scripts/install.sh for a copied install." >&2
+  exit 2
+ fi
  ln -sfn "$HERE" "$dest"
 }
 

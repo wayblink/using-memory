@@ -17,7 +17,7 @@ memory-repo/
 |   +-- project-alpha.md
 |   +-- writing-rules.md
 +-- daily/
-|   +-- 2026-05-06.md
+|   +-- 2026-05-06.jsonl
 +-- local/
     +-- MACHINE.md
     +-- ENV.md
@@ -52,7 +52,7 @@ Writes are routed by information type:
 - User preferences, durable constraints, and working style go to `PREFERENCES.md`.
 - Stable facts, confirmed decisions, and long-term lessons go to `MEMORY.md`.
 - Wiki, SOP, todo, plan, and project notes go to `docs/*.md`, with `docs/index.json` updated at the same time.
-- Same-day process notes, temporary context, and unconfirmed information usually go to `daily/YYYY-MM-DD.md` or explicit local records.
+- Same-day process notes, temporary context, and unconfirmed information usually go to `daily/YYYY-MM-DD.jsonl` or explicit local records.
 
 Open issues, temporary assumptions, and unconfirmed plans are not written directly to `MEMORY.md` by default.
 
@@ -71,6 +71,8 @@ You can target a single host, or install by copying:
 ./scripts/link.sh claude-code
 ./scripts/install.sh both
 ```
+
+`link.sh` refuses to replace an existing real directory; remove the old directory manually or use `install.sh` for a copied install. `install.sh` refuses to overwrite an existing destination unless `USING_MEMORY_INSTALL_FORCE=1` is set, and copied installs exclude development-only files such as `.git` and `tests/`.
 
 After installation, the skill usually lives at:
 
@@ -96,10 +98,10 @@ Minimal config:
 version: 1
 memory_roots:
   - path: /absolute/path/to/memory-repo
-  - role: primary
-  - writable: true
-  - machine_id: local-main
-  - priority: 100
+    role: primary
+    writable: true
+    machine_id: local-main
+    priority: 100
 
 defaults:
   read_today: true
@@ -119,7 +121,11 @@ python3 scripts/memory_tool.py --help
 
 Current commands:
 
-- `load`: load memory according to the skill rules.
+- `load`: load memory according to the skill rules. `--daily-query` filters parsed daily entries by their `text` field.
+- `search`: full-text search across docs, durable memory, and primary daily JSONL.
+- `maintain`: check daily JSONL health and repair missing `docs/index.json` entries for manually added docs.
+- `stats`: summarize primary daily JSONL and `MEMORY.md` tag counts.
+- `export`: export a Markdown memory summary.
 - `write-daily`: append one daily entry in the primary repo.
 - `write-memory`: append curated long-term memory to `MEMORY.md`.
 - `write-preference`: append a durable preference to `PREFERENCES.md`.
@@ -192,7 +198,7 @@ python3 scripts/memory_tool.py write-daily \
   --source user
 ```
 
-Full-text search:
+Full-text search. Search returns a `scope` object: docs and memory search cover primary plus reference roots, while daily search covers the primary root only.
 
 ```bash
 python3 scripts/memory_tool.py search "deploy"
@@ -200,13 +206,15 @@ python3 scripts/memory_tool.py search "bug" --daily-days 7
 python3 scripts/memory_tool.py search "deploy" --no-docs --json
 ```
 
-Check for stale file references in daily JSONL:
+Run maintenance checks and repair missing docs index entries:
 
 ```bash
-python3 scripts/memory_tool.py prune --config ~/.skills/using-memory/config.yaml
+python3 scripts/memory_tool.py maintain --config ~/.skills/using-memory/config.yaml
 ```
 
-Memory stats:
+When `maintain` indexes manually added docs, it creates minimal metadata only: `title` from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Use `upsert-doc` when you need precise document type, project, tag, or summary metadata.
+
+Memory stats. Stats return a `scope` object and currently count the primary root only:
 
 ```bash
 python3 scripts/memory_tool.py stats

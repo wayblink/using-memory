@@ -14,6 +14,8 @@ Work from `personal-skills/using-memory/` so every edit touches the same skill t
 - Codex destination: `${CODEX_HOME:-~/.codex}/skills/using-memory`; default path is `~/.codex/skills/using-memory`.
 - Claude Code destination: `${CLAUDE_HOME:-~/.claude}/skills/using-memory`; default path is `~/.claude/skills/using-memory`.
 - The helper scripts install the skill files only; they do not read or create the memory config.
+- `scripts/link.sh` refuses to replace an existing real directory. Remove the directory manually or use a copied install when the destination is not already a symlink.
+- `scripts/install.sh` refuses to overwrite an existing destination unless `USING_MEMORY_INSTALL_FORCE=1` is set. Copied installs exclude development-only files such as `.git`, `tests`, Python bytecode, and editor swap files.
 
 ## Host startup wiring
 

@@ -41,7 +41,7 @@ description: Use when starting any conversation, before responding to tasks, to 
 
 ## Daily JSONL Format
 
-Each `daily/YYYY-MM-DD.jsonl` file is a newline-delimited JSON array with one entry per line:
+Each `daily/YYYY-MM-DD.jsonl` file is newline-delimited JSON with one object per line:
 
 ```json
 {"ts":"2026-05-06T10:30:00Z","date":"2026-05-06","tag":"lesson","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"]}
@@ -64,9 +64,9 @@ Use `scripts/memory_tool.py` when the host can run local scripts.
 ### Read
 
 - `load`: read memory snapshot. Key selectors: `--config`, `--date`, `--json`, `--daily-from` + `--daily-to`, `--daily-days`, `--daily-query`, `--doc` / `--doc-type` / `--doc-tag` / `--project` / `--doc-query`. Returns `daily_entries` as a parsed JSON list from the primary repo's `daily/*.jsonl`.
-- `search <query>`: full-text search across `docs/*.md`, `MEMORY.md`, and `daily/*.jsonl`. Flags: `--config`, `--daily-days N`, `--no-docs`, `--no-memory`, `--no-daily`, `--json`.
-- `prune`: scan `daily/*.jsonl` for stale `files` references and corrupt JSON lines. Flags: `--config`, `--json`.
-- `stats`: aggregate tag and confidence counts across `daily/*.jsonl` and `MEMORY.md`. Flags: `--config`, `--json`.
+- `search <query>`: full-text search across `docs/*.md`, `MEMORY.md`, and `daily/*.jsonl`. Docs and memory cover primary plus reference roots; daily covers the primary root only. Flags: `--config`, `--daily-days N`, `--no-docs`, `--no-memory`, `--no-daily`, `--json`.
+- `maintain`: scan `daily/*.jsonl` for stale `files` references and corrupt JSON lines, and add missing `docs/index.json` entries for manually added `docs/*.md` files in the writable primary repo. Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
+- `stats`: aggregate tag counts across primary-root `daily/*.jsonl` and `MEMORY.md`. Flags: `--config`, `--json`.
 - `export`: format a Markdown summary; stdout by default or `--dest FILE` to append. Flags: `--config`, `--dest`, `--json`.
 
 ### Write
@@ -106,7 +106,7 @@ Never write:
 
 ## Maintenance Rules
 
-- `prune`: scan `daily/*.jsonl` for stale `files` references and corrupt JSON lines. Report found issues; do not fix automatically.
+- `maintain`: scan `daily/*.jsonl` for stale `files` references and corrupt JSON lines, then repair missing `docs/index.json` entries for manually added primary-root `docs/*.md` files.
 - `search` / `stats` / `export` are available at any time for quick overview without modifying anything.
 - Distill useful patterns from daily notes into curated long-term files during light maintenance moments.
 - Keep wording agent-agnostic so this skill can be used by both Codex and Claude Code without edits.

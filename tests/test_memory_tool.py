@@ -254,7 +254,8 @@ defaults:
             base = Path(tmp)
             primary = self.make_repo(base, "primary", machine_id="primary")
             (primary / "daily" / "2026-05-04.jsonl").write_text(
-                '{"ts":"2026-05-04T00:00:00Z","date":"2026-05-04","tag":"fact","source":"user","text":"roadmap match primary","confidence":5,"files":[]}\n',
+                '{"ts":"2026-05-04T00:00:00Z","date":"2026-05-04","tag":"fact","source":"user","text":"roadmap match primary","confidence":5,"files":[]}\n'
+                '{"ts":"2026-05-04T00:00:00Z","date":"2026-05-04","tag":"fact","source":"roadmap-source","text":"same file but text does not match","confidence":5,"files":[]}\n',
                 encoding="utf-8",
             )
             (primary / "daily" / "2026-05-03.jsonl").write_text(
@@ -282,11 +283,13 @@ defaults:
                 [path for path in loaded if path.parent.name == "daily"],
                 [primary / "daily" / "2026-05-04.jsonl"],
             )
+            self.assertEqual([entry["text"] for entry in result["daily_entries"]], ["roadmap match primary"])
             serialized = json.dumps(result, ensure_ascii=False)
             self.assertIn("roadmap match primary", serialized)
             self.assertNotIn("today primary", serialized)
             self.assertNotIn("yesterday primary", serialized)
             self.assertNotIn("roadmap outside window", serialized)
+            self.assertNotIn("same file but text does not match", serialized)
 
     def test_load_rejects_invalid_daily_range(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -677,6 +680,83 @@ memory_roots:
             self.assertEqual(entry["projects"], ["using-memory"])
             self.assertEqual(entry["tags"], ["roadmap"])
 
+    def test_write_daily_uses_warning_free_utc_timestamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(TOOL),
+                    "write-daily",
+                    "--config", str(config),
+                    "--date", "2026-05-06",
+                    "--tag", "fact",
+                    "--text", "warning-free timestamp",
+                    "--json",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stderr, "")
+            result = json.loads(proc.stdout)
+            self.assertEqual(result["changed"], True)
+            lines = (primary / "daily" / "2026-05-06.jsonl").read_text(encoding="utf-8").splitlines()
+            record = json.loads(lines[-1])
+            self.assertTrue(record["ts"].endswith("Z"))
+
+    def test_upsert_doc_invalid_metadata_does_not_write_orphan_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            proc = self.run_tool(
+                "upsert-doc",
+                "--config", str(config),
+                "--doc", "plans/bad-title",
+                "--title", "",
+                "--doc-type", "plan",
+                "--modified", "2026-05-06",
+                "--text", "# Should not be written\n",
+                "--json",
+                expect_ok=False,
+            )
+
+            self.assertIn("invalid doc metadata", proc.stderr)
+            self.assertFalse((primary / "docs" / "plans" / "bad-title.md").exists())
+
+    def test_upsert_doc_invalid_index_does_not_write_orphan_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            (primary / "docs" / "index.json").write_text("{bad json\n", encoding="utf-8")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            proc = self.run_tool(
+                "upsert-doc",
+                "--config", str(config),
+                "--doc", "plans/bad-index",
+                "--title", "Bad Index",
+                "--doc-type", "plan",
+                "--modified", "2026-05-06",
+                "--text", "# Should not be written\n",
+                "--json",
+                expect_ok=False,
+            )
+
+            self.assertIn("invalid docs index", proc.stderr)
+            self.assertFalse((primary / "docs" / "plans" / "bad-index.md").exists())
+
     def test_load_doc_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -730,6 +810,49 @@ memory_roots:
             daily_texts = [e["text"] for e in result["daily_entries"]]
             self.assertIn("today primary machine", daily_texts)
 
+    def test_load_keeps_daily_entries_out_of_local_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool(
+                "load",
+                "--config", str(config),
+                "--date", "2026-05-06",
+                "--json",
+            )
+
+            serialized_local = "\n".join(result["local_context"])
+            self.assertIn("machine primary", serialized_local)
+            self.assertNotIn("today primary machine", serialized_local)
+            self.assertIn("today primary machine", [entry["text"] for entry in result["daily_entries"]])
+
+    def test_load_reports_corrupt_daily_jsonl_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            jsonl_path = primary / "daily" / "2026-05-06.jsonl"
+            jsonl_path.write_text(
+                '{"ts":"2026-05-06T00:00:00Z","date":"2026-05-06","tag":"fact","source":"user","text":"valid line","confidence":7,"files":[]}\n'
+                "bad json line\n",
+                encoding="utf-8",
+            )
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool(
+                "load",
+                "--config", str(config),
+                "--date", "2026-05-06",
+                "--json",
+            )
+
+            self.assertEqual([entry["text"] for entry in result["daily_entries"]], ["valid line", "yesterday primary machine"])
+            self.assertTrue(any("invalid daily jsonl" in warning for warning in result["warnings"]))
+            self.assertTrue(any("2026-05-06.jsonl:2" in warning for warning in result["warnings"]))
+
     def test_search_hits_docs_memory_and_daily(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -747,6 +870,24 @@ memory_roots:
             sources = {hit["source"] for hit in result["hits"]}
             self.assertGreater(result["total"], 0)
             self.assertIn("MEMORY.md", sources)
+            self.assertEqual(result["scope"]["docs"], "primary_and_reference")
+            self.assertEqual(result["scope"]["memory"], "primary_and_reference")
+            self.assertEqual(result["scope"]["daily"], "primary_only")
+
+    def test_search_missing_config_still_reports_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_config = Path(tmp) / "missing.yaml"
+
+            result = self.run_tool(
+                "search", "anything",
+                "--config", str(missing_config),
+                "--json",
+            )
+
+            self.assertEqual(result["total"], 0)
+            self.assertEqual(result["scope"]["docs"], "primary_and_reference")
+            self.assertEqual(result["scope"]["memory"], "primary_and_reference")
+            self.assertEqual(result["scope"]["daily"], "primary_only")
 
     def test_search_respects_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -773,7 +914,11 @@ memory_roots:
             self.assertGreater(result_daily_only["total"], 0)
             self.assertTrue(all(h["source"] == "daily" for h in result_daily_only["hits"]))
 
-    def test_prune_reports_stale_file_reference(self):
+    def test_prune_command_is_removed(self):
+        proc = self.run_tool("prune", "--json", expect_ok=False)
+        self.assertIn("invalid choice", proc.stderr)
+
+    def test_maintain_reports_stale_file_reference(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             primary = self.make_repo(base, "primary", machine_id="primary")
@@ -792,12 +937,39 @@ memory_roots:
             config = base / "config.yaml"
             self.write_config(config, primary)
 
-            result = self.run_tool("prune", "--config", str(config), "--json")
+            result = self.run_tool("maintain", "--config", str(config), "--json")
             self.assertGreater(result["ok"], 0)
             self.assertEqual(len(result["stale"]), 1)
             self.assertIn("stale_file.py", result["stale"][0]["file"])
 
-    def test_prune_reports_corrupt_jsonl_line(self):
+    def test_maintain_rejects_file_references_outside_primary_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            outside = base / "outside.txt"
+            outside.write_text("outside exists\n", encoding="utf-8")
+            (primary / "daily" / "2026-05-07.jsonl").write_text(
+                json.dumps({
+                    "ts": "2026-05-07T00:00:00Z",
+                    "date": "2026-05-07",
+                    "tag": "fact",
+                    "source": "user",
+                    "text": "unsafe refs",
+                    "confidence": 7,
+                    "files": ["../outside.txt", str(outside)],
+                }) + "\n",
+                encoding="utf-8",
+            )
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool("maintain", "--config", str(config), "--json")
+
+            unsafe = [item for item in result["stale"] if item.get("text") == "unsafe refs"]
+            self.assertEqual(len(unsafe), 2)
+            self.assertTrue(all(item.get("error") == "invalid file reference" for item in unsafe))
+
+    def test_maintain_reports_corrupt_jsonl_line(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             primary = self.make_repo(base, "primary", machine_id="primary")
@@ -810,9 +982,68 @@ memory_roots:
             config = base / "config.yaml"
             self.write_config(config, primary)
 
-            result = self.run_tool("prune", "--config", str(config), "--json")
+            result = self.run_tool("maintain", "--config", str(config), "--json")
             self.assertEqual(len(result["corrupt"]), 1)
             self.assertEqual(result["corrupt"][0]["line"], 1)
+
+    def test_maintain_indexes_manually_added_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            manual_doc = primary / "docs" / "manual-note.md"
+            manual_doc.write_text("# Manual Note\n\nAdded outside the CLI.\n", encoding="utf-8")
+
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool("maintain", "--config", str(config), "--json")
+            self.assertEqual(
+                result["indexed_docs"],
+                [{
+                    "path": "manual-note.md",
+                    "title": "Manual Note",
+                    "type": "wiki",
+                }],
+            )
+
+            index = json.loads((primary / "docs" / "index.json").read_text(encoding="utf-8"))
+            manual_entries = [
+                entry for entry in index["documents"]
+                if entry["path"] == "manual-note.md"
+            ]
+            self.assertEqual(len(manual_entries), 1)
+            self.assertEqual(manual_entries[0]["title"], "Manual Note")
+            self.assertEqual(manual_entries[0]["type"], "wiki")
+            self.assertEqual(manual_entries[0]["tags"], [])
+            self.assertEqual(manual_entries[0]["projects"], [])
+
+    def test_maintain_rejects_non_writable_primary_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            manual_doc = primary / "docs" / "manual-note.md"
+            manual_doc.write_text("# Manual Note\n", encoding="utf-8")
+            config = base / "config.yaml"
+            config.write_text(
+                f"""version: 1
+memory_roots:
+  - path: {primary}
+    role: primary
+    writable: false
+    machine_id: primary-machine
+    priority: 100
+""",
+                encoding="utf-8",
+            )
+
+            proc = self.run_tool("maintain", "--config", str(config), "--json", expect_ok=False)
+
+            self.assertIn("primary root is not writable", proc.stderr)
+            index = json.loads((primary / "docs" / "index.json").read_text(encoding="utf-8"))
+            self.assertNotIn(
+                "manual-note.md",
+                [entry["path"] for entry in index["documents"]],
+            )
 
     def test_stats_counts_tags_in_daily_and_memory(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -836,6 +1067,54 @@ memory_roots:
             self.assertIn("fact", daily["by_tag"])
             self.assertIn("lesson", daily["by_tag"])
             self.assertEqual(memory["total"], 1)
+            self.assertEqual(result["scope"]["daily"], "primary_only")
+            self.assertEqual(result["scope"]["memory"], "primary_only")
+
+    def test_search_rejects_multiple_primary_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary_a = self.make_repo(base, "primary-a", machine_id="primary-a")
+            primary_b = self.make_repo(base, "primary-b", machine_id="primary-b")
+            config = base / "config.yaml"
+            config.write_text(
+                f"""version: 1
+memory_roots:
+  - path: {primary_a}
+    role: primary
+    writable: true
+  - path: {primary_b}
+    role: primary
+    writable: true
+""",
+                encoding="utf-8",
+            )
+
+            proc = self.run_tool("search", "anything", "--config", str(config), "--json", expect_ok=False)
+
+            self.assertIn("config must declare exactly one primary root", proc.stderr)
+
+    def test_stats_rejects_multiple_primary_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary_a = self.make_repo(base, "primary-a", machine_id="primary-a")
+            primary_b = self.make_repo(base, "primary-b", machine_id="primary-b")
+            config = base / "config.yaml"
+            config.write_text(
+                f"""version: 1
+memory_roots:
+  - path: {primary_a}
+    role: primary
+    writable: true
+  - path: {primary_b}
+    role: primary
+    writable: true
+""",
+                encoding="utf-8",
+            )
+
+            proc = self.run_tool("stats", "--config", str(config), "--json", expect_ok=False)
+
+            self.assertIn("config must declare exactly one primary root", proc.stderr)
 
     def test_export_writes_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:

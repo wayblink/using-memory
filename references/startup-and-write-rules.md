@@ -13,7 +13,7 @@ This file defines the runtime algorithm only: config resolution, load order, doc
 - Reference repos are read-only and are added in priority order to supplement durable memory facts.
 - The canonical daily path is fixed at `daily/YYYY-MM-DD.jsonl`; today and yesterday are read from `daily/*.jsonl` in the local primary repo.
 - Explicit `load --daily-from/--daily-to` or `load --daily-days` may expand the primary daily read window; without those flags, only today and yesterday are read.
-- Explicit `load --daily-query` filters `daily/*.jsonl` by the `text` field; matching entries appear in `daily_entries` in the load result.
+- Explicit `load --daily-query` parses `daily/*.jsonl` line by line and filters entries by the `text` field; only matching entries appear in `daily_entries` and loaded daily source content.
 - The read order is strict: first load every repo's `PREFERENCES.md` and `MEMORY.md`, then browse every repo's `docs/index.json`, load matching `docs/*.md` by indexed metadata, and finally read the local primary daily window plus `local/MACHINE.md`, `local/ENV.md`, and `local/WORKSPACE.md`.
 - `local/*` from other machines is ignored by default so remote environment details do not pollute the current session.
 - `local/` stores only machine-local facts, not dated files; dated process notes belong in `daily/YYYY-MM-DD.jsonl`.
@@ -78,9 +78,9 @@ Each line in `daily/YYYY-MM-DD.jsonl` is a JSON object:
 
 ## Maintenance Commands
 
-- `prune` (`--config`): scan `daily/*.jsonl` for **stale** `files` entries whose resolved path does not exist, and **corrupt** lines that fail JSON parse. Reports a summary and details; does not touch any file. Returns `{"stale": [...], "corrupt": [...], "ok": N}`.
-- `search <query>` (`--config`, `--daily-days`, `--no-docs`, `--no-memory`, `--no-daily`, `--json`): full-text search across `docs/*.md`, `MEMORY.md`, and `daily/*.jsonl`. Returns `{"query": "...", "hits": [...], "total": N}`.
-- `stats` (`--config`, `--json`): aggregate tag and confidence distribution across `daily/*.jsonl` and `MEMORY.md`. Returns `{"daily": {"total": N, "by_tag": {...}}, "memory": {"total": N, "by_tag": {...}}}`.
+- `maintain` (`--config`): scan `daily/*.jsonl` for **stale** `files` entries whose resolved path does not exist, and **corrupt** lines that fail JSON parse. Also repairs missing `docs/index.json` entries for manually added writable primary-root `docs/*.md` files using minimal metadata (`type: wiki`, empty `projects` / `tags`). Returns `{"stale": [...], "corrupt": [...], "ok": N, "indexed_docs": [...]}`.
+- `search <query>` (`--config`, `--daily-days`, `--no-docs`, `--no-memory`, `--no-daily`, `--json`): full-text search across `docs/*.md`, `MEMORY.md`, and `daily/*.jsonl`. Docs and memory search cover primary plus reference roots; daily search covers the primary root only. Returns `{"query": "...", "hits": [...], "total": N, "scope": {...}}`.
+- `stats` (`--config`, `--json`): aggregate tag counts across primary-root `daily/*.jsonl` and `MEMORY.md`. Returns `{"daily": {"total": N, "by_tag": {...}}, "memory": {"total": N, "by_tag": {...}}, "scope": {...}}`.
 - `export` (`--config`, `--dest`, `--json`): human-readable Markdown summary of stats; appends to `--dest` if given, otherwise prints to stdout.
 
 ## Failure Degradation

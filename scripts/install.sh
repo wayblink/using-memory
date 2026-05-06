@@ -9,9 +9,24 @@ install_host() {
  local name="$1"
  local dest="$2"
  echo "Installing $name: $HERE -> $dest"
+ if [ -L "$dest" ]; then
+  rm "$dest"
+ elif [ -e "$dest" ]; then
+  if [ "${USING_MEMORY_INSTALL_FORCE:-0}" != "1" ]; then
+   echo "refusing to overwrite existing destination: $dest" >&2
+   echo "Set USING_MEMORY_INSTALL_FORCE=1 to replace it." >&2
+   exit 2
+  fi
+  rm -rf "$dest"
+ fi
  mkdir -p "$dest"
- cp -a "$HERE"/. "$dest"/
- find "$dest" \( -name __pycache__ -o -name '*.pyc' -o -name '*.swp' \) -prune -exec rm -rf {} +
+ tar -C "$HERE" \
+  --exclude=.git \
+  --exclude=tests \
+  --exclude=__pycache__ \
+  --exclude='*.pyc' \
+  --exclude='*.swp' \
+  -cf - . | tar -C "$dest" -xf -
  echo "Installed $name. Destination: $dest"
 }
 

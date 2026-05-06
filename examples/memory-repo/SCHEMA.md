@@ -27,7 +27,7 @@
 - Machine-specific workspace roots, repo paths, project entry points, and mount details. Keep dated work logs out of this file; use `daily/YYYY-MM-DD.jsonl` for dated notes.
 
 `daily/YYYY-MM-DD.jsonl`
-- Daily append-only journals in newline-delimited JSON. Each line is a self-contained JSON object with `ts`, `date`, `tag`, `source`, `text`, and optional `confidence`, `files`. Use `scripts/memory_tool.py write-daily` to append; keeping records structured makes `search`, `prune`, `stats`, and `load --daily-entries` reliable without index builds.
+- Daily append-only journals in newline-delimited JSON. Each line is a self-contained JSON object with `ts`, `date`, `tag`, `source`, `text`, and optional `confidence`, `files`. Use `scripts/memory_tool.py write-daily` to append; keeping records structured makes `search`, `maintain`, `stats`, and `load` reliable without index builds.
 
 Allowed lightweight tags:
 - `[pref]` - preference or style reminder

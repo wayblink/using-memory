@@ -8,6 +8,20 @@ REPO_ROOT = ROOT.parent
 
 
 class IntegrationDocTests(unittest.TestCase):
+    def test_install_script_refuses_implicit_overwrite_and_excludes_dev_files(self):
+        text = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("USING_MEMORY_INSTALL_FORCE", text)
+        self.assertIn("refusing to overwrite existing destination", text)
+        self.assertIn("--exclude=.git", text)
+        self.assertIn("--exclude=tests", text)
+        self.assertIn("--exclude=__pycache__", text)
+        self.assertNotIn('cp -a "$HERE"/. "$dest"/', text)
+
+    def test_link_script_refuses_to_replace_existing_directory(self):
+        text = (ROOT / "scripts" / "link.sh").read_text(encoding="utf-8")
+        self.assertIn("refusing to replace existing directory", text)
+        self.assertIn('if [ -e "$dest" ] && [ ! -L "$dest" ]; then', text)
+
     def test_machine_setup_mentions_install_and_best_effort_startup_behavior(self):
         text = (ROOT / "references/machine-setup.md").read_text(encoding="utf-8")
         for needle in [

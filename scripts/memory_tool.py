@@ -1,13 +1,20 @@
 """using-memory CLI: load and write curated Markdown memory files."""
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import sys
+import tempfile
 import yaml
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback for portable installs.
+    fcntl = None
 
 
 DEFAULT_CONFIG_PATH = "~/.skills/using-memory/config.yaml"
@@ -284,14 +291,46 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def append_markdown_entry(path: Path, entry: str) -> Path:
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+def lock_path_for(path: Path) -> Path:
+    return path.parent / f".{path.name}.lock"
+
+
+@contextlib.contextmanager
+def exclusive_file_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    if existing:
-        separator = "" if existing.endswith("\n") else "\n"
-        path.write_text(existing + separator + entry, encoding="utf-8")
-    else:
-        path.write_text(entry, encoding="utf-8")
+    with path.open("a", encoding="utf-8") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(content)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp_name)
+        raise
+
+
+def append_markdown_entry(path: Path, entry: str) -> Path:
+    with exclusive_file_lock(lock_path_for(path)):
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        if existing:
+            separator = "" if existing.endswith("\n") else "\n"
+            atomic_write_text(path, existing + separator + entry)
+        else:
+            atomic_write_text(path, entry)
     return path
 
 
@@ -307,7 +346,7 @@ def append_daily_entry(
     """Append one entry to the primary repo's daily note (JSONL only)."""
     jsonl_target = root / "daily" / f"{when:%Y-%m-%d}.jsonl"
     record = {
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "date": when.isoformat(),
         "tag": tag,
         "source": source or "user",
@@ -316,8 +355,9 @@ def append_daily_entry(
         "files": files or [],
     }
     jsonl_target.parent.mkdir(parents=True, exist_ok=True)
-    with jsonl_target.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with exclusive_file_lock(lock_path_for(jsonl_target)):
+        with jsonl_target.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
     return jsonl_target
 
 
@@ -347,6 +387,21 @@ def validate_primary_root_for_write(root: Path) -> None:
     if not (root / ".git").exists():
         sys.stderr.write(f"primary root is not a Git repo: {root}\n")
         sys.exit(2)
+
+
+def resolve_primary_file_reference(primary_root: Path, raw_path) -> Path | None:
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    ref_path = Path(raw_path)
+    if ref_path.is_absolute() or ".." in ref_path.parts:
+        return None
+    try:
+        primary_resolved = primary_root.resolve()
+        candidate = (primary_resolved / ref_path).resolve()
+        candidate.relative_to(primary_resolved)
+    except (OSError, ValueError):
+        return None
+    return candidate
 
 
 def load_primary_for_write(args: argparse.Namespace) -> Path:
@@ -386,13 +441,82 @@ def load_doc_index(index_path: Path) -> dict:
 
 def upsert_doc_index_entry(index_path: Path, entry: dict) -> None:
     index = load_doc_index(index_path)
+    index = doc_index_with_entry(index, entry)
+    write_doc_index(index_path, index)
+
+
+def doc_index_with_entry(index: dict, entry: dict) -> dict:
     documents = index["documents"]
     documents = [doc for doc in documents if doc.get("path") != entry["path"]]
     documents.append(entry)
     documents.sort(key=lambda doc: str(doc.get("path", "")))
     index["documents"] = documents
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return index
+
+
+def write_doc_index(index_path: Path, index: dict) -> None:
+    atomic_write_text(index_path, json.dumps(index, ensure_ascii=False, indent=2) + "\n")
+
+
+def extract_markdown_title(path: Path) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# "):
+                title = stripped[2:].strip()
+                if title:
+                    return title
+    except UnicodeDecodeError:
+        pass
+    return path.stem.replace("-", " ").replace("_", " ").strip().title() or path.stem
+
+
+def doc_index_entry_for_file(docs_dir: Path, doc_path: Path) -> dict:
+    rel_path = doc_path.relative_to(docs_dir).as_posix()
+    modified = date.fromtimestamp(doc_path.stat().st_mtime).isoformat()
+    return {
+        "path": rel_path,
+        "title": extract_markdown_title(doc_path),
+        "type": "wiki",
+        "modified": modified,
+        "projects": [],
+        "tags": [],
+    }
+
+
+def maintain_doc_index(primary_root: Path) -> list[dict]:
+    docs_dir = primary_root / "docs"
+    if not docs_dir.is_dir():
+        return []
+    index_path = docs_dir / "index.json"
+    with exclusive_file_lock(docs_dir / ".docs.lock"):
+        index = load_doc_index(index_path)
+        indexed_paths = {
+            str(entry.get("path", ""))
+            for entry in normalize_doc_index(index)
+        }
+        added = []
+        for doc_path in sorted(docs_dir.rglob("*.md")):
+            if not doc_path.is_file():
+                continue
+            rel_path = doc_path.relative_to(docs_dir).as_posix()
+            if rel_path in indexed_paths:
+                continue
+            entry = doc_index_entry_for_file(docs_dir, doc_path)
+            error = validate_doc_entry(entry)
+            if error:
+                sys.stderr.write(f"invalid generated doc metadata: {error}\n")
+                sys.exit(2)
+            index = doc_index_with_entry(index, entry)
+            indexed_paths.add(entry["path"])
+            added.append({
+                "path": entry["path"],
+                "title": entry["title"],
+                "type": entry["type"],
+            })
+        if added:
+            write_doc_index(index_path, index)
+        return added
 
 
 def date_range(start: date, end: date) -> list[date]:
@@ -436,6 +560,7 @@ def append_daily_jsonl_sources(
     sources_list: list,
     local_context: list,
     daily_entries: list,
+    warnings: list,
     primary_root: Path,
     primary_machine: str,
     dates: list[date],
@@ -447,23 +572,29 @@ def append_daily_jsonl_sources(
         if not jsonl_path.exists():
             continue
         daily_source = read_source(jsonl_path, "daily", "primary", primary_machine)
-        if normalized_query:
-            if not daily_source["loaded"]:
-                continue
-            if normalized_query not in daily_source["content"].lower():
-                continue
-        sources_list.append(daily_source)
+        if not daily_source["loaded"]:
+            continue
+        matched_lines = []
         if daily_source["loaded"]:
-            local_context.append(daily_source["content"])
-            for line in daily_source["content"].splitlines():
+            for lineno, line in enumerate(daily_source["content"].splitlines(), 1):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     entry = json.loads(line)
-                    daily_entries.append(entry)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    warnings.append(f"invalid daily jsonl: {jsonl_path}:{lineno}: {exc.msg}")
                     continue
+                text = entry.get("text", "")
+                if normalized_query and normalized_query not in str(text).lower():
+                    continue
+                daily_entries.append(entry)
+                matched_lines.append(json.dumps(entry, ensure_ascii=False))
+        if normalized_query and not matched_lines:
+            continue
+        if normalized_query:
+            daily_source["content"] = "\n".join(matched_lines) + ("\n" if matched_lines else "")
+        sources_list.append(daily_source)
 
 
 def do_load(args: argparse.Namespace) -> dict:
@@ -571,6 +702,7 @@ def do_load(args: argparse.Namespace) -> dict:
             sources_list,
             local_context,
             daily_entries,
+            warnings,
             primary_root,
             primary_machine,
             daily_dates,
@@ -653,8 +785,6 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     parse_iso_date(args.modified, "--modified")
     doc_path = primary_root / "docs" / f"{doc_name}.md"
     index_path = primary_root / "docs" / "index.json"
-    doc_path.parent.mkdir(parents=True, exist_ok=True)
-    doc_path.write_text(args.text, encoding="utf-8")
     rel_path = f"{doc_name}.md"
     entry = {
         "path": rel_path,
@@ -670,7 +800,11 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     if error:
         sys.stderr.write(f"invalid doc metadata: {error}\n")
         sys.exit(2)
-    upsert_doc_index_entry(index_path, entry)
+    with exclusive_file_lock(primary_root / "docs" / ".docs.lock"):
+        index = load_doc_index(index_path)
+        index = doc_index_with_entry(index, entry)
+        atomic_write_text(doc_path, args.text)
+        write_doc_index(index_path, index)
     return {
         "changed": True,
         "path": str(doc_path),
@@ -695,6 +829,7 @@ def _search_sources(
         return {"query": query, "hits": [], "total": 0}
 
     primary_list, ref_list = collect_roots(config)
+    validate_single_primary(primary_list, required=False)
     ordered_roots = primary_list + ref_list
 
     # --- docs/*.md ---
@@ -781,7 +916,16 @@ def _search_sources(
                         "score": 1,
                     })
 
-    return {"query": query, "hits": hits, "total": len(hits)}
+    return {
+        "query": query,
+        "hits": hits,
+        "total": len(hits),
+        "scope": {
+            "docs": "primary_and_reference" if search_docs else "disabled",
+            "memory": "primary_and_reference" if search_memory else "disabled",
+            "daily": "primary_only" if search_daily else "disabled",
+        },
+    }
 
 
 def do_search(args: argparse.Namespace) -> dict:
@@ -796,54 +940,54 @@ def do_search(args: argparse.Namespace) -> dict:
     )
 
 
-def do_prune(args: argparse.Namespace) -> dict:
-    """Check daily JSONL for stale entries and corrupt lines."""
-    config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
-    if not config:
-        return {"stale": [], "corrupt": [], "ok": 0}
-
-    primary_list, _ref_list = collect_roots(config)
-    if not primary_list:
-        return {"stale": [], "corrupt": [], "ok": 0}
-
-    primary_root = expand_path(primary_list[0].get("path", ""))
+def do_maintain(args: argparse.Namespace) -> dict:
+    """Run maintenance checks and repair missing docs index entries."""
+    primary_root = load_primary_for_write(args)
     daily_dir = primary_root / "daily"
     stale = []
     corrupt = []
     ok_count = 0
 
-    if not daily_dir.is_dir():
-        return {"stale": [], "corrupt": [], "ok": 0}
-
-    for jsonl_path in sorted(daily_dir.glob("*.jsonl")):
-        if not jsonl_path.is_file():
-            continue
-        try:
-            lines = jsonl_path.read_text(encoding="utf-8").splitlines()
-        except Exception as exc:
-            corrupt.append({"path": str(jsonl_path), "error": str(exc)})
-            continue
-        for lineno, raw_line in enumerate(lines, 1):
-            raw_line = raw_line.strip()
-            if not raw_line:
+    if daily_dir.is_dir():
+        for jsonl_path in sorted(daily_dir.glob("*.jsonl")):
+            if not jsonl_path.is_file():
                 continue
             try:
-                entry = json.loads(raw_line)
-            except json.JSONDecodeError as exc:
-                corrupt.append({"path": str(jsonl_path), "line": lineno, "error": exc.msg})
+                lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+            except Exception as exc:
+                corrupt.append({"path": str(jsonl_path), "error": str(exc)})
                 continue
-            for f_path in entry.get("files", []):
-                candidate = primary_root / f_path
-                if not candidate.exists():
-                    stale.append({
-                        "path": str(jsonl_path),
-                        "line": lineno,
-                        "file": f_path,
-                        "text": entry.get("text", "")[:80],
-                    })
-            ok_count += 1
+            for lineno, raw_line in enumerate(lines, 1):
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except json.JSONDecodeError as exc:
+                    corrupt.append({"path": str(jsonl_path), "line": lineno, "error": exc.msg})
+                    continue
+                for f_path in entry.get("files", []):
+                    candidate = resolve_primary_file_reference(primary_root, f_path)
+                    if candidate is None:
+                        stale.append({
+                            "path": str(jsonl_path),
+                            "line": lineno,
+                            "file": f_path,
+                            "text": entry.get("text", "")[:80],
+                            "error": "invalid file reference",
+                        })
+                        continue
+                    if not candidate.exists():
+                        stale.append({
+                            "path": str(jsonl_path),
+                            "line": lineno,
+                            "file": f_path,
+                            "text": entry.get("text", "")[:80],
+                        })
+                ok_count += 1
 
-    return {"stale": stale, "corrupt": corrupt, "ok": ok_count}
+    indexed_docs = maintain_doc_index(primary_root)
+    return {"stale": stale, "corrupt": corrupt, "ok": ok_count, "indexed_docs": indexed_docs}
 
 
 def _collect_stats(config: dict | None) -> dict:
@@ -854,9 +998,14 @@ def _collect_stats(config: dict | None) -> dict:
     total_memory = 0
 
     if not config:
-        return {"daily": {"total": 0, "by_tag": {}}, "memory": {"total": 0, "by_tag": {}}}
+        return {
+            "daily": {"total": 0, "by_tag": {}},
+            "memory": {"total": 0, "by_tag": {}},
+            "scope": {"daily": "primary_only", "memory": "primary_only"},
+        }
 
     primary_list, _ = collect_roots(config)
+    validate_single_primary(primary_list, required=False)
     ordered_roots = primary_list + []
 
     for root_cfg in ordered_roots:
@@ -888,6 +1037,7 @@ def _collect_stats(config: dict | None) -> dict:
     return {
         "daily": {"total": total_daily, "by_tag": daily_tags},
         "memory": {"total": total_memory, "by_tag": memory_tags},
+        "scope": {"daily": "primary_only", "memory": "primary_only"},
     }
 
 
@@ -919,10 +1069,10 @@ def do_export(args: argparse.Namespace) -> dict:
     text = _format_export(stats, config)
     if args.dest:
         dest = Path(args.dest)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        existing = dest.read_text(encoding="utf-8") if dest.exists() else ""
-        separator = "\n\n---\n\n" if existing.strip() else ""
-        dest.write_text(existing + separator + text, encoding="utf-8")
+        with exclusive_file_lock(lock_path_for(dest)):
+            existing = dest.read_text(encoding="utf-8") if dest.exists() else ""
+            separator = "\n\n---\n\n" if existing.strip() else ""
+            atomic_write_text(dest, existing + separator + text)
         return {"changed": True, "dest": str(dest)}
     return {"text": text}
 
@@ -938,8 +1088,8 @@ def cmd_search(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--json", action="store_true")
 
 
-def cmd_prune(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("prune", help="Check daily JSONL for stale file references and corrupt lines")
+def cmd_maintain(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("maintain", help="Run maintenance checks and repair missing docs index entries")
     p.add_argument("--config", type=str, default=None)
     p.add_argument("--json", action="store_true")
 
@@ -1020,7 +1170,7 @@ def main(argv=None) -> None:
     sub = parser.add_subparsers(dest="cmd")
     cmd_load(sub)
     cmd_search(sub)
-    cmd_prune(sub)
+    cmd_maintain(sub)
     cmd_stats(sub)
     cmd_export(sub)
     cmd_write_daily(sub)
@@ -1035,8 +1185,8 @@ def main(argv=None) -> None:
         result = do_load(args)
     elif args.cmd == "search":
         result = do_search(args)
-    elif args.cmd == "prune":
-        result = do_prune(args)
+    elif args.cmd == "maintain":
+        result = do_maintain(args)
     elif args.cmd == "stats":
         result = do_stats(args)
     elif args.cmd == "export":

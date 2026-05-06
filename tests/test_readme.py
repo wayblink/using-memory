@@ -39,6 +39,23 @@ class ReadmeTests(unittest.TestCase):
         self.assertNotRegex(text, re.compile(r"(^|\n)\s*--type\s"))
         self.assertNotRegex(text, re.compile(r"\b--tag planning\b"))
 
+    def test_readme_command_overview_lists_all_cli_commands(self):
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        for command in [
+            "load",
+            "search",
+            "maintain",
+            "stats",
+            "export",
+            "write-daily",
+            "write-memory",
+            "write-preference",
+            "upsert-doc",
+        ]:
+            with self.subTest(command=command):
+                self.assertIn(f"- `{command}`:", text)
+
     def test_project_declares_python_dependency(self):
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
         self.assertIn("PyYAML", requirements)
