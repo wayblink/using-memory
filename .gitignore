@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.eggs/
+
+# OS / editors
+.DS_Store
+*.swp
+*.swo
+*~
+.project
+.idea/
+.vscode/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Test / coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Build artifacts
+*.log

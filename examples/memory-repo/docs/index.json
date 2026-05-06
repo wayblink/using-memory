@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "path": "workflow.md",
+      "title": "Daily Standup Prep",
+      "type": "SOP",
+      "modified": "2026-04-13",
+      "projects": ["using-memory"],
+      "tags": ["workflow", "standup", "coordination"],
+      "summary": "Reusable checklist for preparing standup summaries and coordination plans."
+    }
+  ]
+}

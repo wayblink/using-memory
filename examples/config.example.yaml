@@ -1,0 +1,27 @@
+version: 1
+
+memory_roots:
+  - path: ~/.memories/main
+    role: primary
+    writable: true
+    machine_id: home-primary
+    priority: 100
+
+  - path: ~/.memories/work-laptop
+    role: reference
+    writable: false
+    machine_id: work-laptop
+    priority: 60
+
+  - path: ~/.memories/archives
+    role: reference
+    writable: false
+    machine_id: backups
+    priority: 40
+
+defaults:
+  read_today: true
+  read_yesterday: true
+  load_docs_on_demand: true
+
+# This config lives outside the shared repo and records how the current machine prioritizes its roots.
