@@ -4,7 +4,11 @@
 *.swo
 *~
 
-# Temporary / scratch files that should not be committed
-TODO.md
-TODO.json
-scratch.md
+# Backups and locks
+*~
+\#*\#
+*.bak
+
+# Optional env file even if personal skills shouldn't store secrets here
+.env
+.env.*
