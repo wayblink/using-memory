@@ -1,0 +1,10 @@
+# OS / editor artifacts
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Temporary / scratch files that should not be committed
+TODO.md
+TODO.json
+scratch.md

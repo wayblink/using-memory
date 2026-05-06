@@ -9,6 +9,15 @@
       "projects": ["using-memory"],
       "tags": ["workflow", "standup", "coordination"],
       "summary": "Reusable checklist for preparing standup summaries and coordination plans."
+    },
+    {
+      "path": "coding.md",
+      "title": "Coding Standards",
+      "type": "wiki",
+      "modified": "2026-05-05",
+      "projects": ["using-memory"],
+      "tags": ["coding", "standards"],
+      "summary": "Shared coding conventions for Python, shell scripts, and tests."
     }
   ]
 }
