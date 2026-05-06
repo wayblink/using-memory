@@ -24,10 +24,10 @@
 - Machine-specific identity and environment facts. These files are **never** shared when another agent loads the repo; they stay local to the writable primary root.
 
 `local/WORKSPACE.md`
-- Machine-specific workspace roots, repo paths, project entry points, and mount details. Keep dated work logs out of this file; use `daily/YYYY-MM-DD.md` for dated notes.
+- Machine-specific workspace roots, repo paths, project entry points, and mount details. Keep dated work logs out of this file; use `daily/YYYY-MM-DD.jsonl` for dated notes.
 
-`daily/YYYY-MM-DD.md`
-- Daily append-only journals. Tag entries lightly with `[pref]`, `[decision|YYYY-MM-DD]`, `[lesson|YYYY-MM-DD]`, etc., and keep paragraphs short.
+`daily/YYYY-MM-DD.jsonl`
+- Daily append-only journals in newline-delimited JSON. Each line is a self-contained JSON object with `ts`, `date`, `tag`, `source`, `text`, and optional `confidence`, `files`. Use `scripts/memory_tool.py write-daily` to append; keeping records structured makes `search`, `prune`, `stats`, and `load --daily-entries` reliable without index builds.
 
 Allowed lightweight tags:
 - `[pref]` - preference or style reminder

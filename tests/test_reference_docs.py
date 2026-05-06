@@ -69,7 +69,7 @@ class ReferenceDocTests(unittest.TestCase):
                 "  MEMORY.md",
                 "  PREFERENCES.md",
                 "  daily/",
-                "    2026-04-13.md",
+                "    2026-04-13.jsonl",
                 "  docs/",
                 "    index.json",
                 "    workflow.md",

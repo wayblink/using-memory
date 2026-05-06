@@ -187,7 +187,36 @@ python3 scripts/memory_tool.py write-daily \
   --config ~/.skills/using-memory/config.yaml \
   --date 2026-05-06 \
   --tag fact \
-  --text "Finished the initial using-memory README draft today."
+  --text "Finished the initial using-memory README draft today." \
+  --confidence 8 \
+  --source user
+```
+
+Full-text search:
+
+```bash
+python3 scripts/memory_tool.py search "deploy"
+python3 scripts/memory_tool.py search "bug" --daily-days 7
+python3 scripts/memory_tool.py search "deploy" --no-docs --json
+```
+
+Check for stale file references in daily JSONL:
+
+```bash
+python3 scripts/memory_tool.py prune --config ~/.skills/using-memory/config.yaml
+```
+
+Memory stats:
+
+```bash
+python3 scripts/memory_tool.py stats
+```
+
+Export Markdown summary:
+
+```bash
+python3 scripts/memory_tool.py export
+python3 scripts/memory_tool.py export --dest CLAUDE.md
 ```
 
 ## Tests

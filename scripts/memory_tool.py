@@ -7,7 +7,7 @@ import os
 import sys
 import yaml
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 
 DEFAULT_CONFIG_PATH = "~/.skills/using-memory/config.yaml"
@@ -295,10 +295,30 @@ def append_markdown_entry(path: Path, entry: str) -> Path:
     return path
 
 
-def append_daily_entry(root: Path, when: date, tag: str, text: str) -> Path:
-    target = root / "daily" / f"{when:%Y-%m-%d}.md"
-    entry = f"- [{tag}|{when:%Y-%m-%d}] {text}\n"
-    return append_markdown_entry(target, entry)
+def append_daily_entry(
+    root: Path,
+    when: date,
+    tag: str,
+    text: str,
+    confidence: int | None = None,
+    source: str | None = None,
+    files: list[str] | None = None,
+) -> Path:
+    """Append one entry to the primary repo's daily note (JSONL only)."""
+    jsonl_target = root / "daily" / f"{when:%Y-%m-%d}.jsonl"
+    record = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "date": when.isoformat(),
+        "tag": tag,
+        "source": source or "user",
+        "text": text,
+        "confidence": confidence,
+        "files": files or [],
+    }
+    jsonl_target.parent.mkdir(parents=True, exist_ok=True)
+    with jsonl_target.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return jsonl_target
 
 
 def append_memory_entry(root: Path, when: date, tag: str, text: str) -> Path:
@@ -412,9 +432,10 @@ def daily_dates_for_load(args: argparse.Namespace, target: date, read_today: boo
     return dates
 
 
-def append_daily_sources(
+def append_daily_jsonl_sources(
     sources_list: list,
     local_context: list,
+    daily_entries: list,
     primary_root: Path,
     primary_machine: str,
     dates: list[date],
@@ -422,12 +443,10 @@ def append_daily_sources(
 ) -> None:
     normalized_query = query.lower() if query else None
     for daily_date in dates:
-        daily_source = read_source(
-            primary_root / "daily" / f"{daily_date:%Y-%m-%d}.md",
-            "daily",
-            "primary",
-            primary_machine,
-        )
+        jsonl_path = primary_root / "daily" / f"{daily_date:%Y-%m-%d}.jsonl"
+        if not jsonl_path.exists():
+            continue
+        daily_source = read_source(jsonl_path, "daily", "primary", primary_machine)
         if normalized_query:
             if not daily_source["loaded"]:
                 continue
@@ -436,6 +455,15 @@ def append_daily_sources(
         sources_list.append(daily_source)
         if daily_source["loaded"]:
             local_context.append(daily_source["content"])
+            for line in daily_source["content"].splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    daily_entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
 
 
 def do_load(args: argparse.Namespace) -> dict:
@@ -467,6 +495,7 @@ def do_load(args: argparse.Namespace) -> dict:
     sources_list = []
     preferences, durable_memory, doc_set = [], [], []
     local_context = []
+    daily_entries = []
     if roots_exist:
         ordered_roots = primary_list + ref_list
 
@@ -538,9 +567,10 @@ def do_load(args: argparse.Namespace) -> dict:
         primary_root = expand_path(primary_cfg.get("path", ""))
         primary_machine = primary_cfg.get("machine_id", "")
         daily_dates = daily_dates_for_load(args, target, read_today, read_yesterday)
-        append_daily_sources(
+        append_daily_jsonl_sources(
             sources_list,
             local_context,
+            daily_entries,
             primary_root,
             primary_machine,
             daily_dates,
@@ -566,6 +596,7 @@ def do_load(args: argparse.Namespace) -> dict:
         "preferences": preferences,
         "durable_memory": durable_memory,
         "local_context": local_context,
+        "daily_entries": daily_entries,
         "doc_hits": doc_set,
         "warnings": warnings,
     }
@@ -574,12 +605,15 @@ def do_load(args: argparse.Namespace) -> dict:
 def do_write_daily(args: argparse.Namespace) -> dict:
     primary_root = load_primary_for_write(args)
     when = parse_iso_date(args.date, "--date")
-    allowed = {"pref", "decision", "lesson", "fact", "issue"}
+    allowed = {"pref", "decision", "lesson", "fact", "issue", "pattern", "preference"}
     tag = (args.tag or "").lower()
     if tag not in allowed:
         sys.stderr.write(f"invalid tag '{args.tag}'; allowed: {', '.join(sorted(allowed))}\n")
         sys.exit(2)
-    target = append_daily_entry(primary_root, when, tag, args.text)
+    confidence = args.confidence if args.confidence else None
+    source = args.source if args.source else None
+    files = args.files if args.files else []
+    target = append_daily_entry(primary_root, when, tag, args.text, confidence=confidence, source=source, files=files)
     return {
         "changed": True,
         "path": str(target),
@@ -646,6 +680,283 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     }
 
 
+def _search_sources(
+    config: dict,
+    query: str,
+    *,
+    search_docs: bool,
+    search_memory: bool,
+    search_daily: bool,
+    daily_days: int | None = None,
+) -> dict:
+    """Full-text search across docs, MEMORY.md, and daily JSONL."""
+    hits = []
+    if not config:
+        return {"query": query, "hits": [], "total": 0}
+
+    primary_list, ref_list = collect_roots(config)
+    ordered_roots = primary_list + ref_list
+
+    # --- docs/*.md ---
+    if search_docs:
+        for root_cfg in ordered_roots:
+            r_path = expand_path(root_cfg.get("path", ""))
+            role = root_cfg.get("role", "reference")
+            index_path = r_path / "docs" / "index.json"
+            if not index_path.exists():
+                continue
+            index_source = read_json_source(index_path, "docs_index", role)
+            if not index_source.get("loaded"):
+                continue
+            entries = normalize_doc_index(index_source["json"])
+            for entry in entries:
+                doc_path = doc_path_from_entry(r_path, entry)
+                if doc_path is None or not doc_path.exists():
+                    continue
+                content = doc_path.read_text(encoding="utf-8")
+                if query.lower() in content.lower():
+                    snippet_start = max(0, content.lower().index(query.lower()) - 40)
+                    snippet_end = min(len(content), snippet_start + 120)
+                    hits.append({
+                        "source": "docs",
+                        "path": str(doc_path),
+                        "title": entry.get("title", ""),
+                        "type": entry.get("type", ""),
+                        "snippet": content[snippet_start:snippet_end].strip(),
+                        "score": 1,
+                    })
+
+    # --- MEMORY.md ---
+    if search_memory:
+        for root_cfg in ordered_roots:
+            r_path = expand_path(root_cfg.get("path", ""))
+            role = root_cfg.get("role", "reference")
+            mem_path = r_path / "MEMORY.md"
+            if not mem_path.exists():
+                continue
+            mem_source = read_source(mem_path, "durable_memory", role)
+            if not mem_source.get("loaded"):
+                continue
+            for line in mem_source["content"].splitlines():
+                if query.lower() in line.lower():
+                    hits.append({
+                        "source": "MEMORY.md",
+                        "path": str(mem_path),
+                        "snippet": line.strip(),
+                        "score": 1,
+                    })
+
+    # --- daily/*.jsonl ---
+    if search_daily and primary_list:
+        primary_root = expand_path(primary_list[0].get("path", ""))
+        if daily_days:
+            target = date.today()
+            start = target - timedelta(days=daily_days - 1)
+            date_list = date_range(start, target)
+        else:
+            date_list = [date.today() - timedelta(days=i) for i in range(2)]
+        for d in date_list:
+            jsonl_path = primary_root / "daily" / f"{d:%Y-%m-%d}.jsonl"
+            if not jsonl_path.exists():
+                continue
+            try:
+                lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+            except Exception:
+                continue
+            for lineno, line in enumerate(lines, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                text = entry.get("text", "")
+                if query.lower() in text.lower():
+                    hits.append({
+                        "source": "daily",
+                        "path": str(jsonl_path),
+                        "line": lineno,
+                        "snippet": text[:120],
+                        "score": 1,
+                    })
+
+    return {"query": query, "hits": hits, "total": len(hits)}
+
+
+def do_search(args: argparse.Namespace) -> dict:
+    config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
+    return _search_sources(
+        config=config,
+        query=args.query,
+        search_docs=not args.no_docs,
+        search_memory=not args.no_memory,
+        search_daily=not args.no_daily,
+        daily_days=args.daily_days,
+    )
+
+
+def do_prune(args: argparse.Namespace) -> dict:
+    """Check daily JSONL for stale entries and corrupt lines."""
+    config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
+    if not config:
+        return {"stale": [], "corrupt": [], "ok": 0}
+
+    primary_list, _ref_list = collect_roots(config)
+    if not primary_list:
+        return {"stale": [], "corrupt": [], "ok": 0}
+
+    primary_root = expand_path(primary_list[0].get("path", ""))
+    daily_dir = primary_root / "daily"
+    stale = []
+    corrupt = []
+    ok_count = 0
+
+    if not daily_dir.is_dir():
+        return {"stale": [], "corrupt": [], "ok": 0}
+
+    for jsonl_path in sorted(daily_dir.glob("*.jsonl")):
+        if not jsonl_path.is_file():
+            continue
+        try:
+            lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+        except Exception as exc:
+            corrupt.append({"path": str(jsonl_path), "error": str(exc)})
+            continue
+        for lineno, raw_line in enumerate(lines, 1):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                entry = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                corrupt.append({"path": str(jsonl_path), "line": lineno, "error": exc.msg})
+                continue
+            for f_path in entry.get("files", []):
+                candidate = primary_root / f_path
+                if not candidate.exists():
+                    stale.append({
+                        "path": str(jsonl_path),
+                        "line": lineno,
+                        "file": f_path,
+                        "text": entry.get("text", "")[:80],
+                    })
+            ok_count += 1
+
+    return {"stale": stale, "corrupt": corrupt, "ok": ok_count}
+
+
+def _collect_stats(config: dict | None) -> dict:
+    """Count daily JSONL entries and MEMORY.md lines by tag."""
+    daily_tags: dict = {}
+    memory_tags: dict = {}
+    total_daily = 0
+    total_memory = 0
+
+    if not config:
+        return {"daily": {"total": 0, "by_tag": {}}, "memory": {"total": 0, "by_tag": {}}}
+
+    primary_list, _ = collect_roots(config)
+    ordered_roots = primary_list + []
+
+    for root_cfg in ordered_roots:
+        r_path = expand_path(root_cfg.get("path", ""))
+        daily_dir = r_path / "daily"
+        if daily_dir.is_dir():
+            for jsonl_path in daily_dir.glob("*.jsonl"):
+                try:
+                    for line in jsonl_path.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        entry = json.loads(line)
+                        tag = entry.get("tag", "unknown")
+                        daily_tags[tag] = daily_tags.get(tag, 0) + 1
+                        total_daily += 1
+                except Exception:
+                    continue
+
+        mem_path = r_path / "MEMORY.md"
+        if mem_path.is_file():
+            for line in mem_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("- [") and "] " in line:
+                    tag = line[3:].split("]")[0].split("|")[0].lower()
+                    memory_tags[tag] = memory_tags.get(tag, 0) + 1
+                    total_memory += 1
+
+    return {
+        "daily": {"total": total_daily, "by_tag": daily_tags},
+        "memory": {"total": total_memory, "by_tag": memory_tags},
+    }
+
+
+def do_stats(args: argparse.Namespace) -> dict:
+    config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
+    return _collect_stats(config)
+
+
+def _format_export(stats: dict, config: dict | None) -> str:
+    lines = ["## Project Memory Snapshot\n"]
+    daily = stats.get("daily", {})
+    memory = stats.get("memory", {})
+    lines.append(f"**Daily JSONL entries:** {daily.get('total', 0)}")
+    lines.append(f"**MEMORY.md entries:** {memory.get('total', 0)}\n")
+
+    for section, label in [("daily", "Daily tags"), ("memory", "MEMORY.md tags")]:
+        by_tag = stats.get(section, {}).get("by_tag", {})
+        if by_tag:
+            lines.append(f"### {label}")
+            for tag, count in sorted(by_tag.items(), key=lambda x: -x[1]):
+                lines.append(f"- **[{tag}]**: {count}")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def do_export(args: argparse.Namespace) -> dict:
+    config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
+    stats = _collect_stats(config)
+    text = _format_export(stats, config)
+    if args.dest:
+        dest = Path(args.dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        existing = dest.read_text(encoding="utf-8") if dest.exists() else ""
+        separator = "\n\n---\n\n" if existing.strip() else ""
+        dest.write_text(existing + separator + text, encoding="utf-8")
+        return {"changed": True, "dest": str(dest)}
+    return {"text": text}
+
+
+def cmd_search(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("search", help="Full-text search across docs, MEMORY.md and daily JSONL")
+    p.add_argument("query", type=str, help="Search term")
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("--daily-days", type=int, default=None)
+    p.add_argument("--no-docs", action="store_true")
+    p.add_argument("--no-memory", action="store_true")
+    p.add_argument("--no-daily", action="store_true")
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_prune(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("prune", help="Check daily JSONL for stale file references and corrupt lines")
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_stats(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("stats", help="Summary statistics for daily JSONL and MEMORY.md")
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_export(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("export", help="Export memory stats as Markdown")
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("--dest", type=str, default=None)
+    p.add_argument("--json", action="store_true")
+
+
 def cmd_load(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("load", help="Scan config and print a structured memory snapshot")
     p.add_argument("--config", type=str, default=None)
@@ -663,11 +974,14 @@ def cmd_load(sub: argparse._SubParsersAction) -> None:
 
 
 def cmd_write_daily(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("write-daily", help="Append one entry to the primary repo's daily note")
+    p = sub.add_parser("write-daily", help="Append one entry to the primary repo's daily note (JSONL)")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--date", type=str, required=True)
     p.add_argument("--tag", type=str, required=True)
     p.add_argument("--text", type=str, required=True)
+    p.add_argument("--confidence", type=int, default=None)
+    p.add_argument("--source", type=str, default=None)
+    p.add_argument("--files", action="append", default=None)
     p.add_argument("--json", action="store_true")
 
 
@@ -705,6 +1019,10 @@ def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="using-memory CLI")
     sub = parser.add_subparsers(dest="cmd")
     cmd_load(sub)
+    cmd_search(sub)
+    cmd_prune(sub)
+    cmd_stats(sub)
+    cmd_export(sub)
     cmd_write_daily(sub)
     cmd_write_memory(sub)
     cmd_write_preference(sub)
@@ -715,6 +1033,14 @@ def main(argv=None) -> None:
         sys.exit(2)
     if args.cmd == "load":
         result = do_load(args)
+    elif args.cmd == "search":
+        result = do_search(args)
+    elif args.cmd == "prune":
+        result = do_prune(args)
+    elif args.cmd == "stats":
+        result = do_stats(args)
+    elif args.cmd == "export":
+        result = do_export(args)
     elif args.cmd == "write-daily":
         result = do_write_daily(args)
     elif args.cmd == "write-memory":

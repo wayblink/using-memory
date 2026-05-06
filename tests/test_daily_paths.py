@@ -16,7 +16,7 @@ class DailyPathTests(unittest.TestCase):
         ]:
             with self.subTest(rel=rel):
                 text = (ROOT / rel).read_text(encoding="utf-8")
-                self.assertIn("daily/YYYY-MM-DD.md", text)
+                self.assertIn("daily/YYYY-MM-DD.jsonl", text)
 
     def test_docs_do_not_publish_year_layered_daily_paths(self):
         legacy_paths = [

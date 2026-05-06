@@ -11,12 +11,12 @@ This file defines the runtime algorithm only: config resolution, load order, doc
 
 - Local primary repo first. It is the only writable repo, and paths with `role: primary` are handled at the top.
 - Reference repos are read-only and are added in priority order to supplement durable memory facts.
-- The canonical daily path is fixed at `daily/YYYY-MM-DD.md`; today and yesterday are read from that path in the local primary repo.
+- The canonical daily path is fixed at `daily/YYYY-MM-DD.jsonl`; today and yesterday are read from `daily/*.jsonl` in the local primary repo.
 - Explicit `load --daily-from/--daily-to` or `load --daily-days` may expand the primary daily read window; without those flags, only today and yesterday are read.
-- Explicit `load --daily-query` includes only selected-window daily files whose content matches the query in `local_context`.
+- Explicit `load --daily-query` filters `daily/*.jsonl` by the `text` field; matching entries appear in `daily_entries` in the load result.
 - The read order is strict: first load every repo's `PREFERENCES.md` and `MEMORY.md`, then browse every repo's `docs/index.json`, load matching `docs/*.md` by indexed metadata, and finally read the local primary daily window plus `local/MACHINE.md`, `local/ENV.md`, and `local/WORKSPACE.md`.
 - `local/*` from other machines is ignored by default so remote environment details do not pollute the current session.
-- `local/` stores only machine-local facts, not dated files; dated process notes belong in `daily/YYYY-MM-DD.md`.
+- `local/` stores only machine-local facts, not dated files; dated process notes belong in `daily/YYYY-MM-DD.jsonl`.
 - Daily notes from other machines are ignored by default. The primary repo is the place for today's writable and readable context.
 
 ## Session Snapshot
@@ -24,6 +24,7 @@ This file defines the runtime algorithm only: config resolution, load order, doc
 - `preferences`
 - `durable_memory`
 - `local_context`
+- `daily_entries` — parsed JSON objects from `daily/*.jsonl`
 - `doc_hits`
 - `sources`
 
@@ -33,14 +34,32 @@ This file defines the runtime algorithm only: config resolution, load order, doc
 - Only matching `docs/*.md` files are loaded, keeping startup reads small.
 - Reference repos remain read-only. Their docs are loaded only when the document index matches and the repo loaded successfully.
 
+## Daily JSONL Format
+
+Each line in `daily/YYYY-MM-DD.jsonl` is a JSON object:
+
+```json
+{"ts":"2026-05-06T10:30:00Z","date":"2026-05-06","tag":"lesson","source":"user","text":"insight","confidence":8,"files":["file.py"]}
+```
+
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `ts` | str | yes | UTC timestamp, ISO 8601 |
+| `date` | str | yes | `YYYY-MM-DD`, matches filename |
+| `tag` | str | yes | `pref\|decision\|lesson\|fact\|issue\|pattern\|preference` |
+| `source` | str | yes | `user` \| `auto` \| `observed` \| `user-stated` |
+| `text` | str | yes | Entry body |
+| `confidence` | int | no | 1–10 |
+| `files` | list[str] | no | Related file paths |
+
 ## Write Rules
 
 - Write only when information is worth preserving: when the user explicitly asks to remember something, or when reusable preferences, decisions, lessons, facts, or documents are created.
-- Only the local primary repo receives appended daily entries, at `daily/YYYY-MM-DD.md`; other machines are never written.
+- Only the local primary repo receives appended JSONL daily entries, at `daily/YYYY-MM-DD.jsonl`; other machines are never written.
 - There is no automatic `write-local`. Changes to `local/MACHINE.md`, `local/ENV.md`, and `local/WORKSPACE.md` should be explicit maintenance actions.
 - Stable preferences go to `PREFERENCES.md` through `scripts/memory_tool.py write-preference`.
 - Stable facts, decisions, and lessons go to `MEMORY.md` through `scripts/memory_tool.py write-memory`, and only `fact`, `decision`, and `lesson` are allowed.
-- Unresolved issues, parking points, todo risks, and temporary context are not written to `MEMORY.md` by default; keep short-term content in daily notes, and write structured todo or plan material to `docs/`.
+- Unresolved issues, parking points, todo risks, and temporary context are not written to `MEMORY.md` by default; keep short-term content in JSONL daily notes, and write structured todo or plan material to `docs/`.
 - Topic, workflow, wiki, SOP, todo, plan, and project context go to `docs/*.md` through `scripts/memory_tool.py upsert-doc`, which keeps the body and `docs/index.json` in sync.
 - Do not manually edit only `docs/*.md` while forgetting `docs/index.json`. The index is the loader's entry point for deciding whether to open document bodies.
 
@@ -57,6 +76,13 @@ This file defines the runtime algorithm only: config resolution, load order, doc
 - Topic and workflow memory belongs in `docs/`, with `docs/index.json` maintained at the same time. Each Markdown file should stay focused on one topic, workflow, plan, or project.
 - Distillation should preserve enough context for future retrieval without piling up raw conversation text.
 
+## Maintenance Commands
+
+- `prune` (`--config`): scan `daily/*.jsonl` for **stale** `files` entries whose resolved path does not exist, and **corrupt** lines that fail JSON parse. Reports a summary and details; does not touch any file. Returns `{"stale": [...], "corrupt": [...], "ok": N}`.
+- `search <query>` (`--config`, `--daily-days`, `--no-docs`, `--no-memory`, `--no-daily`, `--json`): full-text search across `docs/*.md`, `MEMORY.md`, and `daily/*.jsonl`. Returns `{"query": "...", "hits": [...], "total": N}`.
+- `stats` (`--config`, `--json`): aggregate tag and confidence distribution across `daily/*.jsonl` and `MEMORY.md`. Returns `{"daily": {"total": N, "by_tag": {...}}, "memory": {"total": N, "by_tag": {...}}}`.
+- `export` (`--config`, `--dest`, `--json`): human-readable Markdown summary of stats; appends to `--dest` if given, otherwise prints to stdout.
+
 ## Failure Degradation
 
 - primary temporarily unwritable -> read-only mode with automatic writes disabled
@@ -66,6 +92,6 @@ This file defines the runtime algorithm only: config resolution, load order, doc
 ## Non-Goals
 
 - no daemon: no standalone background process.
-- no DB: no database or vector store; everything stays in Markdown and Git.
+- no DB: no database or vector store; everything stays in Markdown, JSONL, and Git.
 - no automatic multi-writer sync: no cross-repo automatic synchronization; writes only go to the primary repo.
 - Do not record every tool call: no per-turn transcript logging, and no plan to preserve raw output from every API or tool call.

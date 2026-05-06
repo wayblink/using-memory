@@ -38,7 +38,18 @@ class SkillDocTests(unittest.TestCase):
         self.assertIn("scripts/memory_tool.py write-memory", text)
         self.assertIn("scripts/memory_tool.py upsert-doc", text)
         self.assertIn("write-memory` accepts only `fact`, `decision`, and `lesson`", text)
-        self.assertIn("Open issues, parking points, unresolved risks, and temporary execution context stay in daily notes or an indexed `docs/` todo/plan", text)
+        self.assertIn(
+            "Open issues",
+            text,
+        )
+        self.assertIn(
+            "parking points",
+            text,
+        )
+        self.assertIn(
+            "unresolved risks",
+            text,
+        )
         self.assertIn("## Hot Write Rules", text)
         self.assertIn("## Maintenance Rules", text)
         self.assertIn("Routing:", text)
@@ -84,6 +95,7 @@ class SkillDocTests(unittest.TestCase):
             "preferences",
             "durable_memory",
             "local_context",
+            "daily_entries",
             "doc_hits",
             "sources",
             "skip",

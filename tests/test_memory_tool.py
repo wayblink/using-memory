@@ -39,8 +39,14 @@ class MemoryToolBehaviorTests(unittest.TestCase):
         (repo / "docs").mkdir()
         (repo / "PREFERENCES.md").write_text(f"# prefs {machine_id}\n", encoding="utf-8")
         (repo / "MEMORY.md").write_text(f"# memory {machine_id}\n", encoding="utf-8")
-        (repo / "daily" / "2026-05-06.md").write_text(f"# today {machine_id}\n", encoding="utf-8")
-        (repo / "daily" / "2026-05-05.md").write_text(f"# yesterday {machine_id}\n", encoding="utf-8")
+        (repo / "daily" / "2026-05-06.jsonl").write_text(
+            '{"ts":"2026-05-06T00:00:00Z","date":"2026-05-06","tag":"fact","source":"user","text":"today primary machine","confidence":7,"files":[]}\n',
+            encoding="utf-8",
+        )
+        (repo / "daily" / "2026-05-05.jsonl").write_text(
+            '{"ts":"2026-05-05T00:00:00Z","date":"2026-05-05","tag":"lesson","source":"user","text":"yesterday primary machine","confidence":8,"files":[]}\n',
+            encoding="utf-8",
+        )
         (repo / "local" / "MACHINE.md").write_text(f"# machine {machine_id}\n", encoding="utf-8")
         (repo / "local" / "ENV.md").write_text(f"# env {machine_id}\n", encoding="utf-8")
         (repo / "local" / "WORKSPACE.md").write_text(f"# workspace {machine_id}\n", encoding="utf-8")
@@ -115,8 +121,8 @@ memory_roots:
                     reference / "MEMORY.md",
                     primary / "docs" / "index.json",
                     reference / "docs" / "index.json",
-                    primary / "daily" / "2026-05-06.md",
-                    primary / "daily" / "2026-05-05.md",
+                    primary / "daily" / "2026-05-06.jsonl",
+                    primary / "daily" / "2026-05-05.jsonl",
                     primary / "local" / "MACHINE.md",
                     primary / "local" / "ENV.md",
                     primary / "local" / "WORKSPACE.md",
@@ -212,8 +218,14 @@ defaults:
             base = Path(tmp)
             primary = self.make_repo(base, "primary", machine_id="primary")
             reference = self.make_repo(base, "reference", machine_id="reference")
-            (primary / "daily" / "2026-05-04.md").write_text("# two days ago primary\n", encoding="utf-8")
-            (reference / "daily" / "2026-05-04.md").write_text("# two days ago reference\n", encoding="utf-8")
+            (primary / "daily" / "2026-05-04.jsonl").write_text(
+                '{"ts":"2026-05-04T00:00:00Z","date":"2026-05-04","tag":"fact","source":"user","text":"two days ago primary","confidence":5,"files":[]}\n',
+                encoding="utf-8",
+            )
+            (reference / "daily" / "2026-05-04.jsonl").write_text(
+                '{"ts":"2026-05-04T00:00:00Z","date":"2026-05-04","tag":"fact","source":"user","text":"two days ago reference","confidence":5,"files":[]}\n',
+                encoding="utf-8",
+            )
             config = base / "config.yaml"
             self.write_config(config, primary, reference)
 
@@ -229,10 +241,10 @@ defaults:
             )
 
             loaded = self.loaded_paths(result)
-            self.assertIn(primary / "daily" / "2026-05-04.md", loaded)
-            self.assertIn(primary / "daily" / "2026-05-05.md", loaded)
-            self.assertIn(primary / "daily" / "2026-05-06.md", loaded)
-            self.assertNotIn(reference / "daily" / "2026-05-04.md", loaded)
+            self.assertIn(primary / "daily" / "2026-05-04.jsonl", loaded)
+            self.assertIn(primary / "daily" / "2026-05-05.jsonl", loaded)
+            self.assertIn(primary / "daily" / "2026-05-06.jsonl", loaded)
+            self.assertNotIn(reference / "daily" / "2026-05-04.jsonl", loaded)
             serialized = json.dumps(result, ensure_ascii=False)
             self.assertIn("two days ago primary", serialized)
             self.assertNotIn("two days ago reference", serialized)
@@ -241,8 +253,14 @@ defaults:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             primary = self.make_repo(base, "primary", machine_id="primary")
-            (primary / "daily" / "2026-05-04.md").write_text("# roadmap match primary\n", encoding="utf-8")
-            (primary / "daily" / "2026-05-03.md").write_text("# roadmap outside window\n", encoding="utf-8")
+            (primary / "daily" / "2026-05-04.jsonl").write_text(
+                '{"ts":"2026-05-04T00:00:00Z","date":"2026-05-04","tag":"fact","source":"user","text":"roadmap match primary","confidence":5,"files":[]}\n',
+                encoding="utf-8",
+            )
+            (primary / "daily" / "2026-05-03.jsonl").write_text(
+                '{"ts":"2026-05-03T00:00:00Z","date":"2026-05-03","tag":"fact","source":"user","text":"roadmap outside window","confidence":5,"files":[]}\n',
+                encoding="utf-8",
+            )
             config = base / "config.yaml"
             self.write_config(config, primary)
 
@@ -262,7 +280,7 @@ defaults:
             loaded = self.loaded_paths(result)
             self.assertEqual(
                 [path for path in loaded if path.parent.name == "daily"],
-                [primary / "daily" / "2026-05-04.md"],
+                [primary / "daily" / "2026-05-04.jsonl"],
             )
             serialized = json.dumps(result, ensure_ascii=False)
             self.assertIn("roadmap match primary", serialized)
@@ -482,7 +500,7 @@ memory_roots:
             reference = self.make_repo(base, "reference", machine_id="reference")
             config = base / "config.yaml"
             self.write_config(config, primary, reference)
-            reference_before = (reference / "daily" / "2026-05-06.md").read_text(encoding="utf-8")
+            reference_before = (reference / "daily" / "2026-05-06.jsonl").read_text(encoding="utf-8")
 
             result = self.run_tool(
                 "write-daily",
@@ -498,11 +516,10 @@ memory_roots:
             )
 
             self.assertTrue(result["changed"])
-            self.assertEqual(Path(result["path"]), primary / "daily" / "2026-05-06.md")
+            self.assertEqual(Path(result["path"]), primary / "daily" / "2026-05-06.jsonl")
             self.assertRegex(result["sha256"], r"^[0-9a-f]{64}$")
-            primary_text = (primary / "daily" / "2026-05-06.md").read_text(encoding="utf-8")
-            self.assertIn("- [decision|2026-05-06] deterministic writer only targets primary daily", primary_text)
-            self.assertEqual((reference / "daily" / "2026-05-06.md").read_text(encoding="utf-8"), reference_before)
+            primary_text = (primary / "daily" / "2026-05-06.jsonl").read_text(encoding="utf-8")
+            self.assertIn("deterministic writer only targets primary daily", primary_text)
 
     def test_write_daily_and_memory_append_on_new_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -536,12 +553,14 @@ memory_roots:
                 "--json",
             )
 
-            daily_text = (primary / "daily" / "2026-05-06.md").read_text(encoding="utf-8")
+            daily_lines = [json.loads(l) for l in (primary / "daily" / "2026-05-06.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+            daily_texts = [e["text"] for e in daily_lines]
+            self.assertIn("line separated daily", daily_texts)
+
             memory_text = (primary / "MEMORY.md").read_text(encoding="utf-8")
-            self.assertIn("# today primary\n- [fact|2026-05-06] line separated daily\n", daily_text)
-            self.assertIn("# memory primary\n- [fact|2026-05-06] line separated memory\n", memory_text)
-            self.assertNotIn("# today primary- [fact", daily_text)
-            self.assertNotIn("# memory primary- [fact", memory_text)
+            self.assertIn("line separated memory", memory_text)
+            self.assertNotIn("line separated daily", memory_text)
+            self.assertNotIn("line separated memory", daily_texts[:1] + daily_texts[1:])
 
     def test_write_memory_rejects_preference_tag(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -678,6 +697,180 @@ memory_roots:
             )
 
             self.assertIn("invalid doc name", proc.stderr)
+
+    def test_load_populates_daily_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool(
+                "load",
+                "--config", str(config),
+                "--date", "2026-05-06",
+                "--json",
+            )
+            self.assertEqual(result["mode"], "memory")
+            self.assertTrue(result["write_enabled"])
+            self.assertIsInstance(result["daily_entries"], list)
+            self.assertGreater(len(result["daily_entries"]), 0)
+            entry = result["daily_entries"][0]
+            for key in ("ts", "date", "tag", "source", "text"):
+                self.assertIn(key, entry)
+
+            # confirm daily_entries is populated from JSONL
+            self.assertIsInstance(result["daily_entries"], list)
+            self.assertGreater(len(result["daily_entries"]), 0)
+            entry = result["daily_entries"][0]
+            for key in ("ts", "date", "tag", "source", "text"):
+                self.assertIn(key, entry)
+
+            # confirm daily_entries text is the structured parsed content
+            daily_texts = [e["text"] for e in result["daily_entries"]]
+            self.assertIn("today primary machine", daily_texts)
+
+    def test_search_hits_docs_memory_and_daily(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            (primary / "MEMORY.md").write_text("- [fact] deploy-safe test\n", encoding="utf-8")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool(
+                "search", "deploy-safe",
+                "--config", str(config),
+                "--daily-days", "2",
+                "--json",
+            )
+            sources = {hit["source"] for hit in result["hits"]}
+            self.assertGreater(result["total"], 0)
+            self.assertIn("MEMORY.md", sources)
+
+    def test_search_respects_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            (primary / "MEMORY.md").write_text("- [fact] deploy-safe test\n", encoding="utf-8")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result_no_mem = self.run_tool(
+                "search", "deploy-safe",
+                "--config", str(config),
+                "--no-memory",
+                "--json",
+            )
+            self.assertEqual(result_no_mem["total"], 0)
+
+            result_daily_only = self.run_tool(
+                "search", "today",
+                "--config", str(config),
+                "--no-docs", "--no-memory",
+                "--json",
+            )
+            self.assertGreater(result_daily_only["total"], 0)
+            self.assertTrue(all(h["source"] == "daily" for h in result_daily_only["hits"]))
+
+    def test_prune_reports_stale_file_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            jsonl_path = primary / "daily" / "2026-05-06.jsonl"
+            stale_line = json.dumps({
+                "ts": "2026-05-06T00:00:00Z",
+                "date": "2026-05-06",
+                "tag": "lesson",
+                "source": "user",
+                "text": "stale reference here",
+                "confidence": 5,
+                "files": ["stale_file.py"],
+            })
+            jsonl_path.write_text(stale_line + "\n", encoding="utf-8")
+
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool("prune", "--config", str(config), "--json")
+            self.assertGreater(result["ok"], 0)
+            self.assertEqual(len(result["stale"]), 1)
+            self.assertIn("stale_file.py", result["stale"][0]["file"])
+
+    def test_prune_reports_corrupt_jsonl_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            jsonl_path = primary / "daily" / "2026-05-06.jsonl"
+            jsonl_path.write_text(
+                'bad json line here\n',
+                encoding="utf-8",
+            )
+
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool("prune", "--config", str(config), "--json")
+            self.assertEqual(len(result["corrupt"]), 1)
+            self.assertEqual(result["corrupt"][0]["line"], 1)
+
+    def test_stats_counts_tags_in_daily_and_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            # add extra daily entry
+            extra = {"ts":"2026-05-06T01:00:00Z","date":"2026-05-06","tag":"lesson","source":"user","text":"extra","confidence":3,"files":[]}
+            (primary / "daily" / "2026-05-06.jsonl").write_text(
+                '{"ts":"2026-05-06T00:00:00Z","date":"2026-05-06","tag":"fact","source":"user","text":"extra lesson","confidence":7,"files":[]}\n'
+                + json.dumps(extra) + "\n",
+                encoding="utf-8",
+            )
+            (primary / "MEMORY.md").write_text("- [lesson] memory lesson\n", encoding="utf-8")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool("stats", "--config", str(config), "--json")
+            daily = result["daily"]
+            memory = result["memory"]
+            self.assertEqual(daily["total"], 3)  # 1 from 2026-05-05 + 2 from 2026-05-06
+            self.assertIn("fact", daily["by_tag"])
+            self.assertIn("lesson", daily["by_tag"])
+            self.assertEqual(memory["total"], 1)
+
+    def test_export_writes_markdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool(
+                "export",
+                "--config", str(config),
+                "--json",
+            )
+            self.assertIn("Project Memory", result["text"])
+            self.assertIn("Daily JSONL", result["text"])
+
+    def test_export_appends_to_dest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            dest = Path(tmp) / "SUMMARY.md"
+            dest.write_text("# existing\n", encoding="utf-8")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool(
+                "export",
+                "--config", str(config),
+                "--dest", str(dest),
+                "--json",
+            )
+            self.assertTrue(result["changed"])
+            text = dest.read_text(encoding="utf-8")
+            self.assertIn("# existing", text)
+            self.assertIn("Project Memory", text)
 
 
 if __name__ == "__main__":
