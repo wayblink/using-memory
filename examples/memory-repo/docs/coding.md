@@ -1,6 +1,6 @@
 # Coding Standards
 
-This wiki page shows doc type `wiki` — loaded on demand when the current task clearly matches a coding-standards query in `docs/index.json`.
+This wiki page shows doc type `wiki` - loaded on demand when the current task clearly matches a coding-standards query in `docs/index.json`.
 
 ## Python
 
@@ -25,5 +25,5 @@ This wiki page shows doc type `wiki` — loaded on demand when the current task 
 ## Commit messages
 
 - Imperative mood: "add", "fix", "refactor", not "added", "fixed".
-- Subject ≤ 72 characters.
+- Subject <= 72 characters.
 - Body explains *why*, not *how*.

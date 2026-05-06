@@ -10,18 +10,18 @@ A typical memory repo looks like this:
 
 ```text
 memory-repo/
-├── PREFERENCES.md
-├── MEMORY.md
-├── docs/
-│   ├── index.json
-│   ├── project-alpha.md
-│   └── writing-rules.md
-├── daily/
-│   └── 2026-05-06.md
-└── local/
-    ├── MACHINE.md
-    ├── ENV.md
-    └── WORKSPACE.md
++-- PREFERENCES.md
++-- MEMORY.md
++-- docs/
+|   +-- index.json
+|   +-- project-alpha.md
+|   +-- writing-rules.md
++-- daily/
+|   +-- 2026-05-06.md
++-- local/
+    +-- MACHINE.md
+    +-- ENV.md
+    +-- WORKSPACE.md
 ```
 
 Layer responsibilities:
@@ -96,10 +96,10 @@ Minimal config:
 version: 1
 memory_roots:
   - path: /absolute/path/to/memory-repo
-    role: primary
-    writable: true
-    machine_id: local-main
-    priority: 100
+  - role: primary
+  - writable: true
+  - machine_id: local-main
+  - priority: 100
 
 defaults:
   read_today: true

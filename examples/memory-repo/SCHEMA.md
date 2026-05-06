@@ -30,11 +30,11 @@
 - Daily append-only journals. Tag entries lightly with `[pref]`, `[decision|YYYY-MM-DD]`, `[lesson|YYYY-MM-DD]`, etc., and keep paragraphs short.
 
 Allowed lightweight tags:
-- `[pref]` — preference or style reminder
-- `[decision|<date>]` — timestamped decision worth preserving
-- `[lesson|<date>]` — distilled learning from a session
-- `[fact]` — stable, factual statements
-- `[issue]` — open questions or parking nodes for daily notes or indexed todo/plan documents only; not accepted by `write-memory`
+- `[pref]` - preference or style reminder
+- `[decision|<date>]` - timestamped decision worth preserving
+- `[lesson|<date>]` - distilled learning from a session
+- `[fact]` - stable, factual statements
+- `[issue]` - open questions or parking nodes for daily notes or indexed todo/plan documents only; not accepted by `write-memory`
 
 CLI write boundary:
 - `write-preference` appends stable preferences to `PREFERENCES.md`.
