@@ -1,0 +1,3 @@
+{"ts":"2026-04-13T00:00:00Z","date":"2026-04-13","tag":"pref","source":"user","text":"Continue using concise direct replies focused on execution, with reasoning explained only when useful.","confidence":8,"files":[]}
+{"ts":"2026-04-13T00:00:00Z","date":"2026-04-13","tag":"decision","source":"user","text":"Set the primary repo to this machine and write daily plus local/ content only in the primary repo.","confidence":9,"files":[]}
+{"ts":"2026-04-13T00:00:00Z","date":"2026-04-13","tag":"lesson","source":"user","text":"Tool calls do not need to be written every time; store only key decisions and preferences to prevent memory bloat.","confidence":7,"files":[]}

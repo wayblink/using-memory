@@ -9,6 +9,9 @@
 \#*\#
 *.bak
 
+# Legacy daily notes — canonical format is daily/YYYY-MM-DD.jsonl
+daily/*.md
+
 # Optional env file even if personal skills shouldn't store secrets here
 .env
 .env.*

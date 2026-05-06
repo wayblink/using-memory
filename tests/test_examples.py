@@ -64,13 +64,27 @@ class ExampleTests(unittest.TestCase):
             "local/MACHINE.md",
             "local/ENV.md",
             "local/WORKSPACE.md",
-            "daily/2026-04-13.md",
+            "daily/2026-04-13.jsonl",
         ]
         for rel in required:
             self.assertTrue((ROOT / "examples/memory-repo" / rel).exists(), rel)
 
     def test_daily_example_uses_lightweight_tags(self):
-        text = (ROOT / "examples/memory-repo/daily/2026-04-13.md").read_text(encoding="utf-8")
-        self.assertIn("[pref]", text)
-        self.assertIn("[decision|2026-04-13]", text)
-        self.assertIn("[lesson|2026-04-13]", text)
+        import json
+
+        text = (ROOT / "examples/memory-repo/daily/2026-04-13.jsonl").read_text(encoding="utf-8")
+        tags = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                tags.append(f"[{entry['tag']}]")
+                if entry.get("date"):
+                    tags.append(f"[{entry['tag']}|{entry['date']}]")
+            except json.JSONDecodeError:
+                continue
+        self.assertIn("[pref]", tags)
+        self.assertIn("[decision|2026-04-13]", tags)
+        self.assertIn("[lesson|2026-04-13]", tags)
