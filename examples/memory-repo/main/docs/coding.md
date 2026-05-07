@@ -1,6 +1,6 @@
 # Coding Standards
 
-This wiki page shows doc type `wiki` - loaded on demand when the current task clearly matches a coding-standards query in `docs/index.json`.
+This wiki page shows doc type `wiki` - loaded on demand when the current task clearly matches a coding-standards query in `<namespace>/docs/index.json`.
 
 ## Python
 

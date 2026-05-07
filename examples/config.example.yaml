@@ -1,27 +1,17 @@
 version: 1
 
 memory_roots:
-  - path: ~/.memories/main
+  - path: ~/.memories
     role: primary
     writable: true
-    machine_id: home-primary
+    namespace: main
+    machine_id: local-main
     priority: 100
-
-  - path: ~/.memories/work-laptop
-    role: reference
-    writable: false
-    machine_id: work-laptop
-    priority: 60
-
-  - path: ~/.memories/archives
-    role: reference
-    writable: false
-    machine_id: backups
-    priority: 40
 
 defaults:
   read_today: true
   read_yesterday: true
   load_docs_on_demand: true
 
-# This config lives outside the shared repo and records how the current machine prioritizes its roots.
+# This config lives outside the memory repo and records this machine's namespace and checkout path.
+# If namespace is omitted, using-memory defaults it to main.

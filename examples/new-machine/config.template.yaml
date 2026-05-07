@@ -1,20 +1,15 @@
 # Copy this file to ~/.skills/using-memory/config.yaml on a new machine.
-# Adjust only the machine-local values: path, machine_id, and reference roots.
+# Adjust only the machine-local values: path, namespace, and machine_id.
 
 version: 1
 
 memory_roots:
-  - path: ~/.memories/main
+  - path: ~/.memories
     role: primary
     writable: true
+    namespace: main
     machine_id: local-main
     priority: 100
-
-  - path: ~/.memories/other-machine
-    role: reference
-    writable: false
-    machine_id: remote-laptop
-    priority: 50
 
 defaults:
   read_today: true
@@ -23,3 +18,4 @@ defaults:
 
 # Default lookup path:
 # ~/.skills/using-memory/config.yaml
+# If namespace is omitted, using-memory defaults it to main.

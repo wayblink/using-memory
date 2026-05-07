@@ -6,17 +6,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ExampleTests(unittest.TestCase):
-    def test_config_example_declares_primary_and_reference_roots(self):
+    def test_config_example_declares_primary_root_with_namespace(self):
         text = (ROOT / "examples/config.example.yaml").read_text(encoding="utf-8")
         for needle in [
             "memory_roots:",
             "role: primary",
-            "role: reference",
             "writable: true",
-            "writable: false",
+            "namespace: main",
             "priority:",
         ]:
             self.assertIn(needle, text)
+        self.assertNotIn("archive", text)
 
     def test_new_machine_templates_match_expected_layout(self):
         config_text = (ROOT / "examples/new-machine/config.template.yaml").read_text(
@@ -31,13 +31,12 @@ class ExampleTests(unittest.TestCase):
 
         for needle in [
             "version: 1",
-            "path: ~/.memories/main",
+            "path: ~/.memories",
             "role: primary",
             "writable: true",
+            "namespace: main",
             "machine_id: local-main",
             "priority: 100",
-            "role: reference",
-            "writable: false",
             "~/.skills/using-memory/config.yaml",
         ]:
             with self.subTest(needle=needle):
@@ -55,24 +54,24 @@ class ExampleTests(unittest.TestCase):
 
     def test_memory_repo_example_contains_expected_seed_files(self):
         required = [
-            "README.md",
-            "SCHEMA.md",
-            "MEMORY.md",
-            "PREFERENCES.md",
-            "docs/index.json",
-            "docs/workflow.md",
-            "local/MACHINE.md",
-            "local/ENV.md",
-            "local/WORKSPACE.md",
-            "daily/2026-04-13.jsonl",
+            "main/README.md",
+            "main/SCHEMA.md",
+            "main/MEMORY.md",
+            "main/PREFERENCES.md",
+            "main/docs/index.json",
+            "main/docs/workflow.md",
+            "main/local/MACHINE.md",
+            "main/local/ENV.md",
+            "main/local/WORKSPACE.md",
+            "main/log/2026-04-13.jsonl",
         ]
         for rel in required:
             self.assertTrue((ROOT / "examples/memory-repo" / rel).exists(), rel)
 
-    def test_daily_example_uses_lightweight_tags(self):
+    def test_log_example_uses_lightweight_tags(self):
         import json
 
-        text = (ROOT / "examples/memory-repo/daily/2026-04-13.jsonl").read_text(encoding="utf-8")
+        text = (ROOT / "examples/memory-repo/main/log/2026-04-13.jsonl").read_text(encoding="utf-8")
         tags = []
         for line in text.splitlines():
             line = line.strip()
@@ -85,6 +84,6 @@ class ExampleTests(unittest.TestCase):
                     tags.append(f"[{entry['tag']}|{entry['date']}]")
             except json.JSONDecodeError:
                 continue
-        self.assertIn("[pref]", tags)
+        self.assertIn("[note]", tags)
         self.assertIn("[decision|2026-04-13]", tags)
         self.assertIn("[lesson|2026-04-13]", tags)

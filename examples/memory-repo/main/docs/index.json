@@ -17,7 +17,7 @@
       "modified": "2026-05-05",
       "projects": ["using-memory"],
       "tags": ["coding", "standards"],
-      "summary": "Shared coding conventions for Python, shell scripts, and tests."
+      "summary": "Reusable coding conventions for Python, shell scripts, and tests."
     }
   ]
 }

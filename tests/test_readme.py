@@ -12,11 +12,12 @@ class ReadmeTests(unittest.TestCase):
 
         self.assertIn("memory_roots:", text)
         self.assertIn("role: primary", text)
-        self.assertIn("local/MACHINE.md", text)
-        self.assertIn("local/ENV.md", text)
-        self.assertIn("local/WORKSPACE.md", text)
+        self.assertIn("<namespace>/local/MACHINE.md", text)
+        self.assertIn("<namespace>/local/ENV.md", text)
+        self.assertIn("<namespace>/local/WORKSPACE.md", text)
         self.assertNotIn("primary_repo:", text)
         self.assertNotIn("local/<machine-id>/", text)
+        self.assertNotIn("namespaces/", text)
 
     def test_readme_commands_match_cli_flags(self):
         text = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -31,7 +32,7 @@ class ReadmeTests(unittest.TestCase):
             "--doc project-alpha",
             "--doc-type project",
             "--doc-tag planning",
-            "write-daily \\\n  --config",
+            "write-log \\\n  --config",
         ]:
             with self.subTest(required=required):
                 self.assertIn(required, text)
@@ -48,7 +49,7 @@ class ReadmeTests(unittest.TestCase):
             "maintain",
             "stats",
             "export",
-            "write-daily",
+            "write-log",
             "write-memory",
             "write-preference",
             "upsert-doc",

@@ -9,17 +9,24 @@ import sys
 import tempfile
 import yaml
 from pathlib import Path
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows fallback for portable installs.
     fcntl = None
 
+# Python 3.10 compatibility: UTC was added in 3.11
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
+
 
 DEFAULT_CONFIG_PATH = "~/.skills/using-memory/config.yaml"
 LOCAL_CONTEXT_FILES = ("MACHINE.md", "ENV.md", "WORKSPACE.md")
 DOC_ENTRY_REQUIRED_FIELDS = ("path", "title", "type", "modified")
+DEFAULT_NAMESPACE = "main"
 
 
 def no_memory_config(warning: str) -> dict:
@@ -93,6 +100,25 @@ def root_priority(root: dict) -> int:
 
 def expand_path(raw_path: str) -> Path:
     return Path(os.path.expanduser(os.path.expandvars(raw_path)))
+
+
+def namespace_from_root(root_cfg: dict) -> str:
+    namespace = root_cfg.get("namespace", DEFAULT_NAMESPACE)
+    if namespace is None:
+        namespace = DEFAULT_NAMESPACE
+    if not isinstance(namespace, str) or not namespace.strip():
+        sys.stderr.write("invalid namespace: expected a non-empty path segment\n")
+        sys.exit(2)
+    namespace = namespace.strip()
+    namespace_path = Path(namespace)
+    if namespace_path.is_absolute() or "\\" in namespace or namespace in {".", ".."} or ".." in namespace_path.parts or len(namespace_path.parts) != 1:
+        sys.stderr.write("invalid namespace: expected a single relative path segment\n")
+        sys.exit(2)
+    return namespace
+
+
+def namespace_root(root: Path, namespace: str) -> Path:
+    return root / namespace
 
 
 def parse_iso_date(raw: str | None, label: str) -> date:
@@ -334,21 +360,24 @@ def append_markdown_entry(path: Path, entry: str) -> Path:
     return path
 
 
-def append_daily_entry(
+def append_log_entry(
     root: Path,
+    namespace: str,
     when: date,
     tag: str,
     text: str,
+    level: str = "detail",
     confidence: int | None = None,
     source: str | None = None,
     files: list[str] | None = None,
 ) -> Path:
-    """Append one entry to the primary repo's daily note (JSONL only)."""
-    jsonl_target = root / "daily" / f"{when:%Y-%m-%d}.jsonl"
+    """Append one entry to the primary repo's log note (JSONL only)."""
+    jsonl_target = namespace_root(root, namespace) / "log" / f"{when:%Y-%m-%d}.jsonl"
     record = {
         "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "date": when.isoformat(),
         "tag": tag,
+        "level": level,
         "source": source or "user",
         "text": text,
         "confidence": confidence,
@@ -404,7 +433,7 @@ def resolve_primary_file_reference(primary_root: Path, raw_path) -> Path | None:
     return candidate
 
 
-def load_primary_for_write(args: argparse.Namespace) -> Path:
+def load_primary_for_write(args: argparse.Namespace) -> tuple[Path, str]:
     config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
     if not config:
         sys.stderr.write("config not found\n")
@@ -420,7 +449,7 @@ def load_primary_for_write(args: argparse.Namespace) -> Path:
         sys.exit(2)
     primary_root = expand_path(raw_path)
     validate_primary_root_for_write(primary_root)
-    return primary_root
+    return primary_root, namespace_from_root(primary_list[0])
 
 
 def load_doc_index(index_path: Path) -> dict:
@@ -521,31 +550,31 @@ def maintain_doc_index(primary_root: Path) -> list[dict]:
 
 def date_range(start: date, end: date) -> list[date]:
     if start > end:
-        sys.stderr.write("daily range start must be before or equal to end\n")
+        sys.stderr.write("log range start must be before or equal to end\n")
         sys.exit(2)
     days = (end - start).days
     return [start + timedelta(days=offset) for offset in range(days + 1)]
 
 
-def daily_dates_for_load(args: argparse.Namespace, target: date, read_today: bool, read_yesterday: bool) -> list[date]:
-    has_range = bool(args.daily_from or args.daily_to)
-    has_days = args.daily_days is not None
+def log_dates_for_load(args: argparse.Namespace, target: date, read_today: bool, read_yesterday: bool) -> list[date]:
+    has_range = bool(args.log_from or args.log_to)
+    has_days = args.log_days is not None
     if has_range and has_days:
-        sys.stderr.write("--daily-from/--daily-to cannot be combined with --daily-days\n")
+        sys.stderr.write("--log-from/--log-to cannot be combined with --log-days\n")
         sys.exit(2)
     if has_range:
-        if not args.daily_from or not args.daily_to:
-            sys.stderr.write("--daily-from and --daily-to must be provided together\n")
+        if not args.log_from or not args.log_to:
+            sys.stderr.write("--log-from and --log-to must be provided together\n")
             sys.exit(2)
         return date_range(
-            parse_iso_date(args.daily_from, "--daily-from"),
-            parse_iso_date(args.daily_to, "--daily-to"),
+            parse_iso_date(args.log_from, "--log-from"),
+            parse_iso_date(args.log_to, "--log-to"),
         )
     if has_days:
-        if args.daily_days < 1:
-            sys.stderr.write("--daily-days must be >= 1\n")
+        if args.log_days < 1:
+            sys.stderr.write("--log-days must be >= 1\n")
             sys.exit(2)
-        start = target - timedelta(days=args.daily_days - 1)
+        start = target - timedelta(days=args.log_days - 1)
         return date_range(start, target)
 
     dates = []
@@ -556,45 +585,47 @@ def daily_dates_for_load(args: argparse.Namespace, target: date, read_today: boo
     return dates
 
 
-def append_daily_jsonl_sources(
+def append_log_jsonl_sources(
     sources_list: list,
     local_context: list,
-    daily_entries: list,
+    log_entries: list,
     warnings: list,
     primary_root: Path,
+    primary_namespace: str,
     primary_machine: str,
     dates: list[date],
     query: str | None,
 ) -> None:
     normalized_query = query.lower() if query else None
-    for daily_date in dates:
-        jsonl_path = primary_root / "daily" / f"{daily_date:%Y-%m-%d}.jsonl"
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    for log_date in dates:
+        jsonl_path = scoped_root / "log" / f"{log_date:%Y-%m-%d}.jsonl"
         if not jsonl_path.exists():
             continue
-        daily_source = read_source(jsonl_path, "daily", "primary", primary_machine)
-        if not daily_source["loaded"]:
+        log_source = read_source(jsonl_path, "log", "primary", primary_machine)
+        if not log_source["loaded"]:
             continue
         matched_lines = []
-        if daily_source["loaded"]:
-            for lineno, line in enumerate(daily_source["content"].splitlines(), 1):
+        if log_source["loaded"]:
+            for lineno, line in enumerate(log_source["content"].splitlines(), 1):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     entry = json.loads(line)
                 except json.JSONDecodeError as exc:
-                    warnings.append(f"invalid daily jsonl: {jsonl_path}:{lineno}: {exc.msg}")
+                    warnings.append(f"invalid log jsonl: {jsonl_path}:{lineno}: {exc.msg}")
                     continue
                 text = entry.get("text", "")
                 if normalized_query and normalized_query not in str(text).lower():
                     continue
-                daily_entries.append(entry)
+                log_entries.append(entry)
                 matched_lines.append(json.dumps(entry, ensure_ascii=False))
         if normalized_query and not matched_lines:
             continue
         if normalized_query:
-            daily_source["content"] = "\n".join(matched_lines) + ("\n" if matched_lines else "")
-        sources_list.append(daily_source)
+            log_source["content"] = "\n".join(matched_lines) + ("\n" if matched_lines else "")
+        sources_list.append(log_source)
 
 
 def do_load(args: argparse.Namespace) -> dict:
@@ -626,16 +657,17 @@ def do_load(args: argparse.Namespace) -> dict:
     sources_list = []
     preferences, durable_memory, doc_set = [], [], []
     local_context = []
-    daily_entries = []
+    log_entries = []
     if roots_exist:
         ordered_roots = primary_list + ref_list
 
         for root_cfg in ordered_roots:
             raw_path = root_cfg.get("path", "")
             r_path = expand_path(raw_path)
+            scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
             role = root_cfg.get("role", "reference")
             machine_id = root_cfg.get("machine_id", "")
-            pref_source = read_source(r_path / "PREFERENCES.md", "preferences", role, machine_id)
+            pref_source = read_source(scoped_root / "PREFERENCES.md", "preferences", role, machine_id)
             sources_list.append(pref_source)
             if pref_source["loaded"]:
                 preferences.append(pref_source["content"])
@@ -643,9 +675,10 @@ def do_load(args: argparse.Namespace) -> dict:
         for root_cfg in ordered_roots:
             raw_path = root_cfg.get("path", "")
             r_path = expand_path(raw_path)
+            scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
             role = root_cfg.get("role", "reference")
             machine_id = root_cfg.get("machine_id", "")
-            memory_source = read_source(r_path / "MEMORY.md", "durable_memory", role, machine_id)
+            memory_source = read_source(scoped_root / "MEMORY.md", "durable_memory", role, machine_id)
             sources_list.append(memory_source)
             if memory_source["loaded"]:
                 durable_memory.append(memory_source["content"])
@@ -653,9 +686,10 @@ def do_load(args: argparse.Namespace) -> dict:
         if load_docs:
             for root_cfg in ordered_roots:
                 r_path = expand_path(root_cfg.get("path", ""))
+                scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
                 role = root_cfg.get("role", "reference")
                 machine_id = root_cfg.get("machine_id", "")
-                index_source = read_json_source(r_path / "docs" / "index.json", "docs_index", role, machine_id)
+                index_source = read_json_source(scoped_root / "docs" / "index.json", "docs_index", role, machine_id)
                 sources_list.append(index_source)
                 if not index_source["loaded"]:
                     continue
@@ -677,7 +711,7 @@ def do_load(args: argparse.Namespace) -> dict:
                     continue
 
                 for entry in matched_entries:
-                    doc_path = doc_path_from_entry(r_path, entry)
+                    doc_path = doc_path_from_entry(scoped_root, entry)
                     if doc_path is None:
                         continue
                     doc_source = read_source(doc_path, "doc", role, machine_id)
@@ -696,22 +730,24 @@ def do_load(args: argparse.Namespace) -> dict:
 
         primary_cfg = primary_list[0]
         primary_root = expand_path(primary_cfg.get("path", ""))
+        primary_namespace = namespace_from_root(primary_cfg)
         primary_machine = primary_cfg.get("machine_id", "")
-        daily_dates = daily_dates_for_load(args, target, read_today, read_yesterday)
-        append_daily_jsonl_sources(
+        log_dates = log_dates_for_load(args, target, read_today, read_yesterday)
+        append_log_jsonl_sources(
             sources_list,
             local_context,
-            daily_entries,
+            log_entries,
             warnings,
             primary_root,
+            primary_namespace,
             primary_machine,
-            daily_dates,
-            args.daily_query,
+            log_dates,
+            args.log_query,
         )
 
         for local_name in LOCAL_CONTEXT_FILES:
             local_source = read_source(
-                primary_root / "local" / local_name,
+                namespace_root(primary_root, primary_namespace) / "local" / local_name,
                 "local_context",
                 "primary",
                 primary_machine,
@@ -728,24 +764,25 @@ def do_load(args: argparse.Namespace) -> dict:
         "preferences": preferences,
         "durable_memory": durable_memory,
         "local_context": local_context,
-        "daily_entries": daily_entries,
+        "log_entries": log_entries,
         "doc_hits": doc_set,
         "warnings": warnings,
     }
 
 
-def do_write_daily(args: argparse.Namespace) -> dict:
-    primary_root = load_primary_for_write(args)
+def do_write_log(args: argparse.Namespace) -> dict:
+    primary_root, primary_namespace = load_primary_for_write(args)
     when = parse_iso_date(args.date, "--date")
-    allowed = {"pref", "decision", "lesson", "fact", "issue", "pattern", "preference"}
+    allowed = {"operation", "progress", "milestone", "result", "issue", "debug", "decision", "build", "test", "lesson", "fact", "note"}
     tag = (args.tag or "").lower()
     if tag not in allowed:
         sys.stderr.write(f"invalid tag '{args.tag}'; allowed: {', '.join(sorted(allowed))}\n")
         sys.exit(2)
+    level = args.level
     confidence = args.confidence if args.confidence else None
     source = args.source if args.source else None
     files = args.files if args.files else []
-    target = append_daily_entry(primary_root, when, tag, args.text, confidence=confidence, source=source, files=files)
+    target = append_log_entry(primary_root, primary_namespace, when, tag, args.text, level=level, confidence=confidence, source=source, files=files)
     return {
         "changed": True,
         "path": str(target),
@@ -754,14 +791,14 @@ def do_write_daily(args: argparse.Namespace) -> dict:
 
 
 def do_write_memory(args: argparse.Namespace) -> dict:
-    primary_root = load_primary_for_write(args)
+    primary_root, primary_namespace = load_primary_for_write(args)
     when = parse_iso_date(args.date, "--date")
     allowed = {"decision", "lesson", "fact"}
     tag = (args.tag or "").lower()
     if tag not in allowed:
         sys.stderr.write(f"tag is not allowed for write-memory\n")
         sys.exit(2)
-    target = append_memory_entry(primary_root, when, tag, args.text)
+    target = append_memory_entry(namespace_root(primary_root, primary_namespace), when, tag, args.text)
     return {
         "changed": True,
         "path": str(target),
@@ -770,8 +807,8 @@ def do_write_memory(args: argparse.Namespace) -> dict:
 
 
 def do_write_preference(args: argparse.Namespace) -> dict:
-    primary_root = load_primary_for_write(args)
-    target = append_preference_entry(primary_root, args.text)
+    primary_root, primary_namespace = load_primary_for_write(args)
+    target = append_preference_entry(namespace_root(primary_root, primary_namespace), args.text)
     return {
         "changed": True,
         "path": str(target),
@@ -780,11 +817,12 @@ def do_write_preference(args: argparse.Namespace) -> dict:
 
 
 def do_upsert_doc(args: argparse.Namespace) -> dict:
-    primary_root = load_primary_for_write(args)
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
     doc_name = validate_doc_name(args.doc)
     parse_iso_date(args.modified, "--modified")
-    doc_path = primary_root / "docs" / f"{doc_name}.md"
-    index_path = primary_root / "docs" / "index.json"
+    doc_path = scoped_root / "docs" / f"{doc_name}.md"
+    index_path = scoped_root / "docs" / "index.json"
     rel_path = f"{doc_name}.md"
     entry = {
         "path": rel_path,
@@ -800,7 +838,7 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     if error:
         sys.stderr.write(f"invalid doc metadata: {error}\n")
         sys.exit(2)
-    with exclusive_file_lock(primary_root / "docs" / ".docs.lock"):
+    with exclusive_file_lock(scoped_root / "docs" / ".docs.lock"):
         index = load_doc_index(index_path)
         index = doc_index_with_entry(index, entry)
         atomic_write_text(doc_path, args.text)
@@ -820,10 +858,10 @@ def _search_sources(
     *,
     search_docs: bool,
     search_memory: bool,
-    search_daily: bool,
-    daily_days: int | None = None,
+    search_log: bool,
+    log_days: int | None = None,
 ) -> dict:
-    """Full-text search across docs, MEMORY.md, and daily JSONL."""
+    """Full-text search across configured namespace docs, MEMORY.md, and log JSONL."""
     hits = []
     if not config:
         return {"query": query, "hits": [], "total": 0}
@@ -832,12 +870,13 @@ def _search_sources(
     validate_single_primary(primary_list, required=False)
     ordered_roots = primary_list + ref_list
 
-    # --- docs/*.md ---
+    # --- <namespace>/docs/*.md ---
     if search_docs:
         for root_cfg in ordered_roots:
             r_path = expand_path(root_cfg.get("path", ""))
+            scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
             role = root_cfg.get("role", "reference")
-            index_path = r_path / "docs" / "index.json"
+            index_path = scoped_root / "docs" / "index.json"
             if not index_path.exists():
                 continue
             index_source = read_json_source(index_path, "docs_index", role)
@@ -845,7 +884,7 @@ def _search_sources(
                 continue
             entries = normalize_doc_index(index_source["json"])
             for entry in entries:
-                doc_path = doc_path_from_entry(r_path, entry)
+                doc_path = doc_path_from_entry(scoped_root, entry)
                 if doc_path is None or not doc_path.exists():
                     continue
                 content = doc_path.read_text(encoding="utf-8")
@@ -861,12 +900,13 @@ def _search_sources(
                         "score": 1,
                     })
 
-    # --- MEMORY.md ---
+    # --- <namespace>/MEMORY.md ---
     if search_memory:
         for root_cfg in ordered_roots:
             r_path = expand_path(root_cfg.get("path", ""))
+            scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
             role = root_cfg.get("role", "reference")
-            mem_path = r_path / "MEMORY.md"
+            mem_path = scoped_root / "MEMORY.md"
             if not mem_path.exists():
                 continue
             mem_source = read_source(mem_path, "durable_memory", role)
@@ -881,17 +921,19 @@ def _search_sources(
                         "score": 1,
                     })
 
-    # --- daily/*.jsonl ---
-    if search_daily and primary_list:
+    # --- <namespace>/log/*.jsonl ---
+    if search_log and primary_list:
         primary_root = expand_path(primary_list[0].get("path", ""))
-        if daily_days:
+        primary_namespace = namespace_from_root(primary_list[0])
+        scoped_root = namespace_root(primary_root, primary_namespace)
+        if log_days:
             target = date.today()
-            start = target - timedelta(days=daily_days - 1)
+            start = target - timedelta(days=log_days - 1)
             date_list = date_range(start, target)
         else:
             date_list = [date.today() - timedelta(days=i) for i in range(2)]
         for d in date_list:
-            jsonl_path = primary_root / "daily" / f"{d:%Y-%m-%d}.jsonl"
+            jsonl_path = scoped_root / "log" / f"{d:%Y-%m-%d}.jsonl"
             if not jsonl_path.exists():
                 continue
             try:
@@ -909,7 +951,7 @@ def _search_sources(
                 text = entry.get("text", "")
                 if query.lower() in text.lower():
                     hits.append({
-                        "source": "daily",
+                        "source": "log",
                         "path": str(jsonl_path),
                         "line": lineno,
                         "snippet": text[:120],
@@ -923,7 +965,7 @@ def _search_sources(
         "scope": {
             "docs": "primary_and_reference" if search_docs else "disabled",
             "memory": "primary_and_reference" if search_memory else "disabled",
-            "daily": "primary_only" if search_daily else "disabled",
+            "log": "primary_only" if search_log else "disabled",
         },
     }
 
@@ -935,21 +977,22 @@ def do_search(args: argparse.Namespace) -> dict:
         query=args.query,
         search_docs=not args.no_docs,
         search_memory=not args.no_memory,
-        search_daily=not args.no_daily,
-        daily_days=args.daily_days,
+        search_log=not args.no_log,
+        log_days=args.log_days,
     )
 
 
 def do_maintain(args: argparse.Namespace) -> dict:
     """Run maintenance checks and repair missing docs index entries."""
-    primary_root = load_primary_for_write(args)
-    daily_dir = primary_root / "daily"
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    log_dir = scoped_root / "log"
     stale = []
     corrupt = []
     ok_count = 0
 
-    if daily_dir.is_dir():
-        for jsonl_path in sorted(daily_dir.glob("*.jsonl")):
+    if log_dir.is_dir():
+        for jsonl_path in sorted(log_dir.glob("*.jsonl")):
             if not jsonl_path.is_file():
                 continue
             try:
@@ -967,7 +1010,7 @@ def do_maintain(args: argparse.Namespace) -> dict:
                     corrupt.append({"path": str(jsonl_path), "line": lineno, "error": exc.msg})
                     continue
                 for f_path in entry.get("files", []):
-                    candidate = resolve_primary_file_reference(primary_root, f_path)
+                    candidate = resolve_primary_file_reference(scoped_root, f_path)
                     if candidate is None:
                         stale.append({
                             "path": str(jsonl_path),
@@ -986,22 +1029,22 @@ def do_maintain(args: argparse.Namespace) -> dict:
                         })
                 ok_count += 1
 
-    indexed_docs = maintain_doc_index(primary_root)
+    indexed_docs = maintain_doc_index(scoped_root)
     return {"stale": stale, "corrupt": corrupt, "ok": ok_count, "indexed_docs": indexed_docs}
 
 
 def _collect_stats(config: dict | None) -> dict:
-    """Count daily JSONL entries and MEMORY.md lines by tag."""
-    daily_tags: dict = {}
+    """Count configured namespace log JSONL entries and MEMORY.md lines by tag."""
+    log_tags: dict = {}
     memory_tags: dict = {}
-    total_daily = 0
+    total_log = 0
     total_memory = 0
 
     if not config:
         return {
-            "daily": {"total": 0, "by_tag": {}},
+            "log": {"total": 0, "by_tag": {}},
             "memory": {"total": 0, "by_tag": {}},
-            "scope": {"daily": "primary_only", "memory": "primary_only"},
+            "scope": {"log": "primary_only", "memory": "primary_only"},
         }
 
     primary_list, _ = collect_roots(config)
@@ -1010,9 +1053,10 @@ def _collect_stats(config: dict | None) -> dict:
 
     for root_cfg in ordered_roots:
         r_path = expand_path(root_cfg.get("path", ""))
-        daily_dir = r_path / "daily"
-        if daily_dir.is_dir():
-            for jsonl_path in daily_dir.glob("*.jsonl"):
+        scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
+        log_dir = scoped_root / "log"
+        if log_dir.is_dir():
+            for jsonl_path in log_dir.glob("*.jsonl"):
                 try:
                     for line in jsonl_path.read_text(encoding="utf-8").splitlines():
                         line = line.strip()
@@ -1020,12 +1064,12 @@ def _collect_stats(config: dict | None) -> dict:
                             continue
                         entry = json.loads(line)
                         tag = entry.get("tag", "unknown")
-                        daily_tags[tag] = daily_tags.get(tag, 0) + 1
-                        total_daily += 1
+                        log_tags[tag] = log_tags.get(tag, 0) + 1
+                        total_log += 1
                 except Exception:
                     continue
 
-        mem_path = r_path / "MEMORY.md"
+        mem_path = scoped_root / "MEMORY.md"
         if mem_path.is_file():
             for line in mem_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -1035,9 +1079,9 @@ def _collect_stats(config: dict | None) -> dict:
                     total_memory += 1
 
     return {
-        "daily": {"total": total_daily, "by_tag": daily_tags},
+        "log": {"total": total_log, "by_tag": log_tags},
         "memory": {"total": total_memory, "by_tag": memory_tags},
-        "scope": {"daily": "primary_only", "memory": "primary_only"},
+        "scope": {"log": "primary_only", "memory": "primary_only"},
     }
 
 
@@ -1048,12 +1092,12 @@ def do_stats(args: argparse.Namespace) -> dict:
 
 def _format_export(stats: dict, config: dict | None) -> str:
     lines = ["## Project Memory Snapshot\n"]
-    daily = stats.get("daily", {})
+    log = stats.get("log", {})
     memory = stats.get("memory", {})
-    lines.append(f"**Daily JSONL entries:** {daily.get('total', 0)}")
+    lines.append(f"**Log JSONL entries:** {log.get('total', 0)}")
     lines.append(f"**MEMORY.md entries:** {memory.get('total', 0)}\n")
 
-    for section, label in [("daily", "Daily tags"), ("memory", "MEMORY.md tags")]:
+    for section, label in [("log", "Log tags"), ("memory", "MEMORY.md tags")]:
         by_tag = stats.get(section, {}).get("by_tag", {})
         if by_tag:
             lines.append(f"### {label}")
@@ -1078,13 +1122,13 @@ def do_export(args: argparse.Namespace) -> dict:
 
 
 def cmd_search(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("search", help="Full-text search across docs, MEMORY.md and daily JSONL")
+    p = sub.add_parser("search", help="Full-text search across configured namespace docs, MEMORY.md and log JSONL")
     p.add_argument("query", type=str, help="Search term")
     p.add_argument("--config", type=str, default=None)
-    p.add_argument("--daily-days", type=int, default=None)
+    p.add_argument("--log-days", type=int, default=None)
     p.add_argument("--no-docs", action="store_true")
     p.add_argument("--no-memory", action="store_true")
-    p.add_argument("--no-daily", action="store_true")
+    p.add_argument("--no-log", action="store_true")
     p.add_argument("--json", action="store_true")
 
 
@@ -1095,7 +1139,7 @@ def cmd_maintain(sub: argparse._SubParsersAction) -> None:
 
 
 def cmd_stats(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("stats", help="Summary statistics for daily JSONL and MEMORY.md")
+    p = sub.add_parser("stats", help="Summary statistics for configured namespace log JSONL and MEMORY.md")
     p.add_argument("--config", type=str, default=None)
     p.add_argument("--json", action="store_true")
 
@@ -1111,10 +1155,10 @@ def cmd_load(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("load", help="Scan config and print a structured memory snapshot")
     p.add_argument("--config", type=str, default=None)
     p.add_argument("--date", type=str, default=None)
-    p.add_argument("--daily-from", type=str, default=None)
-    p.add_argument("--daily-to", type=str, default=None)
-    p.add_argument("--daily-days", type=int, default=None)
-    p.add_argument("--daily-query", type=str, default=None)
+    p.add_argument("--log-from", type=str, default=None)
+    p.add_argument("--log-to", type=str, default=None)
+    p.add_argument("--log-days", type=int, default=None)
+    p.add_argument("--log-query", type=str, default=None)
     p.add_argument("--doc", type=str, default=None)
     p.add_argument("--doc-type", type=str, default=None)
     p.add_argument("--doc-tag", action="append", default=None)
@@ -1123,11 +1167,12 @@ def cmd_load(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--json", action="store_true")
 
 
-def cmd_write_daily(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("write-daily", help="Append one entry to the primary repo's daily note (JSONL)")
+def cmd_write_log(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("write-log", help="Append one entry to the primary repo's configured namespace log note (JSONL)")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--date", type=str, required=True)
     p.add_argument("--tag", type=str, required=True)
+    p.add_argument("--level", choices=("detail", "summary"), default="detail")
     p.add_argument("--text", type=str, required=True)
     p.add_argument("--confidence", type=int, default=None)
     p.add_argument("--source", type=str, default=None)
@@ -1136,7 +1181,7 @@ def cmd_write_daily(sub: argparse._SubParsersAction) -> None:
 
 
 def cmd_write_memory(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("write-memory", help="Append one durable entry to MEMORY.md")
+    p = sub.add_parser("write-memory", help="Append one durable entry to the configured namespace MEMORY.md")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--date", type=str, required=True)
     p.add_argument("--tag", type=str, required=True)
@@ -1145,14 +1190,14 @@ def cmd_write_memory(sub: argparse._SubParsersAction) -> None:
 
 
 def cmd_write_preference(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("write-preference", help="Append one stable preference to PREFERENCES.md")
+    p = sub.add_parser("write-preference", help="Append one stable preference to the configured namespace PREFERENCES.md")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--text", type=str, required=True)
     p.add_argument("--json", action="store_true")
 
 
 def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("upsert-doc", help="Write one docs/*.md file and update docs/index.json")
+    p = sub.add_parser("upsert-doc", help="Write one configured namespace docs/*.md file and update <namespace>/docs/index.json")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--doc", type=str, required=True)
     p.add_argument("--title", type=str, required=True)
@@ -1173,7 +1218,7 @@ def main(argv=None) -> None:
     cmd_maintain(sub)
     cmd_stats(sub)
     cmd_export(sub)
-    cmd_write_daily(sub)
+    cmd_write_log(sub)
     cmd_write_memory(sub)
     cmd_write_preference(sub)
     cmd_upsert_doc(sub)
@@ -1191,8 +1236,8 @@ def main(argv=None) -> None:
         result = do_stats(args)
     elif args.cmd == "export":
         result = do_export(args)
-    elif args.cmd == "write-daily":
-        result = do_write_daily(args)
+    elif args.cmd == "write-log":
+        result = do_write_log(args)
     elif args.cmd == "write-memory":
         result = do_write_memory(args)
     elif args.cmd == "write-preference":

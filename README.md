@@ -1,39 +1,42 @@
 # using-memory
 
-`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory in one or more Git-managed Markdown repos, and `scripts/memory_tool.py` provides loading, writing, and document-index maintenance.
+`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory in a Git-managed Markdown repo, with every memory file scoped under a configured namespace, and `scripts/memory_tool.py` provides loading, writing, and document-index maintenance.
 
 The project goal is to make agents load durable memory only when cross-session context is useful, then route new information to the right place instead of mixing preferences, facts, temporary logs, and structured documents together.
 
 ## Memory Repo Layout
 
-A typical memory repo looks like this:
+A typical memory repo looks like this. The repo root is only the Git checkout; memory files start at `<namespace>/`.
 
 ```text
 memory-repo/
-+-- PREFERENCES.md
-+-- MEMORY.md
-+-- docs/
-|   +-- index.json
-|   +-- project-alpha.md
-|   +-- writing-rules.md
-+-- daily/
-|   +-- 2026-05-06.jsonl
-+-- local/
-    +-- MACHINE.md
-    +-- ENV.md
-    +-- WORKSPACE.md
++-- main/
+    +-- PREFERENCES.md
+    +-- MEMORY.md
+    +-- docs/
+    |   +-- index.json
+    |   +-- project-alpha.md
+    |   +-- writing-rules.md
+    +-- log/
+    |   +-- 2026-05-06.jsonl
+    +-- local/
+        +-- MACHINE.md
+        +-- ENV.md
+        +-- WORKSPACE.md
 ```
 
 Layer responsibilities:
 
-- `PREFERENCES.md`: long-lived preferences, working style, output style, and stable constraints.
-- `MEMORY.md`: stable cross-project facts, decisions, and long-term lessons.
-- `docs/`: structured documents such as wiki, SOP, todo, plan, and project notes.
-- `docs/index.json`: an index for `docs/*.md`, including title, type, tags, modified time, related projects, and other metadata.
-- `daily/`: date-based working notes, same-day context, and undistilled information.
-- `local/MACHINE.md`: current-machine identity, role, hardware, network, and stable machine-local facts.
-- `local/ENV.md`: current-machine toolchains, shell, runtime, and system constraints.
-- `local/WORKSPACE.md`: current-machine workspaces, repo paths, and project entry points.
+- `<namespace>/PREFERENCES.md`: long-lived preferences, working style, output style, and stable constraints.
+- `<namespace>/MEMORY.md`: stable cross-project facts, decisions, and long-term lessons.
+- `<namespace>/docs/`: structured documents such as wiki, SOP, todo, plan, and project notes.
+- `<namespace>/docs/index.json`: an index for `<namespace>/docs/*.md`, including title, type, tags, modified time, related projects, and other metadata.
+- `<namespace>/log/`: date-based working notes, same-day context, and undistilled information for one user, machine, server, or environment.
+- `<namespace>/local/MACHINE.md`: namespace-local identity, role, hardware, network, and stable local facts.
+- `<namespace>/local/ENV.md`: namespace-local toolchains, shell, runtime, and system constraints.
+- `<namespace>/local/WORKSPACE.md`: namespace-local workspaces, repo paths, and project entry points.
+
+`namespace` is a single path segment under the repo root. It defaults to `main` when omitted. Use a stable value such as a user name, machine ID, server name, or environment name when multiple machines share one Git repo.
 
 ## Retrieval Triggers
 
@@ -45,9 +48,9 @@ Skip it for greetings, simple commands, isolated coding tasks with enough local 
 
 When retrieval is needed, the skill follows this macro load order:
 
-1. Read `PREFERENCES.md` and `MEMORY.md` from every configured repo.
-2. Read `docs/index.json` from every repo, then load matching `docs/*.md` documents by index metadata, type, tag, project, or query.
-3. Read recent `daily/` and `local/` records from the primary repo. By default, only today and yesterday are loaded; larger date windows must be requested explicitly through CLI flags.
+1. Read `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md` from every configured repo.
+2. Read `<namespace>/docs/index.json` from every repo, then load matching `<namespace>/docs/*.md` documents by index metadata, type, tag, project, or query.
+3. Read recent `<namespace>/log/` and `<namespace>/local/` records from the primary repo. By default, only today and yesterday are loaded; larger date windows must be requested explicitly through CLI flags.
 
 The intent is to establish stable preferences and durable facts first, select structured documents by index second, and add short-term context last.
 
@@ -55,12 +58,12 @@ The intent is to establish stable preferences and durable facts first, select st
 
 Writes are routed by information type:
 
-- User preferences, durable constraints, and working style go to `PREFERENCES.md`.
-- Stable facts, confirmed decisions, and long-term lessons go to `MEMORY.md`.
-- Wiki, SOP, todo, plan, and project notes go to `docs/*.md`, with `docs/index.json` updated at the same time.
-- Same-day process notes, temporary context, and unconfirmed information usually go to `daily/YYYY-MM-DD.jsonl` or explicit local records.
+- User preferences, durable constraints, and working style go to `<namespace>/PREFERENCES.md`.
+- Stable facts, confirmed decisions, and long-term lessons go to `<namespace>/MEMORY.md`.
+- Wiki, SOP, todo, plan, and project notes go to `<namespace>/docs/*.md`, with `<namespace>/docs/index.json` updated at the same time.
+- Same-day process notes, temporary context, and unconfirmed information usually go to `<namespace>/log/YYYY-MM-DD.jsonl` or explicit namespace-local records.
 
-Open issues, temporary assumptions, and unconfirmed plans are not written directly to `MEMORY.md` by default.
+Open issues, temporary assumptions, and unconfirmed plans are not written directly to `<namespace>/MEMORY.md` by default.
 
 ## Install
 
@@ -106,6 +109,7 @@ memory_roots:
   - path: /absolute/path/to/memory-repo
     role: primary
     writable: true
+    namespace: main
     machine_id: local-main
     priority: 100
 
@@ -127,15 +131,15 @@ python3 scripts/memory_tool.py --help
 
 Current commands:
 
-- `load`: load memory according to the skill rules. `--daily-query` filters parsed daily entries by their `text` field.
-- `search`: full-text search across docs, durable memory, and primary daily JSONL.
-- `maintain`: check daily JSONL health and repair missing `docs/index.json` entries for manually added docs.
-- `stats`: summarize primary daily JSONL and `MEMORY.md` tag counts.
+- `load`: load memory according to the skill rules. `--log-query` filters parsed log entries by their `text` field.
+- `search`: full-text search across namespace docs, durable memory, and primary log JSONL.
+- `maintain`: check log JSONL health and repair missing `<namespace>/docs/index.json` entries for manually added docs.
+- `stats`: summarize primary log JSONL and `<namespace>/MEMORY.md` tag counts.
 - `export`: export a Markdown memory summary.
-- `write-daily`: append one daily entry in the primary repo.
-- `write-memory`: append curated long-term memory to `MEMORY.md`.
-- `write-preference`: append a durable preference to `PREFERENCES.md`.
-- `upsert-doc`: create or update `docs/*.md` and maintain `docs/index.json`.
+- `write-log`: append one log entry in the primary repo's configured namespace.
+- `write-memory`: append curated long-term memory to `<namespace>/MEMORY.md`.
+- `write-preference`: append a durable preference to `<namespace>/PREFERENCES.md`.
+- `upsert-doc`: create or update `<namespace>/docs/*.md` and maintain `<namespace>/docs/index.json`.
 
 Load the default context:
 
@@ -143,12 +147,12 @@ Load the default context:
 python3 scripts/memory_tool.py load
 ```
 
-Load a larger daily date range:
+Load a larger log date range:
 
 ```bash
-python3 scripts/memory_tool.py load --daily-from 2026-05-01 --daily-to 2026-05-06
-python3 scripts/memory_tool.py load --daily-days 14
-python3 scripts/memory_tool.py load --daily-days 30 --daily-query "project alpha"
+python3 scripts/memory_tool.py load --log-from 2026-05-01 --log-to 2026-05-06
+python3 scripts/memory_tool.py load --log-days 14
+python3 scripts/memory_tool.py load --log-days 30 --log-query "project alpha"
 ```
 
 Filter docs by index metadata:
@@ -175,7 +179,7 @@ python3 scripts/memory_tool.py write-memory \
   --config ~/.skills/using-memory/config.yaml \
   --date 2026-05-06 \
   --tag fact \
-  --text "The using-memory project uses docs/index.json as its structured document index."
+  --text "The using-memory project uses <namespace>/docs/index.json as its structured document index."
 ```
 
 Create or update a docs document:
@@ -192,23 +196,24 @@ python3 scripts/memory_tool.py upsert-doc \
   --text "Long-term Project Alpha notes."
 ```
 
-Write a daily entry:
+Write a log entry:
 
 ```bash
-python3 scripts/memory_tool.py write-daily \
+python3 scripts/memory_tool.py write-log \
   --config ~/.skills/using-memory/config.yaml \
   --date 2026-05-06 \
   --tag fact \
+  --level summary \
   --text "Finished the initial using-memory README draft today." \
   --confidence 8 \
   --source user
 ```
 
-Full-text search. Search returns a `scope` object: docs and memory search cover primary plus reference roots, while daily search covers the primary root only.
+Full-text search. Search returns a `scope` object: docs and memory search cover primary plus reference roots, while log search covers the primary root's configured namespace only.
 
 ```bash
 python3 scripts/memory_tool.py search "deploy"
-python3 scripts/memory_tool.py search "bug" --daily-days 7
+python3 scripts/memory_tool.py search "bug" --log-days 7
 python3 scripts/memory_tool.py search "deploy" --no-docs --json
 ```
 

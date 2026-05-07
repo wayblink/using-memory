@@ -46,10 +46,13 @@ class ReferenceDocTests(unittest.TestCase):
             "PREFERENCES.md",
             "docs/",
             "docs/index.json",
-            "local/MACHINE.md",
-            "local/ENV.md",
-            "local/WORKSPACE.md",
-            "daily/",
+            "<namespace>/MEMORY.md",
+            "<namespace>/PREFERENCES.md",
+            "<namespace>/docs/index.json",
+            "<namespace>/local/MACHINE.md",
+            "<namespace>/local/ENV.md",
+            "<namespace>/local/WORKSPACE.md",
+            "<namespace>/log/",
         ]
 
         for snippet in required_snippets:
@@ -64,20 +67,21 @@ class ReferenceDocTests(unittest.TestCase):
         expected_tree = "\n".join(
             [
                 "memory-repo/",
-                "  README.md",
-                "  SCHEMA.md",
-                "  MEMORY.md",
-                "  PREFERENCES.md",
-                "  daily/",
-                "    2026-04-13.jsonl",
-                "  docs/",
-                "    index.json",
-                "    workflow.md",
-                "    coding.md",
-                "  local/",
-                "    MACHINE.md",
-                "    ENV.md",
-                "    WORKSPACE.md",
+                "  main/",
+                "    README.md",
+                "    SCHEMA.md",
+                "    MEMORY.md",
+                "    PREFERENCES.md",
+                "    docs/",
+                "      index.json",
+                "      workflow.md",
+                "      coding.md",
+                "    log/",
+                "      2026-04-13.jsonl",
+                "    local/",
+                "      MACHINE.md",
+                "      ENV.md",
+                "      WORKSPACE.md",
             ]
         )
         self.assertEqual(
@@ -91,16 +95,16 @@ class ReferenceDocTests(unittest.TestCase):
         lines = [line.strip() for line in text.splitlines()]
 
         for resource in [
-            "`README.md`",
-            "`SCHEMA.md`",
-            "`MEMORY.md`",
-            "`PREFERENCES.md`",
-            "`daily/`",
-            "`docs/`",
-            "`docs/index.json`",
-            "`local/MACHINE.md`",
-            "`local/ENV.md`",
-            "`local/WORKSPACE.md`",
+            "`<namespace>/README.md`",
+            "`<namespace>/SCHEMA.md`",
+            "`<namespace>/MEMORY.md`",
+            "`<namespace>/PREFERENCES.md`",
+            "`<namespace>/log/`",
+            "`<namespace>/docs/`",
+            "`<namespace>/docs/index.json`",
+            "`<namespace>/local/MACHINE.md`",
+            "`<namespace>/local/ENV.md`",
+            "`<namespace>/local/WORKSPACE.md`",
         ]:
             with self.subTest(resource=resource):
                 self.assertTrue(
@@ -108,7 +112,7 @@ class ReferenceDocTests(unittest.TestCase):
                     f"repo-layout.md must include responsibility bullet for {resource}",
                 )
 
-        for tag in ["[pref]", "[decision|2026-04-13]", "[lesson|2026-04-13]", "[fact]"]:
+        for tag in ["[note]", "[decision|2026-04-13]", "[lesson|2026-04-13]", "[fact]"]:
             with self.subTest(tag=tag):
                 self.assertIn(tag, text, f"repo-layout.md must show sample tag {tag}")
 
@@ -133,11 +137,11 @@ class ReferenceDocTests(unittest.TestCase):
             "isolated coding tasks with enough local context",
             "Local primary repo first",
             "Reference repos are read-only",
-            "load --daily-from/--daily-to",
-            "load --daily-days",
-            "load --daily-query",
-            "`local/*` from other machines is ignored by default",
-            "Daily notes from other machines are ignored by default",
+            "load --log-from/--log-to",
+            "load --log-days",
+            "load --log-query",
+            "`<namespace>/local/*` from other namespaces is ignored by default",
+            "Log entries from other namespaces are ignored by default",
             "Write only when information is worth preserving",
         ]
 
@@ -162,10 +166,11 @@ class ReferenceDocTests(unittest.TestCase):
             "local_context",
             "doc_hits",
             "sources",
+            "`level`",
             "skip",
-            "append_daily",
-            "append_daily_and_queue_distill",
-            "write_long_term_now",
+            "log_detail",
+            "log_summary",
+            "write_memory",
             "primary temporarily unwritable -> read-only mode",
         ]:
             with self.subTest(phrase=phrase):
@@ -176,7 +181,7 @@ class ReferenceDocTests(unittest.TestCase):
             "scripts/memory_tool.py write-memory",
             "scripts/memory_tool.py upsert-doc",
             "only `fact`, `decision`, and `lesson` are allowed",
-            "not written to `MEMORY.md` by default",
+            "not written to `<namespace>/MEMORY.md` by default",
             "The index is the loader's entry point for deciding whether to open document bodies",
         ]:
             with self.subTest(phrase=phrase):
@@ -221,8 +226,8 @@ class ReferenceDocTests(unittest.TestCase):
             "Second probe: ask a prompt that explicitly needs saved memory",
             "PREFERENCES.md",
             "MEMORY.md",
-            "append_daily",
-            "write_long_term_now",
+            "log_detail",
+            "write_memory",
             "write-preference",
             "USING_MEMORY_CONFIG",
             "~/.skills/using-memory/config.yaml",
@@ -233,6 +238,7 @@ class ReferenceDocTests(unittest.TestCase):
             "git clone",
             "git pull",
             "machine_id",
+            "namespace",
             "priority",
             "writable: true",
             "examples/new-machine/config.template.yaml",
