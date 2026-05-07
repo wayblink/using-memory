@@ -1,8 +1,8 @@
 # Host Setup and Smoke Test
 
-This file owns Codex and Claude Code setup, install/link behavior, fresh-session smoke tests, and multi-machine rollout. Runtime load/write rules live in `startup-and-write-rules.md`; repo structure lives in `repo-layout.md`.
+This file owns Codex and Claude Code setup, install/link behavior, fresh-session smoke tests, and multi-machine rollout. Runtime retrieval/write rules live in `startup-and-write-rules.md`; repo structure lives in `repo-layout.md`.
 
-Codex and Claude Code are both first-class hosts. `using-memory` is agent-agnostic: both hosts should point at the same memory repo and share the same memory repo schema, config lookup, local-primary-write/reference-read model, and `scripts/memory_tool.py` behavior. Only the host startup file and skill install destination differ.
+Codex and Claude Code are both first-class hosts. `using-memory` is agent-agnostic: both hosts should point at the same memory repo and share the same memory repo schema, config lookup, local-primary-write/reference-read model, and `scripts/memory_tool.py` behavior. Only the host skill exposure file and skill install destination differ.
 
 ## Develop in-place
 Work from `personal-skills/using-memory/` so every edit touches the same skill tree each host can read once the repo is linked. If a host appears to keep older skill text in memory, start a brand-new session instead of assuming an existing conversation reloads changed Markdown.
@@ -17,7 +17,7 @@ Work from `personal-skills/using-memory/` so every edit touches the same skill t
 - `scripts/link.sh` refuses to replace an existing real directory. Remove the directory manually or use a copied install when the destination is not already a symlink.
 - `scripts/install.sh` refuses to overwrite an existing destination unless `USING_MEMORY_INSTALL_FORCE=1` is set. Copied installs exclude development-only files such as `.git`, `tests`, Python bytecode, and editor swap files.
 
-## Host startup wiring
+## Host skill exposure
 
 ### Codex
 Edit `~/.codex/superpowers/GEMINI.md` so it contains these lines in order:
@@ -26,7 +26,7 @@ Edit `~/.codex/superpowers/GEMINI.md` so it contains these lines in order:
 @./skills/using-superpowers/SKILL.md
 @./skills/using-superpowers/references/gemini-tools.md
 
-This is the preferred early-session order, not a guaranteed platform contract. `using-memory` is a root skill like `using-superpowers`: Codex should treat memory lookup as a best-effort startup habit before task-specific work whenever the host permits it.
+This exposes the skill for decision-based use; it must not force memory loading before every task. Codex should load memory only when the current task needs persisted cross-session context, saved preferences, prior decisions, project memory, or explicit memory read/write/search/maintenance.
 
 `using-memory` lives under `~/.codex/skills`, while `using-superpowers` stays inside `~/.codex/superpowers/skills`; from `GEMINI.md`, the former requires `..` to reach the parallel tree.
 
@@ -35,7 +35,7 @@ Edit `~/.claude/CLAUDE.md` so it includes the skill:
 
 @./skills/using-memory/SKILL.md
 
-This gives Claude Code the same startup instruction surface from its own skill tree. Claude Code should use the same config and memory repo layout as Codex, not a Claude-only memory format or a separate write pipeline.
+This gives Claude Code the same skill instruction surface from its own skill tree. Claude Code should use the same config and memory repo layout as Codex, not a Claude-only memory format or a separate write pipeline.
 
 ## Configuration
 The default config path is `~/.skills/using-memory/config.yaml`. Override it with `USING_MEMORY_CONFIG` when a machine needs a different location. Keep config outside the shared memory repo so each machine can declare its own primary writable repo, reference repos, machine ID, and load priorities.
@@ -51,14 +51,17 @@ The default config path is `~/.skills/using-memory/config.yaml`. Override it wit
 2. Confirm the config is reachable through `USING_MEMORY_CONFIG` or the default `~/.skills/using-memory/config.yaml`.
 3. Confirm the declared Git roots are readable and the primary root is writable when you expect automatic writes.
 4. Start a brand-new Codex or Claude Code session. Do not reuse an older chat that may have loaded stale skill text.
-5. First probe: ask the agent to list the memory sources it loaded at session start. A simple prompt is: `What memory sources did you load at session start? List only sources.`
-6. Second probe: ask the agent to state its automatic write decision for the current turn. A simple prompt is: `If this turn has no new long-term information, what is your automatic write decision? Answer only skip/append_daily/append_daily_and_queue_distill/write_long_term_now, with one reason.`
-7. Optional durable-write probe: tell the agent one durable preference and ask what it would write. For example: `Remember: I prefer concise direct replies. Where would you write it?` Expected answer: `PREFERENCES.md` through `write-preference`.
+5. First probe: ask a prompt that should not need memory. A simple prompt is: `For a greeting like "hello", should using-memory load saved memory? Answer yes/no with one reason.` Expected answer: no, because greetings do not need persisted context.
+6. Second probe: ask a prompt that explicitly needs saved memory. A simple prompt is: `Using saved preferences and prior project memory, what memory sources would you load? List only source categories.` Expected answer: `PREFERENCES.md`, `MEMORY.md`, relevant local context, and relevant indexed docs when the config is reachable.
+7. Third probe: ask the agent to state its automatic write decision for the current turn. A simple prompt is: `If this turn has no new long-term information, what is your automatic write decision? Answer only skip/append_daily/append_daily_and_queue_distill/write_long_term_now, with one reason.`
+8. Optional durable-write probe: tell the agent one durable preference and ask what it would write. For example: `Remember: I prefer concise direct replies. Where would you write it?` Expected answer: `PREFERENCES.md` through `write-preference`.
 
 ## Pass conditions
-- The first probe mentions the configured primary repo and any readable reference repos in `sources`.
-- The first probe mentions startup reads from `PREFERENCES.md` and `MEMORY.md`, plus local daily or `local/*` context when available.
-- The second probe returns one of `skip`, `append_daily`, `append_daily_and_queue_distill`, or `write_long_term_now`.
+- The first probe says memory retrieval should be skipped for the greeting.
+- The second probe mentions the configured primary repo and any readable reference repos in `sources` when source details are available.
+- The second probe mentions retrieval from `PREFERENCES.md` and `MEMORY.md`, plus local daily or `local/*` context when relevant.
+- The third probe returns one of `skip`, `append_daily`, `append_daily_and_queue_distill`, or `write_long_term_now`.
+- The agent does not claim that every conversation must load memory.
 - The agent does not claim that every turn or every tool call must be written.
 - If the config is missing, the agent should degrade gracefully instead of blocking the session.
 

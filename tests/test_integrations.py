@@ -22,12 +22,13 @@ class IntegrationDocTests(unittest.TestCase):
         self.assertIn("refusing to replace existing directory", text)
         self.assertIn('if [ -e "$dest" ] && [ ! -L "$dest" ]; then', text)
 
-    def test_machine_setup_mentions_install_and_best_effort_startup_behavior(self):
+    def test_machine_setup_mentions_install_and_decision_based_retrieval_behavior(self):
         text = (ROOT / "references/machine-setup.md").read_text(encoding="utf-8")
         for needle in [
             "GEMINI.md",
             "CLAUDE.md",
-            "best-effort",
+            "decision-based use",
+            "must not force memory loading before every task",
             "new session",
             "scripts/link.sh",
             "scripts/install.sh",
@@ -41,11 +42,11 @@ class IntegrationDocTests(unittest.TestCase):
             self.assertIn(needle, text)
 
         wiring_block = re.search(
-            r"Edit `~/.codex/superpowers/GEMINI\.md` so it contains these lines in order:\n\n(.*?)\n\nThis is the preferred early-session order",
+            r"Edit `~/.codex/superpowers/GEMINI\.md` so it contains these lines in order:\n\n(.*?)\n\nThis exposes the skill for decision-based use",
             text,
             re.DOTALL,
         )
-        self.assertIsNotNone(wiring_block, "codex doc must include startup wiring block")
+        self.assertIsNotNone(wiring_block, "codex doc must include skill exposure block")
         ordered_lines = [
             line.strip()
             for line in wiring_block.group(1).strip().splitlines()
@@ -58,7 +59,7 @@ class IntegrationDocTests(unittest.TestCase):
                 "@./skills/using-superpowers/SKILL.md",
                 "@./skills/using-superpowers/references/gemini-tools.md",
             ],
-            "codex doc must keep root-skill startup wiring lines in order",
+            "codex doc must keep skill exposure lines in order",
         )
         base_path = Path("/fakehome/.codex/superpowers/GEMINI.md")
         expected_resolved = [
@@ -74,10 +75,11 @@ class IntegrationDocTests(unittest.TestCase):
         self.assertEqual(
             resolved_paths,
             expected_resolved,
-            "startup wiring must point to the real skill tree topology relative to GEMINI.md",
+            "skill exposure wiring must point to the real skill tree topology relative to GEMINI.md",
         )
         self.assertNotIn("guaranteed ordering", text)
         self.assertNotIn("runs before `using-superpowers` to guarantee", text)
+        self.assertNotIn("startup habit", text)
         self.assertNotRegex(text, re.compile(r"before any task-specific SKILL\\.md", re.IGNORECASE))
 
     def test_machine_setup_mentions_claude_code_as_first_class_host(self):

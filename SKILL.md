@@ -1,15 +1,21 @@
 ---
 name: using-memory
-description: Use when starting any conversation, before responding to tasks, to load and maintain shared global memory from configured Git-managed Markdown repos
+description: Use when a task needs persisted cross-session context, saved user preferences, prior decisions, project memory, or explicit memory read/write/search/maintenance.
 ---
 
 # using-memory
 
-## Startup Contract
+## Retrieval Contract
 
-- Load memory before handling the task.
-- Startup comes first: complete memory loading before any task analysis, planning, coding, or response drafting.
-- Load order is strict and must happen in this exact sequence:
+- Do not load memory by default for every conversation or every turn.
+- Use this skill only when memory could change the answer or the user explicitly asks for memory work.
+- Use memory when one of these is true:
+  - The user explicitly asks to read, search, update, migrate, maintain, or remember memory.
+  - The user refers to prior context, saved preferences, previous work, or continuing a project.
+  - The task depends on durable user preferences, long-term decisions, project memory, or cross-session facts.
+  - The assistant would otherwise guess about past user choices, project direction, or saved context.
+- Skip this skill for greetings, one-off questions, simple shell commands, isolated coding tasks with enough local context, generic explanations, or tasks where reading memory would not change the answer.
+- When memory loading is needed, load order is strict and must happen in this exact sequence:
   1. Load all configured `PREFERENCES.md` and `MEMORY.md` files across configured repos.
   2. Browse each configured repo's `docs/index.json`; when the user task matches indexed metadata, load only the matching `docs/*.md` files.
   3. Then load only the local primary repo's recent daily notes at `daily/YYYY-MM-DD.jsonl` and local machine notes at `local/MACHINE.md`, `local/ENV.md`, and `local/WORKSPACE.md`.
@@ -21,10 +27,10 @@ description: Use when starting any conversation, before responding to tasks, to 
 - `local/` stores machine-local facts only; do not put dated daily notes under `local/`.
 - On-demand document loading is allowed only when the user task clearly matches entries in `docs/index.json`.
 
-## Root Skill Position
-- `using-memory` and `using-superpowers` are parallel root skills.
-- Automatic invocation depends on host startup wiring; the skill does not force itself to run first.
-- The recommended early-session order is to let `using-memory` read memory before entering the normal skill flow. This is a best-effort startup protocol, not a platform guarantee.
+## Skill Position
+- `using-memory` is an on-demand context retrieval and memory maintenance skill.
+- Host skill exposure may make the skill available early, but exposure is not permission to load memory automatically.
+- Invocation is decision-based: first decide whether persisted memory is relevant, then call the CLI only when needed.
 
 ## Config Resolution
 - Read `USING_MEMORY_CONFIG` first.
@@ -114,6 +120,6 @@ Never write:
 ## References
 
 - `references/repo-layout.md`: read when discussing memory repo structure, file responsibilities, document metadata, or tag conventions.
-- `references/startup-and-write-rules.md`: read when discussing startup load order, docs index matching, write routing, distillation, or failure behavior.
-- `references/machine-setup.md`: read when installing on a new machine, wiring Codex or Claude Code startup, debugging config, or running smoke tests.
+- `references/startup-and-write-rules.md`: read when discussing retrieval triggers, load order, docs index matching, write routing, distillation, or failure behavior.
+- `references/machine-setup.md`: read when installing on a new machine, exposing the skill to Codex or Claude Code, debugging config, or running smoke tests.
 - `examples/`: sample config files, startup templates, and example memory repo content.

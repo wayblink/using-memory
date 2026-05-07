@@ -116,7 +116,8 @@ class ReferenceDocTests(unittest.TestCase):
         text = self.read_startup_doc()
 
         for heading in [
-            "## Startup Read Order",
+            "## Retrieval Triggers",
+            "## Retrieval Read Order",
             "## docs On-Demand Expansion",
             "## Write Rules",
             "## Distillation Rules",
@@ -126,6 +127,10 @@ class ReferenceDocTests(unittest.TestCase):
                 self.assertIn(heading, text, f"{heading} must appear in startup doc")
 
         local_first_phrases = [
+            "Do not load memory by default for every conversation or every turn.",
+            "Use memory retrieval only when memory could change the answer",
+            "Skip memory for greetings",
+            "isolated coding tasks with enough local context",
             "Local primary repo first",
             "Reference repos are read-only",
             "load --daily-from/--daily-to",
@@ -193,7 +198,7 @@ class ReferenceDocTests(unittest.TestCase):
 
         for heading in [
             "# Host Setup and Smoke Test",
-            "## Host startup wiring",
+            "## Host skill exposure",
             "### Codex",
             "### Claude Code",
             "## Fresh-session smoke test",
@@ -211,6 +216,9 @@ class ReferenceDocTests(unittest.TestCase):
             "@../skills/using-memory/SKILL.md",
             "@./skills/using-memory/SKILL.md",
             "Start a brand-new Codex or Claude Code session",
+            "This exposes the skill for decision-based use; it must not force memory loading before every task.",
+            "First probe: ask a prompt that should not need memory",
+            "Second probe: ask a prompt that explicitly needs saved memory",
             "PREFERENCES.md",
             "MEMORY.md",
             "append_daily",

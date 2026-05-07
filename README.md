@@ -2,7 +2,7 @@
 
 `using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory in one or more Git-managed Markdown repos, and `scripts/memory_tool.py` provides loading, writing, and document-index maintenance.
 
-The project goal is to make every new conversation load durable memory in a stable order and route new information to the right place, instead of mixing preferences, facts, temporary logs, and structured documents together.
+The project goal is to make agents load durable memory only when cross-session context is useful, then route new information to the right place instead of mixing preferences, facts, temporary logs, and structured documents together.
 
 ## Memory Repo Layout
 
@@ -35,9 +35,15 @@ Layer responsibilities:
 - `local/ENV.md`: current-machine toolchains, shell, runtime, and system constraints.
 - `local/WORKSPACE.md`: current-machine workspaces, repo paths, and project entry points.
 
+## Retrieval Triggers
+
+The skill is not meant to run before every task. Use it when the user asks for memory work, refers to prior context, continues a saved project, or when persisted preferences and decisions would materially change the answer.
+
+Skip it for greetings, simple commands, isolated coding tasks with enough local context, generic explanations, and one-off questions where memory would not change the result.
+
 ## Load Order
 
-At startup, the skill follows this macro load order:
+When retrieval is needed, the skill follows this macro load order:
 
 1. Read `PREFERENCES.md` and `MEMORY.md` from every configured repo.
 2. Read `docs/index.json` from every repo, then load matching `docs/*.md` documents by index metadata, type, tag, project, or query.

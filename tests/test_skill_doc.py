@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SkillDocTests(unittest.TestCase):
-    def test_skill_frontmatter_and_startup_contract(self):
+    def test_skill_frontmatter_and_retrieval_contract(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
 
         match = re.match(r"\A---\n(.*?)\n---\n", text, flags=re.DOTALL)
@@ -17,14 +17,17 @@ class SkillDocTests(unittest.TestCase):
             (
                 "---\n"
                 "name: using-memory\n"
-                "description: Use when starting any conversation, before responding to tasks, to load and maintain shared global memory from configured Git-managed Markdown repos\n"
+                "description: Use when a task needs persisted cross-session context, saved user preferences, prior decisions, project memory, or explicit memory read/write/search/maintenance.\n"
                 "---\n"
             ),
         )
 
-        self.assertIn("Load memory before handling the task.", text)
-        self.assertIn("Startup comes first", text)
-        self.assertIn("Load order is strict and must happen in this exact sequence:", text)
+        self.assertIn("## Retrieval Contract", text)
+        self.assertIn("Do not load memory by default for every conversation or every turn.", text)
+        self.assertIn("Use this skill only when memory could change the answer", text)
+        self.assertIn("Skip this skill for greetings", text)
+        self.assertIn("isolated coding tasks with enough local context", text)
+        self.assertIn("When memory loading is needed, load order is strict and must happen in this exact sequence:", text)
         self.assertIn("On-demand document loading is allowed only when the user task clearly matches entries in `docs/index.json`.", text)
         self.assertIn("load --daily-from/--daily-to", text)
         self.assertIn("load --daily-days", text)
@@ -81,15 +84,15 @@ class SkillDocTests(unittest.TestCase):
         self.assertIn("Write only when information is worth preserving", text)
 
         for needle in [
-            "## Root Skill Position",
+            "## Skill Position",
             "## Config Resolution",
             "## Session Snapshot",
             "references/repo-layout.md",
             "references/startup-and-write-rules.md",
             "references/machine-setup.md",
-            "Codex or Claude Code startup",
-            "parallel root skills",
-            "host startup wiring",
+            "exposing the skill to Codex or Claude Code",
+            "on-demand context retrieval",
+            "Host skill exposure",
             "USING_MEMORY_CONFIG",
             "~/.skills/using-memory/config.yaml",
             "preferences",

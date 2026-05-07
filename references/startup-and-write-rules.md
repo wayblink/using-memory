@@ -1,20 +1,33 @@
-# Startup and Write Rules
+# Retrieval and Write Rules
 
-This file defines the runtime algorithm only: config resolution, load order, docs on-demand matching, write routing, distillation, and failure degradation. Memory repo directory responsibilities and field meanings live in `repo-layout.md`.
+This file defines the runtime algorithm only: config resolution, retrieval triggers, load order, docs on-demand matching, write routing, distillation, and failure degradation. Memory repo directory responsibilities and field meanings live in `repo-layout.md`.
 
 ## Config Lookup Order
 
 1. `USING_MEMORY_CONFIG`
 2. `~/.skills/using-memory/config.yaml`
 
-## Startup Read Order
+## Retrieval Triggers
+
+Do not load memory by default for every conversation or every turn. Use memory retrieval only when memory could change the answer or the user explicitly asks for memory work.
+
+Use memory when:
+
+- The user explicitly asks to read, search, update, migrate, maintain, or remember memory.
+- The user refers to prior context, saved preferences, previous work, or continuing a project.
+- The task depends on durable user preferences, long-term decisions, project memory, or cross-session facts.
+- The assistant would otherwise guess about past user choices, project direction, or saved context.
+
+Skip memory for greetings, one-off questions, simple shell commands, isolated coding tasks with enough local context, generic explanations, or tasks where reading memory would not change the answer.
+
+## Retrieval Read Order
 
 - Local primary repo first. It is the only writable repo, and paths with `role: primary` are handled at the top.
 - Reference repos are read-only and are added in priority order to supplement durable memory facts.
 - The canonical daily path is fixed at `daily/YYYY-MM-DD.jsonl`; today and yesterday are read from `daily/*.jsonl` in the local primary repo.
 - Explicit `load --daily-from/--daily-to` or `load --daily-days` may expand the primary daily read window; without those flags, only today and yesterday are read.
 - Explicit `load --daily-query` parses `daily/*.jsonl` line by line and filters entries by the `text` field; only matching entries appear in `daily_entries` and loaded daily source content.
-- The read order is strict: first load every repo's `PREFERENCES.md` and `MEMORY.md`, then browse every repo's `docs/index.json`, load matching `docs/*.md` by indexed metadata, and finally read the local primary daily window plus `local/MACHINE.md`, `local/ENV.md`, and `local/WORKSPACE.md`.
+- When retrieval is needed, the read order is strict: first load every repo's `PREFERENCES.md` and `MEMORY.md`, then browse every repo's `docs/index.json`, load matching `docs/*.md` by indexed metadata, and finally read the local primary daily window plus `local/MACHINE.md`, `local/ENV.md`, and `local/WORKSPACE.md`.
 - `local/*` from other machines is ignored by default so remote environment details do not pollute the current session.
 - `local/` stores only machine-local facts, not dated files; dated process notes belong in `daily/YYYY-MM-DD.jsonl`.
 - Daily notes from other machines are ignored by default. The primary repo is the place for today's writable and readable context.
@@ -31,7 +44,7 @@ This file defines the runtime algorithm only: config resolution, load order, doc
 ## docs On-Demand Expansion
 
 - Each repo is first scanned lightly through `docs/index.json`; metadata such as `title`, `type`, `modified`, `projects`, `tags`, and `summary` determines whether a document matches the current task.
-- Only matching `docs/*.md` files are loaded, keeping startup reads small.
+- Only matching `docs/*.md` files are loaded, keeping retrieval reads small.
 - Reference repos remain read-only. Their docs are loaded only when the document index matches and the repo loaded successfully.
 
 ## Daily JSONL Format
