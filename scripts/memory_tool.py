@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """using-memory CLI: load and write curated Markdown memory files."""
 
 import argparse

@@ -1,6 +1,6 @@
 ---
 name: using-memory
-description: Use when a task needs persisted cross-session context, saved user preferences, prior decisions, project memory, or explicit memory read/write/search/maintenance.
+description: Use when a task mentions memory, remember, forget, preference, prior context, previous work, continue, resume, project history, saved decisions, or Chinese triggers like 记忆, 记住, 偏好, 上次, 之前, 继续, 恢复; also use when persisted cross-session context could change the answer.
 ---
 
 # using-memory
@@ -8,9 +8,11 @@ description: Use when a task needs persisted cross-session context, saved user p
 ## Retrieval Contract
 
 - Do not load memory by default for every conversation or every turn.
+- At the start of each user task, make a lightweight routing decision: could persisted memory change the answer or should this task write durable context later?
 - Use this skill only when memory could change the answer or the user explicitly asks for memory work.
 - Use memory when one of these is true:
   - The user explicitly asks to read, search, update, migrate, maintain, or remember memory.
+  - The user uses memory trigger words such as memory, remember, forget, preference, prior context, previous work, continue, resume, 记忆, 记住, 偏好, 上次, 之前, 继续, or 恢复.
   - The user refers to prior context, saved preferences, previous work, or continuing a project.
   - The task depends on durable user preferences, long-term decisions, project memory, or cross-session facts.
   - The assistant would otherwise guess about past user choices, project direction, or saved context.
@@ -32,6 +34,7 @@ description: Use when a task needs persisted cross-session context, saved user p
 - `using-memory` is an on-demand context retrieval and memory maintenance skill.
 - Host skill exposure may make the skill available early, but exposure is not permission to load memory automatically.
 - Invocation is decision-based: first decide whether persisted memory is relevant, then call the CLI only when needed.
+- Treat this skill as a memory router: cheap to consider, selective to execute.
 
 ## Config Resolution
 - Read `USING_MEMORY_CONFIG` first.
@@ -67,7 +70,7 @@ Each `<namespace>/log/YYYY-MM-DD.jsonl` file is newline-delimited JSON with one 
 
 ## Memory Tool Commands
 
-Use `scripts/memory_tool.py` when the host can run local scripts.
+Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executing it directly or with `python3`; do not assume a `python` shim exists.
 
 ### Read
 
