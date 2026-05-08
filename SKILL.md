@@ -1,6 +1,6 @@
 ---
 name: using-memory
-description: Use when a task mentions memory, remember, forget, preference, prior context, previous work, continue, resume, project history, saved decisions, or Chinese triggers like 记忆, 记住, 偏好, 上次, 之前, 继续, 恢复; also use when persisted cross-session context could change the answer.
+description: Memory protocol for persisted cross-session context and operation continuity. Use when a task mentions memory, remember, forget, preference, prior context, previous work, continue, resume, project history, saved decisions, logs, operations, commits, pushes, builds, tests, deploys, hooks, or equivalent non-English memory/logging triggers; also use whenever persisted memory could change the answer or the turn may create operation history that should survive restart.
 ---
 
 # using-memory
@@ -12,7 +12,7 @@ description: Use when a task mentions memory, remember, forget, preference, prio
 - Use this skill only when memory could change the answer or the user explicitly asks for memory work.
 - Use memory when one of these is true:
   - The user explicitly asks to read, search, update, migrate, maintain, or remember memory.
-  - The user uses memory trigger words such as memory, remember, forget, preference, prior context, previous work, continue, resume, 记忆, 记住, 偏好, 上次, 之前, 继续, or 恢复.
+  - The user uses memory trigger words such as memory, remember, forget, preference, prior context, previous work, continue, resume, logs, operations, commits, pushes, builds, tests, deploys, hooks, or equivalent non-English memory/logging terms.
   - The user refers to prior context, saved preferences, previous work, or continuing a project.
   - The task depends on durable user preferences, long-term decisions, project memory, or cross-session facts.
   - The assistant would otherwise guess about past user choices, project direction, or saved context.
@@ -23,7 +23,8 @@ description: Use when a task mentions memory, remember, forget, preference, prio
   3. Then load only the local primary repo's configured namespace entries at `<namespace>/log/YYYY-MM-DD.jsonl` and namespace-local notes at `<namespace>/local/MACHINE.md`, `<namespace>/local/ENV.md`, and `<namespace>/local/WORKSPACE.md`.
 - Only the local primary repo is writable by default.
 - Log entries from other namespaces are ignored by default.
-- Config `namespace` is a single repo-root path segment used for all memory files; it defaults to `main` when omitted.
+- Config `namespace` is a single path segment used for all memory files; it defaults to `main` when omitted.
+- Config `path` must point to the parent directory that contains namespace directories. Do not point `path` at the namespace directory itself. For example, use `path: ~/.memories` with `namespace: main`, not `path: ~/.memories/main` with `namespace: main`.
 - Canonical log path: `<namespace>/log/YYYY-MM-DD.jsonl`; do not create a `YYYY/` layer for log files.
 - Log loading defaults to today and yesterday, but explicit `load --log-from/--log-to` or `load --log-days` may expand the primary repo log window.
 - `load --log-query` filters the selected primary log window against `text` and loads only matching entries into `log_entries`.
@@ -34,7 +35,8 @@ description: Use when a task mentions memory, remember, forget, preference, prio
 - `using-memory` is an on-demand context retrieval and memory maintenance skill.
 - Host skill exposure may make the skill available early, but exposure is not permission to load memory automatically.
 - Invocation is decision-based: first decide whether persisted memory is relevant, then call the CLI only when needed.
-- Treat this skill as a memory router: cheap to consider, selective to execute.
+- Treat this skill as a memory router plus an operation ledger: cheap to consider, selective to load, broad by default when writing logs.
+- Log writing is not the same as durable memory curation. `<namespace>/log/*.jsonl` should preserve operation facts and key events with minimal filtering; `<namespace>/MEMORY.md` remains curated for stable facts, confirmed decisions, and lessons.
 
 ## Config Resolution
 - Read `USING_MEMORY_CONFIG` first.
@@ -54,14 +56,14 @@ description: Use when a task mentions memory, remember, forget, preference, prio
 Each `<namespace>/log/YYYY-MM-DD.jsonl` file is newline-delimited JSON with one object per line:
 
 ```json
-{"ts":"2026-05-06T10:30:00Z","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"]}
+{"ts":"2026-05-06T18:30:00+08:00","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"]}
 ```
 
 | Field | Description |
 |---|---|
-| `ts` | UTC timestamp (auto-generated on write, ISO 8601) |
+| `ts` | Local timezone timestamp (auto-generated on write, ISO 8601 with offset) |
 | `date` | Entry date, `YYYY-MM-DD` (matches filename) |
-| `tag` | One of: `operation`, `progress`, `milestone`, `result`, `issue`, `debug`, `decision`, `build`, `test`, `lesson`, `fact`, `note` |
+| `tag` | One of: `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context` |
 | `level` | `detail` for full operation records, `summary` for key results and milestones |
 | `source` | Origin: `user`, `auto`, `observed`, `user-stated`… |
 | `text` | Entry body |
@@ -82,14 +84,14 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 
 ### Write
 
-- `write-log`: append one primary JSONL entry. Required: `--config`, `--date`, `--tag`, `--text`. Optional: `--level detail|summary`, `--confidence 1-10`, `--source TEXT`, `--files path1 --files path2`. Allowed tags: `operation`, `progress`, `milestone`, `result`, `issue`, `debug`, `decision`, `build`, `test`, `lesson`, `fact`, `note`.
+- `write-log`: append one primary JSONL entry. Required: `--config`, `--date`, `--tag`, `--text`. Optional: `--level detail|summary`, `--confidence 1-10`, `--source TEXT`, `--files path1 --files path2`. Allowed tags: `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context`.
 - `write-memory`: append one curated `<namespace>/MEMORY.md` entry. Required: `--config`, `--date`, `--tag`, `--text`; `write-memory` accepts only `fact`, `decision`, and `lesson`.
 - `write-preference`: append one stable `<namespace>/PREFERENCES.md` entry. Required: `--config`, `--text`.
 - `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--config`, `--doc`, `--title`, `--doc-type`, `--modified`, `--text`; optional metadata: `--project`, `--doc-tag`, `--summary`.
 
 ## Write Strategy
 
-At the end of each turn, make one write decision:
+At the end of each turn, make one write decision. Default toward writing a log entry when the turn performed work or changed state; do not apply heavy judgment filters to operation history.
 
 - `skip`: no information worth recording.
 - `log_detail`: complete operation record with full details written to `<namespace>/log/*.jsonl` via `write-log`.
@@ -97,12 +99,15 @@ At the end of each turn, make one write decision:
 - `write_doc`: mature knowledge or workflow written to `<namespace>/docs/*.md` via `upsert-doc`.
 - `write_memory`: stable facts or confirmed decisions written to `<namespace>/MEMORY.md` via `write-memory`.
 
-Write only when information is worth preserving. Prefer no write over noisy memory.
+For `<namespace>/log/*.jsonl`, prefer recording over skipping when there was a concrete operation, state change, verification, issue, fix, decision, commit, push, build, deployment, hook change, config change, or user-confirmed workflow event. The log is the continuity ledger and should be comprehensive enough to reconstruct what happened after restart.
+
+Use `skip` mainly for pure greetings, purely conversational turns with no reusable context, trivial reads that produced no decision or state change, or repeated identical tool activity with no new information.
 
 Routing:
 
-- Complete operation records (commands, builds, deployments, debugging) go to `<namespace>/log/*.jsonl` with `level=detail`.
-- Key results and milestones go to `<namespace>/log/*.jsonl` with `level=summary`.
+- Complete operation records go to `<namespace>/log/*.jsonl` with `level=detail`: commands run, services restarted, files edited, config changed, branches/commits/pushes, builds, deployments, tests, debugging traces, verification, failures, fixes, and remaining risks.
+- Key results and milestones go to `<namespace>/log/*.jsonl` with `level=summary`: successful completion, release/PR state, verified behavior, or important user-facing outcomes.
+- Write enough fields in `text` to be useful later: what was done, why, command or host event when relevant, important parameters, affected paths, result status, commit hash/PR/deploy URL when available, and unresolved follow-up.
 - Mature workflows, best practices, and troubleshooting guides go to `<namespace>/docs/*.md` through `scripts/memory_tool.py upsert-doc`.
 - Stable facts, confirmed decisions, and durable lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`.
 - Open issues, parking points, and unresolved risks stay out of `<namespace>/MEMORY.md` unless they become confirmed decisions, durable lessons, or stable facts.
@@ -111,10 +116,9 @@ Routing:
 
 Never write:
 
-- every turn
-- every tool call
-- raw transcripts
-- temporary command output
+- raw per-turn transcripts
+- one JSONL entry for every tool call as a mechanical mirror
+- full temporary command output when a concise result summary is enough
 - unverified assumptions as durable memory
 - open questions directly into `<namespace>/MEMORY.md`
 

@@ -142,7 +142,8 @@ class ReferenceDocTests(unittest.TestCase):
             "load --log-query",
             "`<namespace>/local/*` from other namespaces is ignored by default",
             "Log entries from other namespaces are ignored by default",
-            "Write only when information is worth preserving",
+            "default toward recording concrete operation history and key events",
+            "Do not apply a heavy",
         ]
 
         for phrase in local_first_phrases:
@@ -153,7 +154,7 @@ class ReferenceDocTests(unittest.TestCase):
             "no daemon",
             "no DB",
             "no automatic multi-writer sync",
-            "Do not record every tool call",
+            "Do not mirror every tool call mechanically",
         ]
 
         for todo in do_not_phrases:
@@ -204,8 +205,11 @@ class ReferenceDocTests(unittest.TestCase):
         for heading in [
             "# Host Setup and Smoke Test",
             "## Host skill exposure",
+            "## Hook Enforcement",
             "### Codex",
             "### Claude Code",
+            "### Codex hook install",
+            "### Claude Code hook install",
             "## Fresh-session smoke test",
             "## Pass conditions",
             "## Common failures to check first",
@@ -218,6 +222,12 @@ class ReferenceDocTests(unittest.TestCase):
         for phrase in [
             "~/.codex/superpowers/GEMINI.md",
             "~/.claude/CLAUDE.md",
+            "~/.codex/hooks.json",
+            "~/.claude/settings.json",
+            "codex_hooks = true",
+            "scripts/hooks/codex_memory_hook.py",
+            "scripts/hooks/claude_memory_hook.py",
+            "`Stop` is the enforcement point",
             "@../skills/using-memory/SKILL.md",
             "@./skills/using-memory/SKILL.md",
             "Start a brand-new Codex or Claude Code session",

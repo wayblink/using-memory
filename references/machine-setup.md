@@ -40,6 +40,167 @@ This gives Claude Code the same skill instruction surface from its own skill tre
 ## Configuration
 The default config path is `~/.skills/using-memory/config.yaml`. Override it with `USING_MEMORY_CONFIG` when a machine needs a different location. Keep config outside the memory repo so each machine can declare the local checkout path, namespace, machine ID, optional reference repos, and load priorities.
 
+## Hook Enforcement
+
+Skill text improves routing, but hooks add a deterministic pre-final gate. The bundled hook scripts live in `scripts/hooks/`:
+
+- `codex_memory_hook.py`: Codex command hook adapter.
+- `claude_memory_hook.py`: Claude Code command hook adapter.
+- `memory_hook_common.py`: shared routing and Stop-gate logic.
+
+The hook does not load memory on every turn. It only injects a short reminder when memory triggers are present, tracks operation-like tool events, and blocks `Stop` once when the turn appears to contain operation history but no memory write was observed. The continuation prompt tells the agent to write a comprehensive JSONL log entry before finalizing.
+
+The hook intentionally gates log writing, not long-term memory curation. Use `<namespace>/log/YYYY-MM-DD.jsonl` broadly for operation facts and key events; keep `<namespace>/MEMORY.md` limited to stable facts, confirmed decisions, and durable lessons.
+
+### Codex hook install
+
+Codex hooks require the hooks feature flag in `~/.codex/config.toml`:
+
+```toml
+[features]
+codex_hooks = true
+```
+
+Then add a user-level `~/.codex/hooks.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py",
+            "statusMessage": "Checking memory protocol"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Codex also supports repo-local `.codex/hooks.json` and inline `[hooks]` tables in `.codex/config.toml` or `~/.codex/config.toml`. Prefer user-level hooks for machine-wide memory enforcement; use repo-local hooks only when the project `.codex/` layer is trusted.
+
+### Claude Code hook install
+
+Add a user-level hook block to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Claude Code also supports project `.claude/settings.json`, local `.claude/settings.local.json`, plugins, and skill-scoped hooks. Prefer user-level hooks for a machine-wide memory rule; use project hooks when the project should carry its own enforcement. Run `/hooks` in Claude Code to inspect which hooks are active.
+
+### Hook behavior and limits
+
+- `SessionStart` and memory-relevant `UserPromptSubmit` add context reminding the agent to use the skill and to write operation logs broadly.
+- `PostToolUse` and Claude's `PostToolBatch` mark the turn as log-worthy when commands, edits, builds, tests, commits, pushes, deployments, hook/config changes, failures, or fixes appear.
+- `Stop` is the enforcement point: when the main agent is about to finish, the hook returns `decision: "block"` once if the turn looks log-worthy and no `memory_tool.py write-log`, `write-memory`, `write-preference`, or `upsert-doc` was observed.
+- `stop_hook_active` is honored to prevent infinite loops after the agent continues from a Stop hook.
+- The hook does not automatically write to the memory repo. It forces the agent to perform the write so it can summarize accurately and include files, commit hashes, verification status, and unresolved risks.
+- The hook is heuristic. It reduces missed writes, but the final quality still depends on the agent using `scripts/memory_tool.py` with accurate content.
+
 ## Fresh-session smoke test
 1. Confirm the host startup file includes `using-memory`:
    - Codex: `~/.codex/superpowers/GEMINI.md`
@@ -53,8 +214,9 @@ The default config path is `~/.skills/using-memory/config.yaml`. Override it wit
 4. Start a brand-new Codex or Claude Code session. Do not reuse an older chat that may have loaded stale skill text.
 5. First probe: ask a prompt that should not need memory. A simple prompt is: `For a greeting like "hello", should using-memory load saved memory? Answer yes/no with one reason.` Expected answer: no, because greetings do not need persisted context.
 6. Second probe: ask a prompt that explicitly needs saved memory. A simple prompt is: `Using saved preferences and prior project memory, what memory sources would you load? List only source categories.` Expected answer: `<namespace>/PREFERENCES.md`, `<namespace>/MEMORY.md`, relevant local context, and relevant indexed docs when the config is reachable.
-7. Third probe: ask the agent to state its automatic write decision for the current turn. A simple prompt is: `If this turn has no new long-term information, what is your automatic write decision? Answer only skip/log_detail/log_summary/write_memory, with one reason.`
+7. Third probe: ask the agent to state its automatic write decision for the current turn. A simple prompt is: `If this turn only had a greeting and no operation history, what is your automatic write decision? Answer only skip/log_detail/log_summary/write_memory, with one reason.`
 8. Optional durable-write probe: tell the agent one durable preference and ask what it would write. For example: `Remember: I prefer concise direct replies. Where would you write it?` Expected answer: `<namespace>/PREFERENCES.md` through `write-preference`.
+9. Optional hook probe: in a test repo, ask the agent to make a tiny harmless file edit and finish. Expected behavior: before the final answer, the Stop hook should force a `write-log` entry unless the agent already wrote one.
 
 ## Pass conditions
 - The first probe says memory retrieval should be skipped for the greeting.
@@ -62,12 +224,15 @@ The default config path is `~/.skills/using-memory/config.yaml`. Override it wit
 - The second probe mentions retrieval from `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md`, plus log or `<namespace>/local/*` context when relevant.
 - The third probe returns one of `skip`, `log_detail`, `log_summary`, or `write_memory`.
 - The agent does not claim that every conversation must load memory.
-- The agent does not claim that every turn or every tool call must be written.
+- The agent does not claim that every tool call must be mirrored mechanically.
+- The agent does claim that concrete operation history and key events should normally be written to the JSONL log.
 - If the config is missing, the agent should degrade gracefully instead of blocking the session.
 
 ## Common failures to check first
 - `~/.codex/superpowers/GEMINI.md` still points to `@./skills/using-memory/SKILL.md` instead of `@../skills/using-memory/SKILL.md`.
 - `~/.claude/CLAUDE.md` does not include `@./skills/using-memory/SKILL.md`.
+- Codex `~/.codex/config.toml` is missing `[features] codex_hooks = true`.
+- The hook config points at a copied skill path but the skill was only linked under the other host.
 - The skill was never linked or installed. Re-run `scripts/link.sh both` for live symlinks or `scripts/install.sh both` for copied installs.
 - `USING_MEMORY_CONFIG` points to the wrong file, or `~/.skills/using-memory/config.yaml` does not exist.
 - The declared memory repo path is wrong, not readable, or not a Git checkout you can `git pull`.
@@ -106,6 +271,7 @@ memory_roots:
 
 - Change `path` to match the local filesystem checkout of the memory repo.
 - Set `namespace` to a single path segment such as `main`, `shaipower`, `work-laptop`, or a user/environment name. It defaults to `main` when omitted.
+- `path` must be the parent directory that contains namespace directories, not the namespace directory itself. If your memory files are under `~/.memories/main`, set `path: ~/.memories` and `namespace: main`.
 - Keep exactly one local primary root with `writable: true`.
 - Give each machine its own `machine_id`.
 - Keep the local machine highest with `priority`.

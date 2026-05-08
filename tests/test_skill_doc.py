@@ -17,7 +17,7 @@ class SkillDocTests(unittest.TestCase):
             (
                 "---\n"
                 "name: using-memory\n"
-                "description: Use when a task needs persisted cross-session context, saved user preferences, prior decisions, project memory, or explicit memory read/write/search/maintenance.\n"
+                "description: Memory protocol for persisted cross-session context and operation continuity. Use when a task mentions memory, remember, forget, preference, prior context, previous work, continue, resume, project history, saved decisions, logs, operations, commits, pushes, builds, tests, deploys, hooks, or equivalent non-English memory/logging triggers; also use whenever persisted memory could change the answer or the turn may create operation history that should survive restart.\n"
                 "---\n"
             ),
         )
@@ -34,9 +34,8 @@ class SkillDocTests(unittest.TestCase):
         self.assertIn("load --log-query", text)
 
         self.assertIn("Never write:", text)
-        self.assertIn("every turn", text)
-        self.assertIn("every tool call", text)
-        self.assertIn("temporary command output", text)
+        self.assertIn("one JSONL entry for every tool call as a mechanical mirror", text)
+        self.assertIn("full temporary command output when a concise result summary is enough", text)
         self.assertIn("scripts/memory_tool.py write-preference", text)
         self.assertIn("scripts/memory_tool.py write-memory", text)
         self.assertIn("scripts/memory_tool.py upsert-doc", text)
@@ -82,7 +81,8 @@ class SkillDocTests(unittest.TestCase):
         self.assertIn("Distill useful patterns from log entries into curated long-term files during light maintenance moments.", text)
         self.assertIn("Only the local primary repo is writable by default", text)
         self.assertIn("Log entries from other namespaces are ignored by default", text)
-        self.assertIn("Write only when information is worth preserving", text)
+        self.assertIn("Default toward writing a log entry when the turn performed work or changed state", text)
+        self.assertIn("concrete operation, state change, verification, issue, fix, decision, commit, push, build, deployment, hook change, config change", text)
 
         for needle in [
             "## Skill Position",

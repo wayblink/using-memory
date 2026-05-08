@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 
 
@@ -516,7 +517,7 @@ memory_roots:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             primary = base / "primary"
-            primary.mkdir()
+            (primary / "main").mkdir(parents=True)
             config = base / "config.yaml"
             self.write_config(config, primary)
 
@@ -534,7 +535,7 @@ memory_roots:
                 expect_ok=False,
             )
 
-            self.assertIn("primary root is not a Git repo", proc.stderr)
+            self.assertIn("neither memory root nor namespace root is a Git repo", proc.stderr)
 
     def test_write_log_appends_to_primary_flat_log_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -552,7 +553,7 @@ memory_roots:
                 "--date",
                 "2026-05-06",
                 "--tag",
-                "decision",
+                "commit",
                 "--text",
                 "deterministic writer only targets primary log",
                 "--json",
@@ -563,6 +564,7 @@ memory_roots:
             self.assertRegex(result["sha256"], r"^[0-9a-f]{64}$")
             primary_text = (self.namespace_root(primary) / "log" / "2026-05-06.jsonl").read_text(encoding="utf-8")
             self.assertIn("deterministic writer only targets primary log", primary_text)
+            self.assertIn('"tag": "commit"', primary_text)
 
     def test_write_log_uses_configured_namespace_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -590,6 +592,66 @@ memory_roots:
                 "namespaced log write",
                 (primary / "shaipower" / "log" / "2026-05-07.jsonl").read_text(encoding="utf-8"),
             )
+
+    def test_write_log_supports_namespace_git_repo_under_memory_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = base / "primary"
+            namespace_repo = self.make_repo(primary, "main", machine_id="primary", namespace=".")
+            config = base / "config.yaml"
+            self.write_config(config, primary, namespace="main")
+
+            result = self.run_tool(
+                "write-log",
+                "--config", str(config),
+                "--date", "2026-05-06",
+                "--tag", "fix",
+                "--text", "repo root namespace write",
+                "--json",
+            )
+
+            self.assertEqual(Path(result["path"]), namespace_repo / "log" / "2026-05-06.jsonl")
+            self.assertFalse((namespace_repo / "main" / "log" / "2026-05-06.jsonl").exists())
+            self.assertIn("repo root namespace write", (namespace_repo / "log" / "2026-05-06.jsonl").read_text(encoding="utf-8"))
+
+    def test_write_log_rejects_namespace_root_as_memory_root_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            namespace_repo = self.make_repo(base, "main", machine_id="primary", namespace=".")
+            config = base / "config.yaml"
+            self.write_config(config, namespace_repo, namespace="main")
+
+            proc = self.run_tool(
+                "write-log",
+                "--config", str(config),
+                "--date", "2026-05-06",
+                "--tag", "fix",
+                "--text", "bad root",
+                "--json",
+                expect_ok=False,
+            )
+
+            self.assertIn("appears to be a namespace root", proc.stderr)
+            self.assertFalse((namespace_repo / "main" / "log" / "2026-05-06.jsonl").exists())
+
+    def test_namespace_dot_is_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary, namespace=".")
+
+            proc = self.run_tool(
+                "write-log",
+                "--config", str(config),
+                "--date", "2026-05-06",
+                "--tag", "fix",
+                "--text", "bad namespace",
+                "--json",
+                expect_ok=False,
+            )
+
+            self.assertIn("invalid namespace", proc.stderr)
 
     def test_write_commands_use_configured_namespace_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -836,7 +898,7 @@ memory_roots:
             self.assertEqual(entry["projects"], ["using-memory"])
             self.assertEqual(entry["tags"], ["roadmap"])
 
-    def test_write_log_uses_warning_free_utc_timestamp(self):
+    def test_write_log_uses_warning_free_local_timestamp(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             primary = self.make_repo(base, "primary", machine_id="primary")
@@ -866,7 +928,10 @@ memory_roots:
             self.assertEqual(result["changed"], True)
             lines = (self.namespace_root(primary) / "log" / "2026-05-06.jsonl").read_text(encoding="utf-8").splitlines()
             record = json.loads(lines[-1])
-            self.assertTrue(record["ts"].endswith("Z"))
+            parsed_ts = datetime.fromisoformat(record["ts"])
+            self.assertIsNotNone(parsed_ts.tzinfo)
+            self.assertIsNotNone(parsed_ts.utcoffset())
+            self.assertFalse(record["ts"].endswith("Z"))
 
     def test_upsert_doc_invalid_metadata_does_not_write_orphan_doc(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1061,8 +1126,22 @@ memory_roots:
             )
             self.assertEqual(result_no_mem["total"], 0)
 
+            today_log = self.namespace_root(primary) / "log" / f"{date.today():%Y-%m-%d}.jsonl"
+            today_log.write_text(
+                json.dumps({
+                    "ts": f"{date.today():%Y-%m-%d}T00:00:00+08:00",
+                    "date": f"{date.today():%Y-%m-%d}",
+                    "tag": "operation",
+                    "source": "user",
+                    "text": "search flags live today",
+                    "confidence": 7,
+                    "files": [],
+                }) + "\n",
+                encoding="utf-8",
+            )
+
             result_log_only = self.run_tool(
-                "search", "today",
+                "search", "search flags live today",
                 "--config", str(config),
                 "--no-docs", "--no-memory",
                 "--json",

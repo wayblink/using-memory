@@ -27,10 +27,10 @@
 - Namespace-specific workspace roots, repo paths, project entry points, and mount details. Keep dated work logs out of this file; use `<namespace>/log/YYYY-MM-DD.jsonl` for dated notes.
 
 `<namespace>/log/YYYY-MM-DD.jsonl`
-- Append-only operation logs in newline-delimited JSON. Each line is a self-contained JSON object with `ts`, `date`, `tag`, `level`, `source`, `text`, and optional `confidence`, `files`. Use `scripts/memory_tool.py write-log` to append. Keeping records structured makes `search`, `maintain`, `stats`, and `load` reliable without index builds.
+- Append-only operation logs in newline-delimited JSON. Each line is a self-contained JSON object with local-timezone ISO `ts` including an offset, `date`, `tag`, `level`, `source`, `text`, and optional `confidence`, `files`. Use `scripts/memory_tool.py write-log` to append. Keeping records structured makes `search`, `maintain`, `stats`, and `load` reliable without index builds.
 
 Allowed lightweight tags:
-- `operation`, `progress`, `milestone`, `result`, `issue`, `debug`, `decision`, `build`, `test`, `lesson`, `fact`, `note`
+- `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context`
 - `[issue]` is for log entries or indexed todo/plan documents only; it is not accepted by `write-memory`.
 
 CLI write boundary:

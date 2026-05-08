@@ -24,7 +24,8 @@ Skip memory for greetings, one-off questions, simple shell commands, isolated co
 
 - Local primary repo first. It is the only writable repo root, and paths with `role: primary` are handled at the top.
 - Reference repos are read-only and are added in priority order to supplement durable memory facts.
-- A config `path` points to the Git repo root. `namespace` selects the first-level namespace directory under that root and defaults to `main`.
+- A config `path` points to the parent directory that contains namespace directories. `namespace` selects the first-level namespace directory under that root and defaults to `main`.
+- If the namespace lives at `~/.memories/main`, the config must be `path: ~/.memories` and `namespace: main`; pointing `path` at `~/.memories/main` would create `<path>/main/log` and is rejected.
 - The canonical log path is fixed at `<namespace>/log/YYYY-MM-DD.jsonl`; today and yesterday are read from `<namespace>/log/*.jsonl` in the local primary repo.
 - Explicit `load --log-from/--log-to` or `load --log-days` may expand the primary log read window; without those flags, only today and yesterday are read.
 - Explicit `load --log-query` parses `<namespace>/log/*.jsonl` line by line and filters entries by the `text` field; only matching entries appear in `log_entries` and loaded log source content.
@@ -53,14 +54,14 @@ Skip memory for greetings, one-off questions, simple shell commands, isolated co
 Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 
 ```json
-{"ts":"2026-05-06T10:30:00Z","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight","confidence":8,"files":["file.py"]}
+{"ts":"2026-05-06T18:30:00+08:00","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight","confidence":8,"files":["file.py"]}
 ```
 
 | Field | Type | Req | Notes |
 |---|---|---|---|
-| `ts` | str | yes | UTC timestamp, ISO 8601 |
+| `ts` | str | yes | Local timezone timestamp, ISO 8601 with offset |
 | `date` | str | yes | `YYYY-MM-DD`, matches filename |
-| `tag` | str | yes | `operation\|progress\|milestone\|result\|issue\|debug\|decision\|build\|test\|lesson\|fact\|note` |
+| `tag` | str | yes | `operation\|progress\|milestone\|state\|result\|output\|verification\|issue\|debug\|error\|fix\|decision\|analysis\|consideration\|build\|deploy\|release\|commit\|test\|benchmark\|lesson\|fact\|pattern\|insight\|note\|context` |
 | `level` | str | yes | `detail` for full operation records, `summary` for key results and milestones |
 | `source` | str | yes | `user` \| `auto` \| `observed` \| `user-stated` |
 | `text` | str | yes | Entry body |
@@ -69,7 +70,9 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 
 ## Write Rules
 
-- Write only when information is worth preserving: when the user explicitly asks to remember something, or when reusable preferences, decisions, lessons, facts, or documents are created.
+- For `<namespace>/log/YYYY-MM-DD.jsonl`, default toward recording concrete operation history and key events. Do not apply a heavy "is this important enough forever?" filter to logs; logs are for traceability and restart continuity.
+- Record commands and tool-driven operations that changed state or produced meaningful evidence: file edits, config changes, service restarts, builds, tests, debug findings, fixes, commits, pushes, PR/release/deploy state, hook behavior, and unresolved follow-up.
+- Simple reads, pure browsing, repeated identical calls, and raw temporary output do not need one entry per tool call unless they produced a decision, diagnosis, verification result, or state change.
 - Only the local primary repo receives appended JSONL log entries, at `<namespace>/log/YYYY-MM-DD.jsonl`; other namespaces are never written.
 - There is no automatic `write-local`. Changes to `<namespace>/local/MACHINE.md`, `<namespace>/local/ENV.md`, and `<namespace>/local/WORKSPACE.md` should be explicit maintenance actions.
 - Stable preferences go to `<namespace>/PREFERENCES.md` through `scripts/memory_tool.py write-preference`.
@@ -80,9 +83,9 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 
 ## End-of-Turn Write Decision
 
-- `skip`
-- `log_detail`
-- `log_summary`
+- `skip`: pure chat, trivial reads with no new state, or repeated tool activity with no new information.
+- `log_detail`: default for concrete operations, edits, commands, tests, debugging, deployments, commits, pushes, and hook/config changes.
+- `log_summary`: key outcomes, milestones, release status, or verified results.
 - `write_memory` when necessary
 
 ## Distillation Rules
@@ -109,4 +112,4 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 - no daemon: no standalone background process.
 - no DB: no database or vector store; everything stays in Markdown, JSONL, and Git.
 - no automatic multi-writer sync: concurrent writes from multiple namespaces still rely on normal Git sync discipline; writes only go to the configured primary repo and namespace.
-- Do not record every tool call: no per-turn transcript logging, and no plan to preserve raw output from every API or tool call.
+- Do not mirror every tool call mechanically: no per-turn transcript logging, and no plan to preserve raw output from every API or tool call. Still record the operation facts and key events broadly enough to reconstruct what happened.

@@ -27,7 +27,8 @@ This tree keeps every memory file under one namespace directory. The repo root i
 
 ## Notes
 
-- A config `path` points to the Git repo root. `namespace` is a single first-level directory under that root and defaults to `main` when omitted.
+- A config `path` points to the parent directory that contains namespace directories. `namespace` is a single first-level directory under that root and defaults to `main` when omitted.
+- Do not set `path` to the namespace directory itself. For a namespace at `~/.memories/main`, use `path: ~/.memories` and `namespace: main`; never use `path: ~/.memories/main` with `namespace: main`.
 - Reference repos are always read-only. The current session treats only the primary repo root as writable.
 - Only the primary repo's configured `<namespace>/local/*` content is loaded for the current namespace. Other namespaces remain reference material and do not affect local state.
 - The sample `main/log/2026-04-13.jsonl` shows the structure. Real log files follow `<namespace>/log/YYYY-MM-DD.jsonl` and use the actual date.
@@ -51,14 +52,14 @@ This tree keeps every memory file under one namespace directory. The repo root i
 Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a self-contained JSON object:
 
 ```json
-{"ts":"2026-05-06T10:30:00Z","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"]}
+{"ts":"2026-05-06T18:30:00+08:00","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"]}
 ```
 
 | Field | Type | Req | Notes |
 |---|---|---|---|
-| `ts` | str | yes | UTC timestamp, ISO 8601 |
+| `ts` | str | yes | Local timezone timestamp, ISO 8601 with offset |
 | `date` | str | yes | `YYYY-MM-DD`, matches filename |
-| `tag` | str | yes | `operation\|progress\|milestone\|result\|issue\|debug\|decision\|build\|test\|lesson\|fact\|note` |
+| `tag` | str | yes | `operation\|progress\|milestone\|state\|result\|output\|verification\|issue\|debug\|error\|fix\|decision\|analysis\|consideration\|build\|deploy\|release\|commit\|test\|benchmark\|lesson\|fact\|pattern\|insight\|note\|context` |
 | `level` | str | yes | `detail` for full operation records, `summary` for key results and milestones |
 | `source` | str | yes | `user` \| `auto` \| `observed` \| `user-stated` |
 | `text` | str | yes | Entry body |

@@ -10,24 +10,45 @@ import sys
 import tempfile
 import yaml
 from pathlib import Path
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows fallback for portable installs.
     fcntl = None
 
-# Python 3.10 compatibility: UTC was added in 3.11
-try:
-    from datetime import UTC
-except ImportError:
-    UTC = timezone.utc
-
-
 DEFAULT_CONFIG_PATH = "~/.skills/using-memory/config.yaml"
 LOCAL_CONTEXT_FILES = ("MACHINE.md", "ENV.md", "WORKSPACE.md")
 DOC_ENTRY_REQUIRED_FIELDS = ("path", "title", "type", "modified")
 DEFAULT_NAMESPACE = "main"
+LOG_TAGS = {
+    "operation",
+    "progress",
+    "milestone",
+    "state",
+    "result",
+    "output",
+    "verification",
+    "issue",
+    "debug",
+    "error",
+    "fix",
+    "decision",
+    "analysis",
+    "consideration",
+    "build",
+    "deploy",
+    "release",
+    "commit",
+    "test",
+    "benchmark",
+    "lesson",
+    "fact",
+    "pattern",
+    "insight",
+    "note",
+    "context",
+}
 
 
 def no_memory_config(warning: str) -> dict:
@@ -375,7 +396,7 @@ def append_log_entry(
     """Append one entry to the primary repo's log note (JSONL only)."""
     jsonl_target = namespace_root(root, namespace) / "log" / f"{when:%Y-%m-%d}.jsonl"
     record = {
-        "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "ts": datetime.now().astimezone().isoformat(),
         "date": when.isoformat(),
         "tag": tag,
         "level": level,
@@ -407,15 +428,33 @@ def append_preference_entry(root: Path, text: str) -> Path:
     return append_markdown_entry(pref_path, entry)
 
 
-def validate_primary_root_for_write(root: Path) -> None:
+def looks_like_memory_namespace_root(path: Path) -> bool:
+    markers = ("MEMORY.md", "PREFERENCES.md", "log", "docs", "local")
+    return any((path / marker).exists() for marker in markers)
+
+
+def validate_primary_root_for_write(root: Path, namespace: str) -> None:
     if not root.exists():
         sys.stderr.write(f"primary root does not exist: {root}\n")
         sys.exit(2)
     if not root.is_dir():
         sys.stderr.write(f"primary root is not a directory: {root}\n")
         sys.exit(2)
-    if not (root / ".git").exists():
-        sys.stderr.write(f"primary root is not a Git repo: {root}\n")
+    if looks_like_memory_namespace_root(root):
+        sys.stderr.write(
+            f"invalid memory root path: {root} appears to be a namespace root; "
+            f"set path to its parent and namespace to '{namespace}'\n"
+        )
+        sys.exit(2)
+    scoped_root = namespace_root(root, namespace)
+    if not scoped_root.exists():
+        sys.stderr.write(f"namespace root does not exist: {scoped_root}\n")
+        sys.exit(2)
+    if not scoped_root.is_dir():
+        sys.stderr.write(f"namespace root is not a directory: {scoped_root}\n")
+        sys.exit(2)
+    if not (root / ".git").exists() and not (scoped_root / ".git").exists():
+        sys.stderr.write(f"neither memory root nor namespace root is a Git repo: {root} / {namespace}\n")
         sys.exit(2)
 
 
@@ -449,8 +488,9 @@ def load_primary_for_write(args: argparse.Namespace) -> tuple[Path, str]:
         sys.stderr.write("primary root path is missing\n")
         sys.exit(2)
     primary_root = expand_path(raw_path)
-    validate_primary_root_for_write(primary_root)
-    return primary_root, namespace_from_root(primary_list[0])
+    primary_namespace = namespace_from_root(primary_list[0])
+    validate_primary_root_for_write(primary_root, primary_namespace)
+    return primary_root, primary_namespace
 
 
 def load_doc_index(index_path: Path) -> dict:
@@ -774,10 +814,9 @@ def do_load(args: argparse.Namespace) -> dict:
 def do_write_log(args: argparse.Namespace) -> dict:
     primary_root, primary_namespace = load_primary_for_write(args)
     when = parse_iso_date(args.date, "--date")
-    allowed = {"operation", "progress", "milestone", "result", "issue", "debug", "decision", "build", "test", "lesson", "fact", "note"}
     tag = (args.tag or "").lower()
-    if tag not in allowed:
-        sys.stderr.write(f"invalid tag '{args.tag}'; allowed: {', '.join(sorted(allowed))}\n")
+    if tag not in LOG_TAGS:
+        sys.stderr.write(f"invalid tag '{args.tag}'; allowed: {', '.join(sorted(LOG_TAGS))}\n")
         sys.exit(2)
     level = args.level
     confidence = args.confidence if args.confidence else None
