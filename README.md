@@ -1,6 +1,6 @@
 # using-memory
 
-`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory in a Git-managed Markdown repo, with every memory file scoped under a configured namespace, and `scripts/memory_tool.py` provides loading, writing, and document-index maintenance.
+`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory and operation history in a Git-managed Markdown repo, with every memory file scoped under a configured namespace, and `scripts/memory_tool.py` provides loading, writing, and document-index maintenance.
 
 The project goal is to make agents load durable memory only when cross-session context is useful, then route new information to the right place instead of mixing preferences, facts, temporary logs, and structured documents together.
 
@@ -36,11 +36,15 @@ Layer responsibilities:
 - `<namespace>/local/ENV.md`: namespace-local toolchains, shell, runtime, and system constraints.
 - `<namespace>/local/WORKSPACE.md`: namespace-local workspaces, repo paths, and project entry points.
 
-`namespace` is a single path segment under the repo root. It defaults to `main` when omitted. Use a stable value such as a user name, machine ID, server name, or environment name when multiple machines share one Git repo.
+`namespace` is a single path segment under the memory root. It defaults to `main` when omitted. Use a stable value such as a user name, machine ID, server name, or environment name when multiple machines share one Git repo.
+
+The configured `path` must point to the parent directory that contains namespace directories, not to the namespace directory itself. For example, if memory files live under `~/.memories/main`, configure `path: ~/.memories` with `namespace: main`. Do not configure `path: ~/.memories/main` with `namespace: main`; write commands reject that shape to avoid accidental `main/main/log/` paths.
 
 ## Retrieval Triggers
 
-The skill is not meant to run before every task. Use it when the user asks for memory work, refers to prior context, continues a saved project, or when persisted preferences and decisions would materially change the answer.
+The skill is not meant to load saved memory before every task. Use it when the user asks for memory work, refers to prior context, continues a saved project, or when persisted preferences and decisions would materially change the answer.
+
+The trigger description also covers operation-continuity terms such as logs, operations, commits, pushes, builds, tests, deploys, hooks, and equivalent non-English memory or logging terms. Those triggers do not mean every turn should load memory; they mean the agent should consider retrieval and should normally write a JSONL log entry when the turn creates operation history that should survive restart.
 
 Skip it for greetings, simple commands, isolated coding tasks with enough local context, generic explanations, and one-off questions where memory would not change the result.
 
@@ -61,9 +65,11 @@ Writes are routed by information type:
 - User preferences, durable constraints, and working style go to `<namespace>/PREFERENCES.md`.
 - Stable facts, confirmed decisions, and long-term lessons go to `<namespace>/MEMORY.md`.
 - Wiki, SOP, todo, plan, and project notes go to `<namespace>/docs/*.md`, with `<namespace>/docs/index.json` updated at the same time.
-- Same-day process notes, temporary context, and unconfirmed information usually go to `<namespace>/log/YYYY-MM-DD.jsonl` or explicit namespace-local records.
+- Same-day process notes, operation history, temporary context, and unconfirmed information usually go to `<namespace>/log/YYYY-MM-DD.jsonl` or explicit namespace-local records.
 
 Open issues, temporary assumptions, and unconfirmed plans are not written directly to `<namespace>/MEMORY.md` by default.
+
+JSONL logs are intentionally broader than durable memory. Record concrete operations and key events with minimal filtering: commands, file edits, config changes, service restarts, builds, tests, debugging findings, fixes, commits, pushes, deployments, hook behavior, verification, and remaining risks. Do not mirror every tool call mechanically or preserve raw transcripts; summarize the facts needed to reconstruct what happened.
 
 ## Install
 
@@ -119,7 +125,32 @@ defaults:
   load_docs_on_demand: true
 ```
 
+Here `path` is the memory root that contains the `main/` namespace directory.
+
 Python dependencies are listed in [requirements.txt](requirements.txt). The current CLI needs `PyYAML` to parse local config.
+
+## Host Hook Enforcement
+
+Skill text improves routing, but Codex and Claude Code hooks add a pre-final write gate. The bundled hook scripts live in `scripts/hooks/`:
+
+- `codex_memory_hook.py`: Codex hook adapter.
+- `claude_memory_hook.py`: Claude Code hook adapter.
+- `memory_hook_common.py`: shared trigger detection and Stop-gate logic.
+
+The hooks do not load memory on every turn and do not write memory automatically. They inject a short reminder when memory/logging triggers are present, track operation-like tool events, and block `Stop` once when the turn appears to contain operation history but no memory write was observed. The continuation prompt asks the agent to run `scripts/memory_tool.py write-log` with concrete operation facts before finalizing.
+
+For Codex, enable the hooks feature in `~/.codex/config.toml`:
+
+```toml
+[features]
+codex_hooks = true
+```
+
+Then point `~/.codex/hooks.json` at `~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, and `Stop`.
+
+For Claude Code, point `~/.claude/settings.json` at `~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PostToolBatch`, `ConfigChange`, and `Stop`.
+
+See [references/machine-setup.md](references/machine-setup.md) for complete hook JSON examples and smoke tests. Hooks are deterministic gates around a heuristic detector; they reduce missed log writes, but the agent still has to summarize accurately.
 
 ## CLI Usage
 
@@ -202,11 +233,22 @@ Write a log entry:
 python3 scripts/memory_tool.py write-log \
   --config ~/.skills/using-memory/config.yaml \
   --date 2026-05-06 \
-  --tag fact \
+  --tag operation \
   --level summary \
   --text "Finished the initial using-memory README draft today." \
   --confidence 8 \
   --source user
+```
+
+`write-log` writes `<namespace>/log/YYYY-MM-DD.jsonl` and auto-generates `ts` as a local timezone ISO 8601 timestamp with an offset, such as `2026-05-06T18:30:00+08:00`.
+
+Allowed log tags are:
+
+```text
+operation, progress, milestone, state, result, output, verification,
+issue, debug, error, fix, decision, analysis, consideration, build,
+deploy, release, commit, test, benchmark, lesson, fact, pattern,
+insight, note, context
 ```
 
 Full-text search. Search returns a `scope` object: docs and memory search cover primary plus reference roots, while log search covers the primary root's configured namespace only.
