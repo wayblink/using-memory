@@ -13,7 +13,9 @@ Work from `personal-skills/using-memory/` so every edit touches the same skill t
 - Both scripts accept an optional host argument: `codex`, `claude-code`, or `both`; the default is `both`.
 - Codex destination: `${CODEX_HOME:-~/.codex}/skills/using-memory`; default path is `~/.codex/skills/using-memory`.
 - Claude Code destination: `${CLAUDE_HOME:-~/.claude}/skills/using-memory`; default path is `~/.claude/skills/using-memory`.
-- The helper scripts install the skill files only; they do not read or create the memory config.
+- On first install or link through this repo's `scripts/install.sh` or `scripts/link.sh`, the helper scripts check for the memory config and start interactive storage setup when no config exists. The prompt collects the memory repo path, optional remote Git repo URL, namespace, and machine ID. Set `USING_MEMORY_SKIP_SETUP=1` to skip this in automation.
+- Some external skill installers only copy the skill directory and do not execute `scripts/install.sh`; after those installs, run `python3 scripts/memory_tool.py setup` manually.
+- If a remote Git repo URL is provided, setup clones it into the requested path or pulls an existing checkout before writing config. If no remote is provided, setup initializes a local Git repo and prints the later `git remote add origin ...` / `git push -u origin main` step.
 - `scripts/link.sh` refuses to replace an existing real directory. Remove the directory manually or use a copied install when the destination is not already a symlink.
 - `scripts/install.sh` refuses to overwrite an existing destination unless `USING_MEMORY_INSTALL_FORCE=1` is set. Copied installs exclude development-only files such as `.git`, `tests`, Python bytecode, and editor swap files.
 
@@ -38,7 +40,7 @@ Edit `~/.claude/CLAUDE.md` so it includes the skill:
 This gives Claude Code the same skill instruction surface from its own skill tree. Claude Code should use the same config and memory repo layout as Codex, not a Claude-only memory format or a separate write pipeline.
 
 ## Configuration
-The default config path is `~/.skills/using-memory/config.yaml`. Override it with `USING_MEMORY_CONFIG` when a machine needs a different location. Keep config outside the memory repo so each machine can declare the local checkout path, namespace, machine ID, optional reference repos, and load priorities.
+The default config path is `~/.skills/using-memory/config.yaml`. Run `python3 scripts/memory_tool.py setup` to create it manually, or let `scripts/link.sh` / `scripts/install.sh` prompt during first-time setup. Override it with `USING_MEMORY_CONFIG` when a machine needs a different location. Keep config outside the memory repo so each machine can declare the local checkout path, namespace, machine ID, optional reference repos, and load priorities.
 
 ## Hook Enforcement
 

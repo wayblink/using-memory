@@ -1387,5 +1387,127 @@ memory_roots:
             self.assertIn("Project Memory", text)
 
 
+class MemorySetupTests(unittest.TestCase):
+    def run_tool(self, *args, expect_ok=True, env=None):
+        merged_env = os.environ.copy()
+        merged_env.pop("USING_MEMORY_CONFIG", None)
+        if env:
+            merged_env.update(env)
+        proc = subprocess.run(
+            [sys.executable, str(TOOL), *args],
+            cwd=ROOT,
+            env=merged_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if expect_ok:
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return json.loads(proc.stdout)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        return proc
+
+    def test_setup_initializes_local_git_repo_and_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            config = base / "config.yaml"
+            memory_root = base / "memories"
+
+            result = self.run_tool(
+                "setup",
+                "--config", str(config),
+                "--path", str(memory_root),
+                "--namespace", "work",
+                "--machine-id", "laptop",
+                "--non-interactive",
+                "--json",
+            )
+
+            self.assertTrue(result["changed"])
+            self.assertEqual(result["git_action"], "initialized")
+            self.assertTrue((memory_root / ".git").is_dir())
+            self.assertTrue((memory_root / "work" / "MEMORY.md").exists())
+            self.assertTrue((memory_root / "work" / "PREFERENCES.md").exists())
+            self.assertTrue((memory_root / "work" / "docs" / "index.json").exists())
+            self.assertTrue(result["next_steps"], "local setup should remind users to add a remote later")
+            text = config.read_text(encoding="utf-8")
+            self.assertIn(f"path: {result['memory_root']}", text)
+            self.assertIn("namespace: work", text)
+            self.assertIn("machine_id: laptop", text)
+
+    def test_setup_clones_remote_git_repo_when_path_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            origin = base / "origin.git"
+            subprocess.run(["git", "init", "--bare", str(origin)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            config = base / "config.yaml"
+            memory_root = base / "checkout"
+
+            result = self.run_tool(
+                "setup",
+                "--config", str(config),
+                "--path", str(memory_root),
+                "--remote", str(origin),
+                "--namespace", "main",
+                "--machine-id", "desktop",
+                "--non-interactive",
+                "--json",
+            )
+
+            self.assertTrue(result["changed"])
+            self.assertEqual(result["git_action"], "cloned")
+            self.assertEqual(result["remote"], str(origin))
+            self.assertTrue((memory_root / ".git").is_dir())
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(memory_root), "remote", "get-url", "origin"],
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ).stdout.strip(),
+                str(origin),
+            )
+            self.assertTrue((memory_root / "main" / "local" / "MACHINE.md").exists())
+            self.assertIn("remote:", config.read_text(encoding="utf-8"))
+
+    def test_setup_pulls_existing_git_checkout_when_remote_is_configured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            origin = base / "origin.git"
+            writer = base / "writer"
+            checkout = base / "checkout"
+            subprocess.run(["git", "init", "--bare", str(origin)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "clone", str(origin), str(writer)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", str(writer), "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", str(writer), "config", "user.name", "Test User"], check=True)
+            (writer / "README.md").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(writer), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(writer), "commit", "-m", "seed"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", str(writer), "push", "origin", "HEAD:main"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "clone", str(origin), str(checkout)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", str(checkout), "checkout", "main"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            (writer / "new.txt").write_text("new memory repo content\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(writer), "add", "new.txt"], check=True)
+            subprocess.run(["git", "-C", str(writer), "commit", "-m", "update"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", str(writer), "push", "origin", "HEAD:main"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            result = self.run_tool(
+                "setup",
+                "--config", str(base / "config.yaml"),
+                "--path", str(checkout),
+                "--remote", str(origin),
+                "--namespace", "main",
+                "--machine-id", "desktop",
+                "--non-interactive",
+                "--json",
+            )
+
+            self.assertEqual(result["git_action"], "pulled")
+            self.assertTrue((checkout / "new.txt").exists())
+            self.assertTrue((checkout / "main" / "MEMORY.md").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

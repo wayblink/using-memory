@@ -96,6 +96,23 @@ After installation, the skill usually lives at:
 ~/.claude/skills/using-memory/
 ```
 
+## First-time storage setup
+
+On first install or first link through this repo's `scripts/install.sh` or `scripts/link.sh`, the helper script checks for `~/.skills/using-memory/config.yaml` (or `USING_MEMORY_CONFIG`). If no config exists and the terminal is interactive, it starts:
+
+```bash
+python3 scripts/memory_tool.py setup
+```
+
+Some external skill installers only copy the skill directory and do not execute `scripts/install.sh`; after those installs, run the setup command manually. The setup prompt asks for the memory repo path, optional remote Git repo URL, namespace, and machine ID. When a remote URL is supplied, setup clones it into the requested path or pulls an existing Git checkout. When no remote URL is supplied, setup initializes a local Git repo, seeds the namespace layout, writes the config, and prints the follow-up command to add a remote later. Set `USING_MEMORY_SKIP_SETUP=1` to skip this prompt during automated installs.
+
+You can also run setup non-interactively:
+
+```bash
+python3 scripts/memory_tool.py setup --path ~/.memories --namespace main --machine-id local-main
+python3 scripts/memory_tool.py setup --path ~/.memories --remote git@github.com:you/memories.git --namespace main --machine-id local-main
+```
+
 ## Configuration
 
 `memory_tool.py` resolves config in this order:
@@ -170,6 +187,7 @@ Current commands:
 - `write-log`: append one log entry in the primary repo's configured namespace.
 - `write-memory`: append curated long-term memory to `<namespace>/MEMORY.md`.
 - `write-preference`: append a durable preference to `<namespace>/PREFERENCES.md`.
+- `setup`: configure the memory repo path, optional remote Git repo, namespace, and machine ID.
 - `upsert-doc`: create or update `<namespace>/docs/*.md` and maintain `<namespace>/docs/index.json`.
 
 Load the default context:

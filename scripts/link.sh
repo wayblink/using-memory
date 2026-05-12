@@ -5,6 +5,26 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${1:-both}"
 
+run_first_time_setup() {
+ local config_path="${USING_MEMORY_CONFIG:-$HOME/.skills/using-memory/config.yaml}"
+ if [ "${USING_MEMORY_SKIP_SETUP:-0}" = "1" ]; then
+  echo "Skipping memory storage setup because USING_MEMORY_SKIP_SETUP=1"
+  return
+ fi
+ if [ -f "$config_path" ]; then
+  echo "Memory storage config already exists: $config_path"
+  return
+ fi
+ if [ -t 0 ]; then
+  echo "No memory storage config found. Starting first-time setup."
+  python3 "$HERE/scripts/memory_tool.py" setup
+ else
+  echo "No memory storage config found: $config_path"
+  echo "Run this later to configure memory storage path, remote Git repo, namespace, and machine ID:"
+  echo "  python3 $HERE/scripts/memory_tool.py setup"
+ fi
+}
+
 link_host() {
  local name="$1"
  local dest="$2"
@@ -34,3 +54,5 @@ case "$HOST" in
  exit 2
  ;;
 esac
+
+run_first_time_setup

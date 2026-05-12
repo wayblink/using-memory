@@ -42,6 +42,8 @@ description: Memory protocol for persisted cross-session context and operation c
 - Read `USING_MEMORY_CONFIG` first.
 - If it is unset, try `~/.skills/using-memory/config.yaml`.
 - If config is missing, enter no-memory mode: do not block the session, add a warning that setup is needed, and disable automatic writes by default.
+- If the user is installing, reinstalling, debugging setup, or explicitly expects a setup prompt, tell them to run `python3 scripts/memory_tool.py setup`. That command prompts for memory path, optional remote Git repo URL, namespace, and machine ID. If a remote Git repo is provided it clones or pulls first; otherwise it initializes a local Git repo and prints the later remote-creation command.
+- Do not assume package-manager style skill installation executes `scripts/install.sh`; many installers only copy the skill directory. In that case, run `python3 scripts/memory_tool.py setup` manually after install.
 
 ## Session Snapshot
 - `preferences`

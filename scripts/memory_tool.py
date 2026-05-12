@@ -6,6 +6,8 @@ import contextlib
 import hashlib
 import json
 import os
+import socket
+import subprocess
 import sys
 import tempfile
 import yaml
@@ -21,6 +23,7 @@ DEFAULT_CONFIG_PATH = "~/.skills/using-memory/config.yaml"
 LOCAL_CONTEXT_FILES = ("MACHINE.md", "ENV.md", "WORKSPACE.md")
 DOC_ENTRY_REQUIRED_FIELDS = ("path", "title", "type", "modified")
 DEFAULT_NAMESPACE = "main"
+SETUP_HINT = "Run `python3 scripts/memory_tool.py setup` to configure memory path, optional remote Git repo, namespace, and machine ID."
 LOG_TAGS = {
     "operation",
     "progress",
@@ -70,20 +73,20 @@ def load_config(config_path: Path | None, env_config: str | None) -> dict:
         env_path = Path(os.path.expanduser(os.path.expandvars(env_config)))
         if not env_path.exists():
             return no_memory_config(
-                f"USING_MEMORY_CONFIG points to missing file: {env_path}; create it or unset USING_MEMORY_CONFIG to use {DEFAULT_CONFIG_PATH}"
+                f"USING_MEMORY_CONFIG points to missing file: {env_path}; create it with setup. {SETUP_HINT} Or unset USING_MEMORY_CONFIG to use {DEFAULT_CONFIG_PATH}."
             )
         raw = env_path.read_text(encoding="utf-8")
     elif config_path:
         if not config_path.exists():
             return no_memory_config(
-                f"config file not found: {config_path}; create it or set USING_MEMORY_CONFIG"
+                f"config file not found: {config_path}; create it with setup. {SETUP_HINT}"
             )
         raw = config_path.read_text(encoding="utf-8")
     else:
         default_config = Path(DEFAULT_CONFIG_PATH).expanduser()
         if not default_config.exists():
             return no_memory_config(
-                f"config file not found: {DEFAULT_CONFIG_PATH}; create it or set USING_MEMORY_CONFIG"
+                f"config file not found: {DEFAULT_CONFIG_PATH}; create it with setup. {SETUP_HINT}"
             )
         raw = default_config.read_text(encoding="utf-8")
 
@@ -1161,6 +1164,208 @@ def do_export(args: argparse.Namespace) -> dict:
     return {"text": text}
 
 
+def default_machine_id() -> str:
+    host = socket.gethostname().split(".")[0].strip()
+    return host or "local-main"
+
+
+def prompt_value(label: str, default: str = "", *, required: bool = False) -> str:
+    suffix = f" [{default}]" if default else ""
+    while True:
+        raw = input(f"{label}{suffix}: ").strip()
+        value = raw or default
+        if value or not required:
+            return value
+        print(f"{label} is required.", file=sys.stderr)
+
+
+def git_run(args: list[str], *, cwd: Path | None = None) -> None:
+    try:
+        subprocess.run(
+            args,
+            cwd=str(cwd) if cwd else None,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        sys.stderr.write("git command not found; install Git before setting up using-memory storage\n")
+        sys.exit(2)
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            sys.stderr.write(exc.stderr)
+        sys.stderr.write(f"git command failed ({exc.returncode}): {' '.join(args)}\n")
+        sys.exit(exc.returncode or 2)
+
+
+def git_output(args: list[str], *, cwd: Path | None = None) -> str:
+    try:
+        proc = subprocess.run(
+            args,
+            cwd=str(cwd) if cwd else None,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return ""
+    return proc.stdout.strip()
+
+
+def path_is_empty(path: Path) -> bool:
+    return not path.exists() or (path.is_dir() and not any(path.iterdir()))
+
+
+def prepare_git_memory_root(memory_root: Path, remote: str) -> str:
+    memory_root = memory_root.expanduser()
+    if remote:
+        if memory_root.exists() and (memory_root / ".git").is_dir():
+            existing = git_output(["git", "remote", "get-url", "origin"], cwd=memory_root)
+            if not existing:
+                git_run(["git", "remote", "add", "origin", remote], cwd=memory_root)
+            git_run(["git", "pull", "--ff-only"], cwd=memory_root)
+            return "pulled"
+        if path_is_empty(memory_root):
+            memory_root.parent.mkdir(parents=True, exist_ok=True)
+            git_run(["git", "clone", remote, str(memory_root)])
+            return "cloned"
+        sys.stderr.write(
+            f"memory path exists but is not an empty directory or Git repo: {memory_root}\n"
+        )
+        sys.exit(2)
+
+    memory_root.mkdir(parents=True, exist_ok=True)
+    if not (memory_root / ".git").is_dir():
+        git_run(["git", "init"], cwd=memory_root)
+        return "initialized"
+    return "exists"
+
+
+def initialize_namespace(memory_root: Path, namespace: str, machine_id: str) -> list[str]:
+    scoped_root = namespace_root(memory_root, namespace)
+    changed = []
+    for rel in ["docs", "log", "local"]:
+        target = scoped_root / rel
+        if not target.exists():
+            target.mkdir(parents=True, exist_ok=True)
+            changed.append(str(target))
+
+    seed_files = {
+        scoped_root / "PREFERENCES.md": "# Preferences\n\n",
+        scoped_root / "MEMORY.md": "# Memory\n\n",
+        scoped_root / "docs" / "index.json": json.dumps(
+            {"version": 1, "documents": []}, ensure_ascii=False, indent=2
+        )
+        + "\n",
+        scoped_root / "local" / "MACHINE.md": f"# Machine\n\n- machine_id: {machine_id}\n",
+        scoped_root / "local" / "ENV.md": "# Environment\n\n",
+        scoped_root / "local" / "WORKSPACE.md": "# Workspaces\n\n",
+    }
+    for path, content in seed_files.items():
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            changed.append(str(path))
+    return changed
+
+
+def write_setup_config(config_path: Path, memory_root: Path, namespace: str, machine_id: str, remote: str) -> None:
+    config_path = config_path.expanduser()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    root_entry = {
+        "path": str(memory_root),
+        "role": "primary",
+        "writable": True,
+        "namespace": namespace,
+        "machine_id": machine_id,
+        "priority": 100,
+    }
+    if remote:
+        root_entry["remote"] = remote
+    data = {
+        "version": 1,
+        "memory_roots": [root_entry],
+        "defaults": {
+            "read_today": True,
+            "read_yesterday": True,
+            "load_docs_on_demand": True,
+        },
+    }
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def do_setup(args: argparse.Namespace) -> dict:
+    env_config = os.environ.get("USING_MEMORY_CONFIG")
+    config_path = expand_path(args.config or env_config or DEFAULT_CONFIG_PATH)
+    config_exists = config_path.exists()
+    if config_exists and not args.force:
+        return {
+            "changed": False,
+            "config": str(config_path),
+            "message": "config already exists; rerun setup with --force to replace it",
+        }
+
+    interactive = sys.stdin.isatty() and not args.non_interactive
+    if not interactive and not args.path:
+        return {
+            "changed": False,
+            "config": str(config_path),
+            "message": "setup needs --path when not running interactively",
+        }
+
+    print("using-memory first-time storage setup", file=sys.stderr)
+    raw_path = args.path or prompt_value("Memory repo path", "~/.memories", required=True)
+    if args.remote is not None:
+        raw_remote = args.remote
+    elif interactive:
+        raw_remote = prompt_value("Remote Git repo URL (optional)", "")
+    else:
+        raw_remote = ""
+    raw_namespace = args.namespace or (prompt_value("Namespace", DEFAULT_NAMESPACE, required=True) if interactive else DEFAULT_NAMESPACE)
+    machine_id = args.machine_id or (prompt_value("Machine ID", default_machine_id(), required=True) if interactive else default_machine_id())
+
+    memory_root = expand_path(raw_path).resolve(strict=False)
+    namespace = namespace_from_root({"namespace": raw_namespace})
+    remote = raw_remote.strip()
+
+    git_action = prepare_git_memory_root(memory_root, remote)
+    seeded = initialize_namespace(memory_root, namespace, machine_id)
+    write_setup_config(config_path, memory_root, namespace, machine_id, remote)
+
+    next_steps = []
+    if not remote:
+        next_steps.append(
+            "Create a remote Git repository later, then run: "
+            f"git -C {memory_root} remote add origin <url> && git -C {memory_root} push -u origin main"
+        )
+    return {
+        "changed": True,
+        "config": str(config_path),
+        "memory_root": str(memory_root),
+        "namespace": namespace,
+        "machine_id": machine_id,
+        "remote": remote,
+        "git_action": git_action,
+        "seeded": seeded,
+        "message": "setup complete",
+        "next_steps": next_steps,
+    }
+
+
+def cmd_setup(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("setup", help="Configure the memory repo path, optional remote Git repo, namespace, and machine ID")
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("--path", type=str, default=None, help="Memory repo checkout path, for example ~/.memories")
+    p.add_argument("--remote", type=str, default=None, help="Optional remote Git URL to clone or pull")
+    p.add_argument("--namespace", type=str, default=None, help="Single namespace path segment, default main")
+    p.add_argument("--machine-id", type=str, default=None)
+    p.add_argument("--force", action="store_true", help="Replace an existing config file")
+    p.add_argument("--non-interactive", action="store_true", help="Do not prompt; fail gracefully when required args are missing")
+    p.add_argument("--json", action="store_true")
+
+
 def cmd_search(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("search", help="Full-text search across configured namespace docs, MEMORY.md and log JSONL")
     p.add_argument("query", type=str, help="Search term")
@@ -1254,6 +1459,7 @@ def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="using-memory CLI")
     sub = parser.add_subparsers(dest="cmd")
     cmd_load(sub)
+    cmd_setup(sub)
     cmd_search(sub)
     cmd_maintain(sub)
     cmd_stats(sub)
@@ -1268,6 +1474,8 @@ def main(argv=None) -> None:
         sys.exit(2)
     if args.cmd == "load":
         result = do_load(args)
+    elif args.cmd == "setup":
+        result = do_setup(args)
     elif args.cmd == "search":
         result = do_search(args)
     elif args.cmd == "maintain":
