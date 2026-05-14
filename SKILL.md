@@ -52,13 +52,27 @@ description: Memory protocol for persisted cross-session context and operation c
 - `log_entries`
 - `doc_hits`
 - `sources`
+- `anatomy` (only when `load --anatomy` is set; see Anatomy below)
+
+## Memory Dimensions
+
+The skill stores four orthogonal kinds of context. Pick the right one when reading or writing:
+
+| Axis | What | File | Lifecycle |
+|---|---|---|---|
+| **Time series (operation)** | What happened, in order | `<namespace>/log/YYYY-MM-DD.jsonl` | Append-only, broad |
+| **Cross-project knowledge** | Stable facts / decisions / lessons | `<namespace>/MEMORY.md` | Curated, narrow |
+| **Stable preferences** | User-level habits / rules | `<namespace>/PREFERENCES.md` | Curated, very narrow |
+| **Project snapshot (anatomy)** | What a project *looks like right now* | `<namespace>/anatomy/<slug>.{json,md}` | Auto-refreshed on writes |
+
+The log answers "what did I do"; anatomy answers "in what shape did I do it." The two are linked via `[[anatomy:<slug>/<rel>]]` references emitted automatically when `write-log --files` matches a registered project.
 
 ## Log JSONL Format
 
 Each `<namespace>/log/YYYY-MM-DD.jsonl` file is newline-delimited JSON with one object per line:
 
 ```json
-{"ts":"2026-05-06T18:30:00+08:00","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"]}
+{"ts":"2026-05-06T18:30:00+08:00","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"],"project":"using-memory","topic":"hooks"}
 ```
 
 | Field | Description |
@@ -67,10 +81,14 @@ Each `<namespace>/log/YYYY-MM-DD.jsonl` file is newline-delimited JSON with one 
 | `date` | Entry date, `YYYY-MM-DD` (matches filename) |
 | `tag` | One of: `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context` |
 | `level` | `detail` for full operation records, `summary` for key results and milestones |
-| `source` | Origin: `user`, `auto`, `observed`, `user-stated`… |
+| `source` | Origin: `user`, `auto`, `observed`, `user-stated`… (`auto` is reserved for hook-driven silent summary appends) |
 | `text` | Entry body |
 | `confidence` | Optional 1-10 score |
 | `files` | Optional list of related file paths |
+| `project` | Optional axis. Lowercase `[a-z0-9._-]`, 1..64 chars. Auto-routed from cwd or `--files` if omitted. Filterable via `search/load --project`. |
+| `topic` | Optional axis. Same shape as project. Auto-routed from text keywords + tag if omitted. Filterable via `search/load --topic`. |
+
+Within a `text` body, references like `[[anatomy:<slug>/<rel>]]` are emitted automatically when `--files` matches a registered project root, and search/load surface the matching anatomy snapshot under `anatomy_links` for each hit.
 
 ## Log Entry Body Schema
 
@@ -141,18 +159,58 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 
 ### Read
 
-- `load`: read memory snapshot. Key selectors: `--config`, `--date`, `--json`, `--log-from` + `--log-to`, `--log-days`, `--log-query`, `--doc` / `--doc-type` / `--doc-tag` / `--project` / `--doc-query`. Returns `log_entries` as a parsed JSON list from the primary repo's configured namespace log.
-- `search <query>`: full-text search across `<namespace>/docs/*.md`, `<namespace>/MEMORY.md`, and the configured namespace log. Docs and memory cover primary plus reference roots; log covers the primary root's configured namespace only. Flags: `--config`, `--log-days N`, `--no-docs`, `--no-memory`, `--no-log`, `--json`.
-- `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, and add missing `<namespace>/docs/index.json` entries for manually added `<namespace>/docs/*.md` files in the writable primary repo. Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
+- `load`: read memory snapshot. Key selectors: `--config`, `--date`, `--json`, `--log-from` + `--log-to`, `--log-days`, `--log-query`, `--doc` / `--doc-type` / `--doc-tag` / `--project` / `--topic` / `--doc-query`, `--anatomy` / `--cwd PATH` / `--anatomy-max-tokens N`. Returns `log_entries` as a parsed JSON list from the primary repo's configured namespace log. With `--anatomy`, also returns an `anatomy` block matched against cwd.
+- `search <query>`: full-text search across `<namespace>/docs/*.md`, `<namespace>/MEMORY.md`, and the configured namespace log. Docs and memory cover primary plus reference roots; log covers the primary root's configured namespace only. Flags: `--config`, `--log-days N`, `--no-docs`, `--no-memory`, `--no-log`, `--project` / `--topic` (repeatable; same axis is OR, different axes are AND; **scope reduces to log-only when either is set**), `--json`. Hits whose text contains `[[anatomy:slug/rel]]` references include an `anatomy_links` field with the resolved snapshot description.
+- `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, repair missing `<namespace>/docs/index.json` entries, and audit anatomy projects (per-project `stale_files` / `new_files` drift, plus `broken_log_refs` for `[[anatomy:...]]` citations whose targets no longer exist). Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
 - `stats`: aggregate tag counts across the configured namespace log and `<namespace>/MEMORY.md`. Flags: `--config`, `--json`.
 - `export`: format a Markdown summary; stdout by default or `--dest FILE` to append. Flags: `--config`, `--dest`, `--json`.
+- `anatomy-list`: list registered anatomy projects with file/token counts. Flags: `--config`, `--json`.
+- `anatomy-show <slug|root>`: print the rendered anatomy markdown for a project. Errors if the project has not been scanned yet.
 
 ### Write
 
-- `write-log`: append one primary JSONL entry. Required: `--config`, `--date`, `--tag`, `--text`. Optional: `--level detail|summary`, `--confidence 1-10`, `--source TEXT`, `--files path1 --files path2`. Allowed tags: `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context`.
+- `write-log`: append one primary JSONL entry. Required: `--config`, `--date`, `--tag`, `--text`. Optional: `--level detail|summary`, `--confidence 1-10`, `--source TEXT`, `--files path1 --files path2`, `--project SLUG`, `--topic SLUG`, `--cwd PATH` (override auto-routing context). When `--project` / `--topic` are omitted, they are auto-routed: project from cwd → registered anatomy slug, falling back to first matching `--files`; topic from text keywords (with `commit` / `deploy` / `release` / `build` / `test` tags short-circuiting to themselves). Allowed tags: `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context`.
 - `write-memory`: append one curated `<namespace>/MEMORY.md` entry. Required: `--config`, `--date`, `--tag`, `--text`; `write-memory` accepts only `fact`, `decision`, and `lesson`.
 - `write-preference`: append one stable `<namespace>/PREFERENCES.md` entry. Required: `--config`, `--text`.
 - `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--config`, `--doc`, `--title`, `--doc-type`, `--modified`, `--text`; optional metadata: `--project`, `--doc-tag`, `--summary`.
+- `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent.
+- `anatomy-scan <slug|root>`: full re-scan of a registered project. Preserves `desc_source=user` entries (refreshes their tokens/mtime/kind, does not overwrite their desc).
+- `anatomy-set <slug|root> <relpath> --desc TEXT`: manually set or refine one file's description. Marks `desc_source=user` so future scans don't overwrite it.
+- `anatomy-upsert-file <abs-path>`: refresh or remove the anatomy entry for one file. Used by the PostToolUse hook for incremental maintenance; safe to call manually too. Silently no-ops on files outside every registered project.
+
+## Anatomy
+
+Anatomy is the project-snapshot dimension. It lives at `<namespace>/anatomy/{_index.json, <slug>.json, <slug>.md}` (JSON is the source of truth; the `.md` is auto-rendered). Each file entry stores `desc / desc_source (auto|user|empty) / tokens_est / kind / mtime`.
+
+Use it to answer "what does this project contain?" without paying for a full re-read each session.
+
+### Registration is explicit
+
+`memory_tool.py anatomy-register <root> [--slug NAME]` is required before a project shows up in `load --anatomy` matches. cwd-only auto-detection is intentionally NOT supported — random `cd` into `~/Downloads` should not silently create snapshots, and slug collisions are surfaced at registration time so they cannot drift.
+
+### SessionStart auto-attach
+
+The Claude Code / Codex hook calls `load --anatomy --cwd <session cwd>` on every SessionStart. When cwd is inside a registered project, the rendered anatomy markdown (capped at ~2000 tokens, falling back to a top-level directory summary above the cap) is appended to the SessionStart additionalContext. When cwd is in an unregistered git repo, the hook injects a single hint line nudging the user to run `anatomy-register`. When cwd is anywhere else, only the standard memory-protocol reminder is sent.
+
+### Incremental maintenance
+
+The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations, extracts the touched file path(s), and calls `anatomy-upsert-file` for each. `desc_source=user` entries are preserved through every refresh — only tokens/mtime/kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot if previously indexed.
+
+For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed).
+
+## Hook Behaviour
+
+The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude Code via `~/.claude/settings.json` (and into Codex via the equivalent codex adapter). Lifecycle bindings:
+
+| Event | Action |
+|---|---|
+| **SessionStart** | Inject memory-protocol reminder + anatomy snapshot for cwd (or hint when cwd is in unregistered git repo). |
+| **UserPromptSubmit** | Set per-turn flag `prompt_mentions_memory` based on memory keyword regex; emit reminder when set. Does NOT reset session-lifetime counters. |
+| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For PostToolUse with a write/edit-style tool, additionally call `anatomy-upsert-file` on each touched path (best-effort, 8s timeout, silent on failure). |
+| **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final assistant message itself contains a memory write, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL (filtering out `tool_result` lists and synthetic `<system-reminder>` / `<command-message>` / `Stop hook feedback:` content). When `prompt_mentions_memory` OR `delta = current_turns - last_save_turn ≥ 8` AND `not memory_written`, BLOCK with the standard write-gate reason. Otherwise pass through and (best-effort) append a `level=summary tag=progress source=auto` log entry capped at one per human turn and 200 per session. |
+| **PreCompact** | Unconditional BLOCK with a structured reason: dump current task / unfinished subgoals / key identifiers / open risks before the context window shrinks. `stop_hook_active` / `precompact_hook_active` short-circuit to `{}` to prevent loops. |
+
+The throttle threshold is `STOP_DETAIL_TURN_INTERVAL = 8` (per-turn level=summary appends are silent; once-per-eight detail blocks force a structured write).
 
 ## Write Strategy
 
@@ -189,7 +247,7 @@ Never write:
 
 ## Maintenance Rules
 
-- `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, then repair missing `<namespace>/docs/index.json` entries for manually added primary namespace `<namespace>/docs/*.md` files.
+- `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, repair missing `<namespace>/docs/index.json` entries, and audit anatomy (`stale_files` / `new_files` per project + `broken_log_refs` for dead `[[anatomy:...]]` citations).
 - `search` / `stats` / `export` are available at any time for quick overview without modifying anything.
 - Distill useful patterns from log entries into curated long-term files during light maintenance moments.
 - Keep wording agent-agnostic so this skill can be used by both Codex and Claude Code without edits.

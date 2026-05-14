@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -385,6 +386,105 @@ def append_markdown_entry(path: Path, entry: str) -> Path:
     return path
 
 
+_ANATOMY_REF_RE = re.compile(r"\[\[anatomy:([a-z0-9][a-z0-9._-]{0,63})/([^\]]+)\]\]")
+
+
+def _anatomy_link_snapshots_for_entry(scoped_root: Path, text: str) -> list[dict]:
+    """Parse `[[anatomy:slug/path]]` refs from a log entry's text and return
+    matching anatomy snapshots: ``{slug, rel, desc, tokens_est, kind}``.
+
+    Missing slugs/files are silently dropped — anatomy can drift behind log
+    references and we'd rather show the surviving subset than fail.
+    """
+    out: list[dict] = []
+    if not text:
+        return out
+    seen: set[tuple[str, str]] = set()
+    cache: dict[str, dict] = {}
+    for match in _ANATOMY_REF_RE.finditer(text):
+        slug = match.group(1)
+        rel = match.group(2).strip()
+        key = (slug, rel)
+        if key in seen:
+            continue
+        seen.add(key)
+        doc = cache.get(slug)
+        if doc is None:
+            doc = _anatomy_load_doc(scoped_root, slug) or {}
+            cache[slug] = doc
+        files = doc.get("files", {}) if isinstance(doc, dict) else {}
+        entry = files.get(rel)
+        if not entry:
+            continue
+        out.append({
+            "slug": slug,
+            "rel": rel,
+            "desc": entry.get("desc", ""),
+            "tokens_est": entry.get("tokens_est", 0),
+            "kind": entry.get("kind", ""),
+        })
+    return out
+
+
+def _anatomy_refs_for_files(scoped_root: Path, files: list[str]) -> list[str]:
+    """For each file in ``files`` that lives inside a registered anatomy project,
+    produce a `[[anatomy:<slug>/<relpath>]]` link string. Deduped, deterministic
+    order. Returns [] when no file matched or no projects are registered.
+    """
+    if not files:
+        return []
+    index = _anatomy_load_index(scoped_root)
+    if not index:
+        return []
+    resolved: list[tuple[Path, str]] = []
+    for slug, info in index.items():
+        if not isinstance(info, dict):
+            continue
+        raw = info.get("root")
+        if not raw:
+            continue
+        try:
+            resolved.append((Path(raw).expanduser().resolve(), slug))
+        except OSError:
+            continue
+    if not resolved:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw_path in files:
+        if not raw_path:
+            continue
+        try:
+            fp = Path(raw_path).expanduser().resolve()
+        except OSError:
+            continue
+        best_slug: str | None = None
+        best_root: Path | None = None
+        best_len = -1
+        for root, slug in resolved:
+            try:
+                fp.relative_to(root)
+            except ValueError:
+                continue
+            length = len(str(root))
+            if length > best_len:
+                best_slug = slug
+                best_root = root
+                best_len = length
+        if best_slug is None or best_root is None:
+            continue
+        try:
+            rel = fp.relative_to(best_root).as_posix()
+        except ValueError:
+            continue
+        ref = f"[[anatomy:{best_slug}/{rel}]]"
+        if ref in seen:
+            continue
+        seen.add(ref)
+        out.append(ref)
+    return out
+
+
 def append_log_entry(
     root: Path,
     namespace: str,
@@ -395,19 +495,40 @@ def append_log_entry(
     confidence: int | None = None,
     source: str | None = None,
     files: list[str] | None = None,
+    project: str | None = None,
+    topic: str | None = None,
 ) -> Path:
-    """Append one entry to the primary repo's log note (JSONL only)."""
+    """Append one entry to the primary repo's log note (JSONL only).
+
+    Side-effect: if ``files`` are inside a registered anatomy project root,
+    appends `[[anatomy:<slug>/<rel>]]` link(s) to ``text`` so search can
+    cross-reference the snapshot description later.
+    """
     jsonl_target = namespace_root(root, namespace) / "log" / f"{when:%Y-%m-%d}.jsonl"
+    final_text = text
+    refs = _anatomy_refs_for_files(namespace_root(root, namespace), files or [])
+    if refs:
+        # Only append refs not already present in the body so manually-authored
+        # entries that already cite anatomy don't get duplicate links.
+        new_refs = [r for r in refs if r not in final_text]
+        if new_refs:
+            if final_text and not final_text.endswith("\n"):
+                final_text += "\n"
+            final_text += "\nAnatomy: " + " ".join(new_refs)
     record = {
         "ts": datetime.now().astimezone().isoformat(),
         "date": when.isoformat(),
         "tag": tag,
         "level": level,
         "source": source or "user",
-        "text": text,
+        "text": final_text,
         "confidence": confidence,
         "files": files or [],
     }
+    if project:
+        record["project"] = project
+    if topic:
+        record["topic"] = topic
     jsonl_target.parent.mkdir(parents=True, exist_ok=True)
     with exclusive_file_lock(lock_path_for(jsonl_target)):
         with jsonl_target.open("a", encoding="utf-8") as f:
@@ -639,8 +760,12 @@ def append_log_jsonl_sources(
     primary_machine: str,
     dates: list[date],
     query: str | None,
+    project_filter: list[str] | None = None,
+    topic_filter: list[str] | None = None,
 ) -> None:
     normalized_query = query.lower() if query else None
+    project_set = _normalize_axis_filter(project_filter)
+    topic_set = _normalize_axis_filter(topic_filter)
     scoped_root = namespace_root(primary_root, primary_namespace)
     for log_date in dates:
         jsonl_path = scoped_root / "log" / f"{log_date:%Y-%m-%d}.jsonl"
@@ -663,13 +788,40 @@ def append_log_jsonl_sources(
                 text = entry.get("text", "")
                 if normalized_query and normalized_query not in str(text).lower():
                     continue
+                if project_set is not None:
+                    proj = entry.get("project")
+                    if not proj or proj.lower() not in project_set:
+                        continue
+                if topic_set is not None:
+                    tp = entry.get("topic")
+                    if not tp or tp.lower() not in topic_set:
+                        continue
                 log_entries.append(entry)
                 matched_lines.append(json.dumps(entry, ensure_ascii=False))
-        if normalized_query and not matched_lines:
+        if (normalized_query or project_set or topic_set) and not matched_lines:
             continue
-        if normalized_query:
+        if normalized_query or project_set or topic_set:
             log_source["content"] = "\n".join(matched_lines) + ("\n" if matched_lines else "")
         sources_list.append(log_source)
+
+
+def _normalize_axis_filter(values: list[str] | None) -> set[str] | None:
+    """Normalize a list of CLI axis filter values to a lowercased set.
+
+    Returns None if no filter (caller treats as wildcard). Returns an empty
+    set only if every value was empty after stripping (caller should still
+    treat as wildcard, so we return None in that case).
+    """
+    if not values:
+        return None
+    out = set()
+    for v in values:
+        if v is None:
+            continue
+        s = v.strip().lower()
+        if s:
+            out.add(s)
+    return out or None
 
 
 def do_load(args: argparse.Namespace) -> dict:
@@ -787,6 +939,8 @@ def do_load(args: argparse.Namespace) -> dict:
             primary_machine,
             log_dates,
             args.log_query,
+            project_filter=getattr(args, "project", None),
+            topic_filter=getattr(args, "topic", None),
         )
 
         for local_name in LOCAL_CONTEXT_FILES:
@@ -801,7 +955,20 @@ def do_load(args: argparse.Namespace) -> dict:
                 local_context.append(local_source["content"])
     else:
         warnings.append("no primary root configured; read_today and read_yesterday are no-ops")
-    return {
+
+    anatomy_block: dict | None = None
+    if getattr(args, "anatomy", False) and roots_exist:
+        cwd_arg = getattr(args, "cwd", None)
+        cwd_path = Path(cwd_arg).expanduser() if cwd_arg else Path.cwd()
+        primary_cfg = primary_list[0]
+        primary_scoped = namespace_root(
+            expand_path(primary_cfg.get("path", "")),
+            namespace_from_root(primary_cfg),
+        )
+        max_tokens = int(getattr(args, "anatomy_max_tokens", None) or 2000)
+        anatomy_block = _anatomy_attach_for_load(primary_scoped, cwd_path, max_tokens)
+
+    result = {
         "mode": "memory" if roots_exist else "no_memory",
         "write_enabled": roots_exist and primary_list[0].get("writable", False) if roots_exist else False,
         "sources": sources_list,
@@ -812,6 +979,9 @@ def do_load(args: argparse.Namespace) -> dict:
         "doc_hits": doc_set,
         "warnings": warnings,
     }
+    if anatomy_block is not None:
+        result["anatomy"] = anatomy_block
+    return result
 
 
 def do_write_log(args: argparse.Namespace) -> dict:
@@ -825,12 +995,107 @@ def do_write_log(args: argparse.Namespace) -> dict:
     confidence = args.confidence if args.confidence else None
     source = args.source if args.source else None
     files = args.files if args.files else []
-    target = append_log_entry(primary_root, primary_namespace, when, tag, args.text, level=level, confidence=confidence, source=source, files=files)
+    project = _normalize_axis_value(getattr(args, "project", None))
+    topic = _normalize_axis_value(getattr(args, "topic", None))
+
+    # Auto-routing: when --project / --topic are not given, try to infer them.
+    # project: prefer cwd → registered anatomy slug; fall back to first --files entry.
+    # topic: keyword scoring on text + tag (only when not explicitly set).
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    if project is None:
+        cwd_arg = getattr(args, "cwd", None)
+        candidate_cwd = Path(cwd_arg).expanduser() if cwd_arg else Path.cwd()
+        slug, _ = _anatomy_match_cwd(scoped_root, candidate_cwd)
+        if slug is None and files:
+            for raw in files:
+                if not raw:
+                    continue
+                slug2, _root, _rel = _anatomy_match_file(scoped_root, Path(raw).expanduser())
+                if slug2:
+                    slug = slug2
+                    break
+        if slug:
+            project = slug
+    if topic is None:
+        topic = _infer_topic_from_text(args.text, tag)
+
+    target = append_log_entry(
+        primary_root,
+        primary_namespace,
+        when,
+        tag,
+        args.text,
+        level=level,
+        confidence=confidence,
+        source=source,
+        files=files,
+        project=project,
+        topic=topic,
+    )
     return {
         "changed": True,
         "path": str(target),
         "sha256": sha256_file(target),
+        "auto_project": project if project else None,
+        "auto_topic": topic if topic else None,
     }
+
+
+# Topic keyword routing: lightweight, regex-based, no LLM. Order matters —
+# first matching topic wins so callers get deterministic results.
+_TOPIC_KEYWORDS: list[tuple[str, re.Pattern]] = [
+    ("hooks", re.compile(r"\b(hook|hooks|posttooluse|pretooluse|sessionstart|stop[ _-]?hook|precompact)\b", re.I)),
+    ("anatomy", re.compile(r"\banatomy\b", re.I)),
+    ("build", re.compile(r"\b(build|compile|docker[ _-]?build|image[ _-]?build|tsc|webpack|vite)\b", re.I)),
+    ("deploy", re.compile(r"\b(deploy|release|rollout|helm|kubectl|fly\.io|render|netlify|vercel)\b", re.I)),
+    ("test", re.compile(r"\b(tests?|pytest|jest|vitest|cargo[ _-]?tests?|go[ _-]?tests?|smoke[ _-]?tests?)\b", re.I)),
+    ("commit", re.compile(r"\b(commit|push|rebase|merge|cherry-pick|tag\s+v\d|origin/main)\b", re.I)),
+    ("debug", re.compile(r"\b(debug|stack[ _-]?trace|traceback|investigate|root[ _-]?cause)\b", re.I)),
+    ("config", re.compile(r"\b(settings\.json|config\.toml|claude\.md|agents\.md|gitignore|dockerfile|tsconfig)\b", re.I)),
+    ("docs", re.compile(r"\b(readme|docs/|documentation|skill\.md)\b", re.I)),
+    ("search", re.compile(r"\b(search|index|retriev)\b", re.I)),
+    ("axes", re.compile(r"\b(axes|topic|project axis|two[ _-]axis)\b", re.I)),
+]
+
+
+def _infer_topic_from_text(text: str, tag: str) -> str | None:
+    """Best-effort topic detection. Returns None when no keyword pattern hits.
+
+    The tag is consulted as a hint for ambiguous topics (a 'commit' tag with
+    text mentioning 'docs' picks 'commit', not 'docs').
+    """
+    if not text:
+        return None
+    t = (tag or "").lower()
+    if t in {"commit", "deploy", "release", "build", "test"}:
+        return t
+    for slug, pattern in _TOPIC_KEYWORDS:
+        if pattern.search(text):
+            return slug
+    return None
+
+
+_AXIS_VALUE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def _normalize_axis_value(value: str | None) -> str | None:
+    """Validate a project/topic axis value: lowercased, [a-z0-9._-], 1..64 chars.
+
+    Returns None for empty / None input. Exits with code 2 on invalid syntax so
+    bad data never silently lands in JSONL.
+    """
+    if value is None:
+        return None
+    stripped = value.strip().lower()
+    if not stripped:
+        return None
+    if not _AXIS_VALUE_RE.match(stripped):
+        sys.stderr.write(
+            f"invalid axis value '{value}': must match {_AXIS_VALUE_RE.pattern} "
+            "(lowercase alnum + . _ -, 1..64 chars)\n"
+        )
+        sys.exit(2)
+    return stripped
 
 
 def do_write_memory(args: argparse.Namespace) -> dict:
@@ -895,6 +1160,760 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     }
 
 
+# ============================================================================
+# Anatomy: project file-index snapshot
+# ============================================================================
+#
+# Lives at ``<namespace>/anatomy/{_index.json, <slug>.json, <slug>.md}``.
+# JSON is the source of truth; the .md file is re-rendered on every write so
+# humans can grep it. Token estimates use a single shared char-to-token ratio.
+
+_ANATOMY_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+# OpenWolf-style heuristic: chars-per-token by content kind. Single source of
+# truth — DO NOT clone this constant elsewhere; OpenWolf shipped three
+# divergent copies of the same estimator and it created silent drift.
+_TOKEN_RATIOS = {"code": 3.5, "prose": 4.0, "mixed": 3.75}
+
+# Files we never index (binary blobs, lockfiles, build artifacts, vendored deps).
+_ANATOMY_SKIP_DIRS = {
+    ".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build",
+    "target", ".idea", ".vscode", ".next", ".cache", ".pytest_cache",
+    ".mypy_cache", ".ruff_cache", "out", ".gradle", ".tox",
+}
+_ANATOMY_SKIP_FILE_SUFFIXES = (
+    ".pyc", ".pyo", ".so", ".dylib", ".dll", ".class", ".jar", ".war", ".o",
+    ".a", ".lib", ".exe", ".bin", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".ico", ".pdf", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z",
+    ".mp3", ".mp4", ".mov", ".avi", ".wav", ".flac", ".ttf", ".otf", ".woff",
+    ".woff2", ".eot", ".svg",
+)
+_ANATOMY_LOCK_SUFFIXES = ("-lock.json", ".lock")
+_ANATOMY_LOCK_NAMES = {
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
+    "Pipfile.lock", "poetry.lock", "uv.lock", "Gemfile.lock", "go.sum",
+    "composer.lock",
+}
+
+
+def _anatomy_root(scoped_root: Path) -> Path:
+    return scoped_root / "anatomy"
+
+
+def _anatomy_index_path(scoped_root: Path) -> Path:
+    return _anatomy_root(scoped_root) / "_index.json"
+
+
+def _anatomy_json_path(scoped_root: Path, slug: str) -> Path:
+    return _anatomy_root(scoped_root) / f"{slug}.json"
+
+
+def _anatomy_md_path(scoped_root: Path, slug: str) -> Path:
+    return _anatomy_root(scoped_root) / f"{slug}.md"
+
+
+def _anatomy_validate_slug(slug: str) -> str:
+    s = (slug or "").strip().lower()
+    if not _ANATOMY_SLUG_RE.match(s):
+        sys.stderr.write(
+            f"invalid slug '{slug}': must match {_ANATOMY_SLUG_RE.pattern} "
+            "(lowercase alnum + . _ -, 1..64 chars, first char alnum)\n"
+        )
+        sys.exit(2)
+    return s
+
+
+def _anatomy_default_slug(root: Path) -> str:
+    """Derive a default slug from the project root basename."""
+    raw = root.name.lower()
+    cleaned = re.sub(r"[^a-z0-9._-]+", "-", raw).strip("-._")
+    if not cleaned:
+        cleaned = "project"
+    cleaned = cleaned[:64]
+    return cleaned if _ANATOMY_SLUG_RE.match(cleaned) else "project"
+
+
+def _anatomy_load_index(scoped_root: Path) -> dict:
+    path = _anatomy_index_path(scoped_root)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _anatomy_save_index(scoped_root: Path, index: dict) -> None:
+    path = _anatomy_index_path(scoped_root)
+    atomic_write_text(path, json.dumps(index, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _anatomy_load_doc(scoped_root: Path, slug: str) -> dict:
+    path = _anatomy_json_path(scoped_root, slug)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _anatomy_save_doc(scoped_root: Path, slug: str, doc: dict) -> None:
+    path = _anatomy_json_path(scoped_root, slug)
+    atomic_write_text(path, json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _classify_file_kind(rel_path: str) -> str:
+    """Return 'code' / 'prose' / 'config' / 'script' / 'other'."""
+    p = rel_path.lower()
+    if p.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+                   ".go", ".rs", ".java", ".kt", ".kts", ".scala", ".cpp",
+                   ".cc", ".c", ".h", ".hpp", ".rb", ".php", ".swift",
+                   ".m", ".mm", ".cs", ".fs", ".clj", ".cljs", ".ex", ".exs",
+                   ".sql", ".lua", ".dart", ".r", ".jl")):
+        return "code"
+    if p.endswith((".md", ".markdown", ".rst", ".txt", ".adoc")):
+        return "prose"
+    if p.endswith((".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd")):
+        return "script"
+    if p.endswith((".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+                   ".conf", ".env")) or rel_path in {
+                       "Dockerfile", "Makefile", ".gitignore", ".dockerignore"
+                   }:
+        return "config"
+    return "other"
+
+
+def _token_kind_for_estimate(file_kind: str) -> str:
+    if file_kind == "code" or file_kind == "script":
+        return "code"
+    if file_kind == "prose":
+        return "prose"
+    return "mixed"
+
+
+def estimate_tokens(text: str, kind: str = "mixed") -> int:
+    """Heuristic token estimate. ratio: code=3.5, prose=4.0, mixed=3.75 chars/token.
+
+    Strips obvious base64 blobs and very long URLs so they don't skew the
+    estimate. Single source of truth — never clone this function.
+    """
+    if not text:
+        return 0
+    cleaned = re.sub(r"\bdata:[^\s\"']{200,}", "", text)              # data URIs
+    cleaned = re.sub(r"\b[A-Za-z0-9+/]{200,}={0,2}\b", "", cleaned)   # base64
+    cleaned = re.sub(r"https?://\S{120,}", "", cleaned)               # huge URLs
+    ratio = _TOKEN_RATIOS.get(kind, _TOKEN_RATIOS["mixed"])
+    return max(1, int(len(cleaned) / ratio + 0.5))
+
+
+def _extract_description(file_path: Path, file_kind: str) -> str:
+    """Best-effort extract a short human description from file head.
+
+    Returns "" if nothing useful was found. Reads at most 12 KB.
+    """
+    try:
+        head = file_path.read_text(encoding="utf-8", errors="replace")[:12_000]
+    except OSError:
+        return ""
+    if not head.strip():
+        return ""
+    if file_kind == "prose":
+        # First H1 + first paragraph after it; fall back to first non-empty paragraph.
+        m = re.search(r"^# +(.+?)$", head, flags=re.MULTILINE)
+        if m:
+            after = head[m.end():]
+            para = re.split(r"\n\s*\n", after.strip(), maxsplit=1)
+            first = (para[0] if para else "").strip()
+            return _condense(f"{m.group(1).strip()} — {first}" if first else m.group(1).strip())
+        first_para = re.split(r"\n\s*\n", head.strip(), maxsplit=1)[0]
+        return _condense(first_para)
+    if file_kind == "code":
+        # Try docstring first (Python)
+        m = re.search(r'^\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', head, flags=re.DOTALL)
+        if m:
+            return _condense(m.group(1))
+        # JSDoc / block comment
+        m = re.search(r"^\s*/\*\*?(.*?)\*/", head, flags=re.DOTALL)
+        if m:
+            cleaned = re.sub(r"^\s*\*\s?", "", m.group(1), flags=re.MULTILINE)
+            return _condense(cleaned)
+        # Top-of-file line comments
+        line_comment = []
+        for line in head.splitlines()[:30]:
+            s = line.strip()
+            if not s:
+                if line_comment:
+                    break
+                continue
+            cm = re.match(r"^(?://|#)\s?(.*)$", s)
+            if cm:
+                line_comment.append(cm.group(1))
+            elif line_comment:
+                break
+        if line_comment:
+            return _condense(" ".join(line_comment))
+        # First export / def / class / function signature
+        m = re.search(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|def|interface|type)\s+([A-Za-z_][\w]*)",
+                      head, flags=re.MULTILINE)
+        if m:
+            return f"first symbol: {m.group(1)}"
+        return ""
+    if file_kind == "script":
+        line_comment = []
+        for line in head.splitlines()[:30]:
+            s = line.strip()
+            if s.startswith("#!"):
+                continue
+            if not s:
+                if line_comment:
+                    break
+                continue
+            if s.startswith("#"):
+                line_comment.append(s.lstrip("#").strip())
+            elif line_comment:
+                break
+        if line_comment:
+            return _condense(" ".join(line_comment))
+        return ""
+    if file_kind == "config":
+        # Recognise common files by filename
+        name = file_path.name
+        known = {
+            "package.json": "npm package manifest",
+            "pyproject.toml": "Python project manifest",
+            "Cargo.toml": "Cargo crate manifest",
+            "go.mod": "Go module manifest",
+            "Dockerfile": "Docker image build instructions",
+            "Makefile": "Make build rules",
+            ".gitignore": "git ignore patterns",
+            "tsconfig.json": "TypeScript compiler config",
+        }
+        return known.get(name, "")
+    return ""
+
+
+def _condense(text: str) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if len(text) > 240:
+        text = text[:237] + "..."
+    return text
+
+
+def _anatomy_should_skip(path: Path, project_root: Path) -> bool:
+    try:
+        rel = path.relative_to(project_root)
+    except ValueError:
+        return True
+    parts = rel.parts
+    if any(part in _ANATOMY_SKIP_DIRS for part in parts):
+        return True
+    name = path.name
+    if name.startswith(".") and name not in {".gitignore", ".dockerignore", ".env.example"}:
+        return True
+    if name in _ANATOMY_LOCK_NAMES:
+        return True
+    if name.lower().endswith(_ANATOMY_LOCK_SUFFIXES) and name not in {".gitignore"}:
+        return True
+    if name.lower().endswith(_ANATOMY_SKIP_FILE_SUFFIXES):
+        return True
+    try:
+        if path.is_symlink():
+            return True
+        if path.stat().st_size > 2_000_000:  # >2 MB: probably not source
+            return True
+    except OSError:
+        return True
+    return False
+
+
+def _anatomy_walk(project_root: Path):
+    """Yield (path, rel_path) pairs for indexable files under project_root."""
+    keep_dotted = {".github", ".claude"}
+    for current_root, dirs, files in os.walk(project_root):
+        # Prune skipped dirs in-place so os.walk stops descending. Drop generic
+        # dotfiles but allow specific ones (.github, .claude) that often hold
+        # real config worth indexing.
+        dirs[:] = [
+            d for d in dirs
+            if d not in _ANATOMY_SKIP_DIRS and (not d.startswith(".") or d in keep_dotted)
+        ]
+        for fname in files:
+            p = Path(current_root) / fname
+            if _anatomy_should_skip(p, project_root):
+                continue
+            try:
+                rel = p.relative_to(project_root).as_posix()
+            except ValueError:
+                continue
+            yield p, rel
+
+
+def _anatomy_build_file_entry(path: Path, rel: str) -> dict:
+    kind = _classify_file_kind(rel)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    desc = _extract_description(path, kind)
+    tokens = estimate_tokens(text, _token_kind_for_estimate(kind))
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+    except OSError:
+        mtime = ""
+    return {
+        "desc": desc,
+        "desc_source": "auto" if desc else "empty",
+        "tokens_est": tokens,
+        "kind": kind,
+        "mtime": mtime,
+    }
+
+
+def _anatomy_render_md(doc: dict) -> str:
+    project = doc.get("project", "?")
+    root = doc.get("root", "?")
+    scanned = doc.get("scanned_at", "")
+    totals = doc.get("totals", {})
+    files = doc.get("files", {}) or {}
+
+    lines = [
+        f"# Anatomy: {project}",
+        "",
+        f"- Root: `{root}`",
+        f"- Scanned at: {scanned}",
+        f"- Files: {totals.get('files', len(files))}",
+        f"- Tokens (est): {totals.get('tokens_est', 0)}",
+        "",
+    ]
+
+    # Group files by top-level directory for readability.
+    groups: dict[str, list[tuple[str, dict]]] = {}
+    for rel, entry in files.items():
+        head = rel.split("/", 1)[0] if "/" in rel else "(root)"
+        groups.setdefault(head, []).append((rel, entry))
+    for head in sorted(groups):
+        items = groups[head]
+        items.sort(key=lambda x: x[0])
+        lines.append(f"## {head}/")
+        lines.append("")
+        for rel, entry in items:
+            display = rel if head == "(root)" else rel[len(head) + 1:]
+            desc = entry.get("desc") or ""
+            tok = entry.get("tokens_est", 0)
+            src = entry.get("desc_source", "auto")
+            tag = "" if src == "auto" else f" [{src}]"
+            if desc:
+                lines.append(f"- `{display}` — {desc} (~{tok} tok){tag}")
+            else:
+                lines.append(f"- `{display}` (~{tok} tok){tag}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _anatomy_persist(scoped_root: Path, slug: str, doc: dict) -> tuple[Path, Path]:
+    _anatomy_save_doc(scoped_root, slug, doc)
+    md_path = _anatomy_md_path(scoped_root, slug)
+    atomic_write_text(md_path, _anatomy_render_md(doc))
+    return _anatomy_json_path(scoped_root, slug), md_path
+
+
+def _anatomy_resolve_slug(scoped_root: Path, slug_or_root: str) -> str | None:
+    """Accept either a slug or a project root path; return the slug or None."""
+    candidate = slug_or_root.strip()
+    if not candidate:
+        return None
+    index = _anatomy_load_index(scoped_root)
+    if candidate in index:
+        return candidate
+    p = Path(candidate).expanduser().resolve()
+    for slug, info in index.items():
+        if Path(info.get("root", "")).resolve() == p:
+            return slug
+    return None
+
+
+def _anatomy_resolve_slug_or_die(scoped_root: Path, slug_or_root: str) -> str:
+    """Resolve a slug-or-root argument or exit(2) with a uniform error.
+
+    Centralises the "no anatomy project matches '<arg>'" pattern used by
+    every read-side anatomy CLI command so the message stays consistent.
+    """
+    slug = _anatomy_resolve_slug(scoped_root, slug_or_root)
+    if slug is None:
+        sys.stderr.write(
+            f"no anatomy project matches '{slug_or_root}'. "
+            "Run `memory_tool.py anatomy-register <root>` first, or check `anatomy-list`.\n"
+        )
+        sys.exit(2)
+    return slug
+
+
+def do_anatomy_register(args: argparse.Namespace) -> dict:
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    project_root = Path(args.root).expanduser().resolve()
+    if not project_root.is_dir():
+        sys.stderr.write(f"project root does not exist or is not a directory: {project_root}\n")
+        sys.exit(2)
+    slug = _anatomy_validate_slug(args.slug) if args.slug else _anatomy_default_slug(project_root)
+    index = _anatomy_load_index(scoped_root)
+    if slug in index and Path(index[slug].get("root", "")).resolve() != project_root:
+        sys.stderr.write(
+            f"slug '{slug}' already registered to {index[slug].get('root')!r}; "
+            f"pick a different name with --slug\n"
+        )
+        sys.exit(2)
+    index[slug] = {
+        "root": str(project_root),
+        "registered_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    _anatomy_save_index(scoped_root, index)
+    return {
+        "changed": True,
+        "slug": slug,
+        "root": str(project_root),
+        "index_path": str(_anatomy_index_path(scoped_root)),
+    }
+
+
+def do_anatomy_scan(args: argparse.Namespace) -> dict:
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    slug = _anatomy_resolve_slug_or_die(scoped_root, args.slug)
+    index = _anatomy_load_index(scoped_root)
+    project_root = Path(index[slug]["root"]).expanduser().resolve()
+    if not project_root.is_dir():
+        sys.stderr.write(f"registered project root no longer exists: {project_root}\n")
+        sys.exit(2)
+    existing = _anatomy_load_doc(scoped_root, slug)
+    existing_files = (existing.get("files") or {}) if isinstance(existing, dict) else {}
+
+    files: dict = {}
+    total_tokens = 0
+    for path, rel in _anatomy_walk(project_root):
+        new_entry = _anatomy_build_file_entry(path, rel)
+        prev = existing_files.get(rel)
+        if prev and prev.get("desc_source") == "user" and prev.get("desc"):
+            # Preserve user-curated description; refresh tokens/mtime/kind.
+            new_entry["desc"] = prev["desc"]
+            new_entry["desc_source"] = "user"
+        files[rel] = new_entry
+        total_tokens += new_entry.get("tokens_est", 0)
+
+    doc = {
+        "project": slug,
+        "root": str(project_root),
+        "scanned_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "totals": {"files": len(files), "tokens_est": total_tokens},
+        "files": files,
+    }
+    json_path, md_path = _anatomy_persist(scoped_root, slug, doc)
+    return {
+        "changed": True,
+        "slug": slug,
+        "root": str(project_root),
+        "files": len(files),
+        "tokens_est": total_tokens,
+        "json_path": str(json_path),
+        "md_path": str(md_path),
+    }
+
+
+def do_anatomy_show(args: argparse.Namespace) -> dict:
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    slug = _anatomy_resolve_slug_or_die(scoped_root, args.slug)
+    md_path = _anatomy_md_path(scoped_root, slug)
+    if not md_path.exists():
+        sys.stderr.write(
+            f"anatomy not yet scanned for '{slug}'. Run anatomy-scan first.\n"
+        )
+        sys.exit(2)
+    return {
+        "slug": slug,
+        "md_path": str(md_path),
+        "content": md_path.read_text(encoding="utf-8"),
+    }
+
+
+def do_anatomy_set(args: argparse.Namespace) -> dict:
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    slug = _anatomy_resolve_slug_or_die(scoped_root, args.slug)
+    doc = _anatomy_load_doc(scoped_root, slug)
+    if not doc:
+        sys.stderr.write(
+            f"anatomy not yet scanned for '{slug}'. Run anatomy-scan first.\n"
+        )
+        sys.exit(2)
+    files = doc.setdefault("files", {})
+    rel = args.relpath.lstrip("/")
+    entry = files.get(rel)
+    if not entry:
+        sys.stderr.write(
+            f"file '{rel}' not in anatomy. Run anatomy-scan or check the path.\n"
+        )
+        sys.exit(2)
+    new_desc = _condense(args.desc)
+    if not new_desc:
+        sys.stderr.write("--desc must be a non-empty string\n")
+        sys.exit(2)
+    entry["desc"] = new_desc
+    entry["desc_source"] = "user"
+    json_path, md_path = _anatomy_persist(scoped_root, slug, doc)
+    return {
+        "changed": True,
+        "slug": slug,
+        "relpath": rel,
+        "desc": new_desc,
+        "desc_source": "user",
+        "json_path": str(json_path),
+        "md_path": str(md_path),
+    }
+
+
+def do_anatomy_list(args: argparse.Namespace) -> dict:
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    index = _anatomy_load_index(scoped_root)
+    projects = []
+    for slug in sorted(index.keys()):
+        info = index[slug] or {}
+        doc = _anatomy_load_doc(scoped_root, slug)
+        totals = (doc.get("totals") or {}) if isinstance(doc, dict) else {}
+        projects.append({
+            "slug": slug,
+            "root": info.get("root"),
+            "registered_at": info.get("registered_at"),
+            "scanned_at": doc.get("scanned_at"),
+            "files": totals.get("files", 0),
+            "tokens_est": totals.get("tokens_est", 0),
+        })
+    return {"projects": projects, "count": len(projects)}
+
+
+def _longest_prefix_project_match(scoped_root: Path, target: Path) -> tuple[str | None, Path | None]:
+    """Find the registered project whose root is the longest prefix of target.
+
+    Returns (slug, resolved_root) or (None, None) when no registered project
+    contains target. Target is resolved first to handle macOS symlink quirks
+    (e.g. /tmp → /private/tmp).
+    """
+    try:
+        resolved = target.expanduser().resolve()
+    except OSError:
+        return None, None
+    index = _anatomy_load_index(scoped_root)
+    best_slug: str | None = None
+    best_root: Path | None = None
+    best_len = -1
+    for slug, info in index.items():
+        raw = info.get("root") if isinstance(info, dict) else None
+        if not raw:
+            continue
+        try:
+            root = Path(raw).expanduser().resolve()
+        except OSError:
+            continue
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        length = len(str(root))
+        if length > best_len:
+            best_slug = slug
+            best_root = root
+            best_len = length
+    return best_slug, best_root
+
+
+def _anatomy_match_cwd(scoped_root: Path, cwd: Path) -> tuple[str | None, Path | None]:
+    return _longest_prefix_project_match(scoped_root, cwd)
+
+
+def _anatomy_match_file(scoped_root: Path, file_path: Path) -> tuple[str | None, Path | None, str | None]:
+    """Same as _anatomy_match_cwd but additionally returns the file's relative
+    path within the matched project root. (None, None, None) on miss.
+    """
+    slug, root = _longest_prefix_project_match(scoped_root, file_path)
+    if slug is None or root is None:
+        return None, None, None
+    try:
+        rel = file_path.expanduser().resolve().relative_to(root).as_posix()
+    except (ValueError, OSError):
+        return None, None, None
+    return slug, root, rel
+
+
+def _anatomy_render_capped(doc: dict, max_tokens: int) -> tuple[str, bool]:
+    """Render anatomy md, falling back to top-level summary when over budget.
+
+    Returns (markdown, truncated). The full render is used when its estimated
+    token cost is <= max_tokens, otherwise a compact top-level-directory
+    summary with per-dir file/token counts is used so the loader stays within
+    its budget.
+    """
+    full = _anatomy_render_md(doc)
+    full_tokens = estimate_tokens(full, "mixed")
+    if full_tokens <= max_tokens:
+        return full, False
+    files = doc.get("files", {}) or {}
+    groups: dict[str, dict] = {}
+    for rel, entry in files.items():
+        head = rel.split("/", 1)[0] if "/" in rel else "(root)"
+        g = groups.setdefault(head, {"files": 0, "tokens_est": 0})
+        g["files"] += 1
+        g["tokens_est"] += int(entry.get("tokens_est", 0) or 0)
+    lines = [
+        f"# Anatomy: {doc.get('project', '?')} (summary)",
+        "",
+        f"- Root: `{doc.get('root', '?')}`",
+        f"- Scanned at: {doc.get('scanned_at', '')}",
+        f"- Files: {doc.get('totals', {}).get('files', len(files))}",
+        f"- Tokens (est): {doc.get('totals', {}).get('tokens_est', 0)}",
+        f"- Full anatomy ~{full_tokens} tok exceeds load cap ({max_tokens} tok); showing top-level summary.",
+        f"- To see a specific path's details: `memory_tool.py anatomy-show <slug>`.",
+        "",
+        "## Top-level directories",
+        "",
+    ]
+    for head in sorted(groups):
+        g = groups[head]
+        lines.append(f"- `{head}/` — {g['files']} files, ~{g['tokens_est']} tok")
+    lines.append("")
+    return "\n".join(lines), True
+
+
+def _cwd_is_git_repo(cwd: Path) -> bool:
+    """True if cwd or any ancestor contains a .git directory or file."""
+    try:
+        p = cwd.expanduser().resolve()
+    except OSError:
+        return False
+    for candidate in [p, *p.parents]:
+        if (candidate / ".git").exists():
+            return True
+    return False
+
+
+def _anatomy_persist_with_totals(scoped_root: Path, slug: str, doc: dict) -> None:
+    """Recompute totals + bump scanned_at, then persist JSON + MD atomically."""
+    files = doc.get("files", {}) or {}
+    doc["totals"] = {
+        "files": len(files),
+        "tokens_est": sum(int((f or {}).get("tokens_est", 0) or 0) for f in files.values()),
+    }
+    doc["scanned_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    _anatomy_persist(scoped_root, slug, doc)
+
+
+def _anatomy_upsert_file(scoped_root: Path, slug: str, project_root: Path, file_path: Path, rel: str) -> str:
+    """Refresh or remove the anatomy entry for one file.
+
+    Returns one of: "updated", "removed", "skipped" (filtered/should-skip),
+    "no-doc" (project never scanned yet). On disk both <slug>.json and
+    <slug>.md are re-written atomically when something changed.
+    """
+    doc = _anatomy_load_doc(scoped_root, slug)
+    if not doc:
+        return "no-doc"
+    files = doc.setdefault("files", {})
+
+    # Resolve to match project_root which has already been resolved by the
+    # caller. On macOS /tmp is a symlink to /private/tmp; without this both
+    # relative_to() inside _anatomy_should_skip and read_text() down below
+    # silently behave differently.
+    try:
+        resolved_fp = file_path.expanduser().resolve()
+    except OSError:
+        resolved_fp = file_path
+
+    # The file is gone OR filtered → drop any prior entry, no-op if absent.
+    if not resolved_fp.exists() or _anatomy_should_skip(resolved_fp, project_root):
+        if rel in files:
+            del files[rel]
+            _anatomy_persist_with_totals(scoped_root, slug, doc)
+            return "removed"
+        return "skipped"
+
+    new_entry = _anatomy_build_file_entry(resolved_fp, rel)
+    prev = files.get(rel)
+    if prev and prev.get("desc_source") == "user" and prev.get("desc"):
+        new_entry["desc"] = prev["desc"]
+        new_entry["desc_source"] = "user"
+    files[rel] = new_entry
+    _anatomy_persist_with_totals(scoped_root, slug, doc)
+    return "updated"
+
+
+def do_anatomy_upsert_file(args: argparse.Namespace) -> dict:
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    file_path = Path(args.file).expanduser()
+    slug, project_root, rel = _anatomy_match_file(scoped_root, file_path)
+    if not slug or not project_root or rel is None:
+        return {
+            "changed": False,
+            "matched": False,
+            "file": str(file_path),
+            "reason": "no registered project contains this file",
+        }
+    action = _anatomy_upsert_file(scoped_root, slug, project_root, file_path, rel)
+    return {
+        "changed": action in {"updated", "removed"},
+        "matched": True,
+        "slug": slug,
+        "rel": rel,
+        "action": action,
+    }
+
+
+def _anatomy_attach_for_load(scoped_root: Path, cwd: Path, max_tokens: int) -> dict:
+    """Build the anatomy block returned by `load --anatomy`.
+
+    Result keys:
+      - matched (bool): a registered project's root contains cwd
+      - slug, root, content, truncated when matched
+      - hint (str) when unmatched and cwd is inside a git repo
+    """
+    slug, root = _anatomy_match_cwd(scoped_root, cwd)
+    if slug and root:
+        doc = _anatomy_load_doc(scoped_root, slug)
+        if not doc:
+            return {
+                "matched": True,
+                "slug": slug,
+                "root": str(root),
+                "warning": "registered but not yet scanned; run `memory_tool.py anatomy-scan {slug}`".format(slug=slug),
+            }
+        content, truncated = _anatomy_render_capped(doc, max_tokens)
+        return {
+            "matched": True,
+            "slug": slug,
+            "root": str(root),
+            "truncated": truncated,
+            "max_tokens": max_tokens,
+            "content": content,
+        }
+    result: dict = {"matched": False}
+    if _cwd_is_git_repo(cwd):
+        result["hint"] = (
+            "cwd is inside a git repo but not a registered anatomy project. "
+            "Run `memory_tool.py anatomy-register <root>` to enable project-aware load."
+        )
+    return result
+
+
+# ============================================================================
+# /Anatomy
+# ============================================================================
+
+
+
+
 def _search_sources(
     config: dict,
     query: str,
@@ -903,8 +1922,17 @@ def _search_sources(
     search_memory: bool,
     search_log: bool,
     log_days: int | None = None,
+    project_filter: list[str] | None = None,
+    topic_filter: list[str] | None = None,
 ) -> dict:
-    """Full-text search across configured namespace docs, MEMORY.md, and log JSONL."""
+    """Full-text search across configured namespace docs, MEMORY.md, and log JSONL.
+
+    project_filter / topic_filter apply to log JSONL entries only (those fields
+    do not have well-defined homes in MEMORY.md or docs/*.md yet). When either
+    filter is non-empty, docs and memory hits are suppressed so the result set
+    is unambiguously scoped to log entries — otherwise users would get
+    misleading hits from unfiltered sources.
+    """
     hits = []
     if not config:
         return {"query": query, "hits": [], "total": 0}
@@ -913,8 +1941,17 @@ def _search_sources(
     validate_single_primary(primary_list, required=False)
     ordered_roots = primary_list + ref_list
 
+    project_set = _normalize_axis_filter(project_filter)
+    topic_set = _normalize_axis_filter(topic_filter)
+    axes_scoped = bool(project_set or topic_set)
+    # When the caller scopes by axes, restrict to log entries: only the log
+    # carries project/topic metadata today. Suppressing docs/memory avoids
+    # misleading "match" results from unfiltered sources.
+    effective_search_docs = search_docs and not axes_scoped
+    effective_search_memory = search_memory and not axes_scoped
+
     # --- <namespace>/docs/*.md ---
-    if search_docs:
+    if effective_search_docs:
         for root_cfg in ordered_roots:
             r_path = expand_path(root_cfg.get("path", ""))
             scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
@@ -944,7 +1981,7 @@ def _search_sources(
                     })
 
     # --- <namespace>/MEMORY.md ---
-    if search_memory:
+    if effective_search_memory:
         for root_cfg in ordered_roots:
             r_path = expand_path(root_cfg.get("path", ""))
             scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
@@ -992,14 +2029,27 @@ def _search_sources(
                 except json.JSONDecodeError:
                     continue
                 text = entry.get("text", "")
-                if query.lower() in text.lower():
-                    hits.append({
-                        "source": "log",
-                        "path": str(jsonl_path),
-                        "line": lineno,
-                        "snippet": text[:120],
-                        "score": 1,
-                    })
+                if query.lower() not in text.lower():
+                    continue
+                if project_set is not None:
+                    proj = entry.get("project")
+                    if not proj or proj.lower() not in project_set:
+                        continue
+                if topic_set is not None:
+                    tp = entry.get("topic")
+                    if not tp or tp.lower() not in topic_set:
+                        continue
+                hit = {
+                    "source": "log",
+                    "path": str(jsonl_path),
+                    "line": lineno,
+                    "snippet": text[:120],
+                    "score": 1,
+                }
+                anatomy_links = _anatomy_link_snapshots_for_entry(scoped_root, text)
+                if anatomy_links:
+                    hit["anatomy_links"] = anatomy_links
+                hits.append(hit)
 
     return {
         "query": query,
@@ -1022,6 +2072,8 @@ def do_search(args: argparse.Namespace) -> dict:
         search_memory=not args.no_memory,
         search_log=not args.no_log,
         log_days=args.log_days,
+        project_filter=getattr(args, "project", None),
+        topic_filter=getattr(args, "topic", None),
     )
 
 
@@ -1073,7 +2125,105 @@ def do_maintain(args: argparse.Namespace) -> dict:
                 ok_count += 1
 
     indexed_docs = maintain_doc_index(scoped_root)
-    return {"stale": stale, "corrupt": corrupt, "ok": ok_count, "indexed_docs": indexed_docs}
+    anatomy_report = _maintain_anatomy(scoped_root)
+    return {
+        "stale": stale,
+        "corrupt": corrupt,
+        "ok": ok_count,
+        "indexed_docs": indexed_docs,
+        "anatomy": anatomy_report,
+    }
+
+
+def _maintain_anatomy(scoped_root: Path) -> dict:
+    """Audit registered anatomy projects and surface drift.
+
+    Returns:
+      - projects: list of {slug, root, missing_root, scanned, file_count,
+        stale_files, new_files, broken_anatomy_refs}
+      - broken_log_refs: [[anatomy:slug/rel]] references in log/*.jsonl whose
+        slug or file no longer exists in the anatomy snapshot.
+    """
+    report: dict = {"projects": [], "broken_log_refs": []}
+    index = _anatomy_load_index(scoped_root)
+    for slug in sorted(index.keys()):
+        info = index[slug] or {}
+        raw_root = info.get("root")
+        proj: dict = {"slug": slug, "root": raw_root}
+        if not raw_root:
+            proj["error"] = "no root recorded"
+            report["projects"].append(proj)
+            continue
+        root = Path(raw_root).expanduser()
+        if not root.is_dir():
+            proj["missing_root"] = True
+            report["projects"].append(proj)
+            continue
+        doc = _anatomy_load_doc(scoped_root, slug)
+        if not doc:
+            proj["scanned"] = False
+            report["projects"].append(proj)
+            continue
+        proj["scanned"] = True
+        files = doc.get("files", {}) or {}
+        proj["file_count"] = len(files)
+
+        # Re-walk the project once and diff against the snapshot.
+        live_rels: set[str] = set()
+        for path, rel in _anatomy_walk(root):
+            live_rels.add(rel)
+        snapshot_rels = set(files.keys())
+        stale = sorted(snapshot_rels - live_rels)
+        new = sorted(live_rels - snapshot_rels)
+        if stale:
+            proj["stale_files"] = stale[:50]
+            proj["stale_files_total"] = len(stale)
+        if new:
+            proj["new_files"] = new[:50]
+            proj["new_files_total"] = len(new)
+        report["projects"].append(proj)
+
+    # Scan log entries for [[anatomy:slug/rel]] refs whose target no longer
+    # exists. This is the "log → anatomy drift" check.
+    log_dir = scoped_root / "log"
+    cache: dict[str, dict] = {}
+    if log_dir.is_dir():
+        for jsonl_path in sorted(log_dir.glob("*.jsonl")):
+            if not jsonl_path.is_file():
+                continue
+            try:
+                lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+            except Exception:
+                continue
+            for lineno, raw_line in enumerate(lines, 1):
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                text = entry.get("text", "")
+                if "[[anatomy:" not in text:
+                    continue
+                for m in _ANATOMY_REF_RE.finditer(text):
+                    slug = m.group(1)
+                    rel = m.group(2).strip()
+                    doc = cache.get(slug)
+                    if doc is None:
+                        doc = _anatomy_load_doc(scoped_root, slug) or {}
+                        cache[slug] = doc
+                    files = doc.get("files", {}) if isinstance(doc, dict) else {}
+                    if rel in files:
+                        continue
+                    report["broken_log_refs"].append({
+                        "path": str(jsonl_path),
+                        "line": lineno,
+                        "slug": slug,
+                        "rel": rel,
+                        "reason": "slug not registered" if not doc else "file not in anatomy snapshot",
+                    })
+    return report
 
 
 def _collect_stats(config: dict | None) -> dict:
@@ -1374,6 +2524,18 @@ def cmd_search(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--no-docs", action="store_true")
     p.add_argument("--no-memory", action="store_true")
     p.add_argument("--no-log", action="store_true")
+    p.add_argument(
+        "--project",
+        action="append",
+        default=None,
+        help="Filter log entries by project axis (repeatable). Implies --no-docs --no-memory: matched scope becomes log-only.",
+    )
+    p.add_argument(
+        "--topic",
+        action="append",
+        default=None,
+        help="Filter log entries by topic axis (repeatable). Implies --no-docs --no-memory: matched scope becomes log-only.",
+    )
     p.add_argument("--json", action="store_true")
 
 
@@ -1407,8 +2569,36 @@ def cmd_load(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--doc", type=str, default=None)
     p.add_argument("--doc-type", type=str, default=None)
     p.add_argument("--doc-tag", action="append", default=None)
-    p.add_argument("--project", action="append", default=None)
+    p.add_argument(
+        "--project",
+        action="append",
+        default=None,
+        help="Filter docs index by project tag AND filter log entries by project axis (repeatable).",
+    )
+    p.add_argument(
+        "--topic",
+        action="append",
+        default=None,
+        help="Filter log entries by topic axis (repeatable). Does not affect docs.",
+    )
     p.add_argument("--doc-query", type=str, default=None)
+    p.add_argument(
+        "--anatomy",
+        action="store_true",
+        help="Attach the anatomy snapshot for the project whose root contains cwd (longest-prefix match against the registered anatomy index). Falls back to a hint when cwd is in an unregistered git repo.",
+    )
+    p.add_argument(
+        "--cwd",
+        type=str,
+        default=None,
+        help="Override the cwd used for --anatomy matching. Defaults to the actual cwd.",
+    )
+    p.add_argument(
+        "--anatomy-max-tokens",
+        type=int,
+        default=None,
+        help="Token cap for the attached anatomy markdown (default 2000). Over-budget anatomies fall back to a top-level-directory summary.",
+    )
     p.add_argument("--json", action="store_true")
 
 
@@ -1422,6 +2612,24 @@ def cmd_write_log(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--confidence", type=int, default=None)
     p.add_argument("--source", type=str, default=None)
     p.add_argument("--files", action="append", default=None)
+    p.add_argument(
+        "--project",
+        type=str,
+        default=None,
+        help="Optional project axis (lowercase, [a-z0-9._-], 1..64 chars). Used by search/load --project filters. Auto-routed from cwd / --files if omitted.",
+    )
+    p.add_argument(
+        "--topic",
+        type=str,
+        default=None,
+        help="Optional topic axis (lowercase, [a-z0-9._-], 1..64 chars). Used by search/load --topic filters. Auto-routed from text keywords if omitted.",
+    )
+    p.add_argument(
+        "--cwd",
+        type=str,
+        default=None,
+        help="Override cwd used for project auto-routing. Defaults to actual cwd.",
+    )
     p.add_argument("--json", action="store_true")
 
 
@@ -1455,6 +2663,67 @@ def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--json", action="store_true")
 
 
+def cmd_anatomy_register(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "anatomy-register",
+        help="Register a project root for anatomy snapshots. Slug must be unique; conflicts error out.",
+    )
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("root", type=str, help="Project root directory to register")
+    p.add_argument(
+        "--slug",
+        type=str,
+        default=None,
+        help="Optional slug (lowercase, [a-z0-9._-], 1..64). Defaults to root basename.",
+    )
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_anatomy_scan(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "anatomy-scan",
+        help="Scan a registered project's files and rebuild its anatomy snapshot.",
+    )
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("slug", type=str, help="Slug or absolute project root path")
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_anatomy_show(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("anatomy-show", help="Print the rendered anatomy markdown for a project")
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("slug", type=str, help="Slug or absolute project root path")
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_anatomy_set(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "anatomy-set",
+        help="Manually set or refine the description of one file. Marks desc_source=user so future scans don't overwrite it.",
+    )
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("slug", type=str, help="Slug or absolute project root path")
+    p.add_argument("relpath", type=str, help="Relative path within the project root")
+    p.add_argument("--desc", type=str, required=True)
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_anatomy_list(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("anatomy-list", help="List registered anatomy projects with file/token counts")
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("--json", action="store_true")
+
+
+def cmd_anatomy_upsert_file(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "anatomy-upsert-file",
+        help="Refresh or remove the anatomy entry for one file. Matches the file against the registered anatomy index by longest prefix; silently no-ops when the file is outside every registered project.",
+    )
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("file", type=str, help="Absolute path to the file that changed")
+    p.add_argument("--json", action="store_true")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="using-memory CLI")
     sub = parser.add_subparsers(dest="cmd")
@@ -1468,6 +2737,12 @@ def main(argv=None) -> None:
     cmd_write_memory(sub)
     cmd_write_preference(sub)
     cmd_upsert_doc(sub)
+    cmd_anatomy_register(sub)
+    cmd_anatomy_scan(sub)
+    cmd_anatomy_show(sub)
+    cmd_anatomy_set(sub)
+    cmd_anatomy_list(sub)
+    cmd_anatomy_upsert_file(sub)
     args = parser.parse_args(argv)
     if not args.cmd:
         parser.print_help()
@@ -1492,6 +2767,18 @@ def main(argv=None) -> None:
         result = do_write_preference(args)
     elif args.cmd == "upsert-doc":
         result = do_upsert_doc(args)
+    elif args.cmd == "anatomy-register":
+        result = do_anatomy_register(args)
+    elif args.cmd == "anatomy-scan":
+        result = do_anatomy_scan(args)
+    elif args.cmd == "anatomy-show":
+        result = do_anatomy_show(args)
+    elif args.cmd == "anatomy-set":
+        result = do_anatomy_set(args)
+    elif args.cmd == "anatomy-list":
+        result = do_anatomy_list(args)
+    elif args.cmd == "anatomy-upsert-file":
+        result = do_anatomy_upsert_file(args)
     else:
         parser.print_help()
         sys.exit(2)
