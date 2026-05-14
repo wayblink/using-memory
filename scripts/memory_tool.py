@@ -1032,6 +1032,12 @@ def do_write_log(args: argparse.Namespace) -> dict:
         project=project,
         topic=topic,
     )
+    # Stats: distinguish hook-driven silent appends from user/Claude writes so
+    # the dashboard can show authorship.
+    _bump_lifetime_stats(
+        scoped_root,
+        {"log_entries_auto" if (source or "user") == "auto" else "log_entries_user": 1},
+    )
     return {
         "changed": True,
         "path": str(target),
@@ -1039,6 +1045,36 @@ def do_write_log(args: argparse.Namespace) -> dict:
         "auto_project": project if project else None,
         "auto_topic": topic if topic else None,
     }
+
+
+def _bump_lifetime_stats(scoped_root: Path, deltas: dict) -> None:
+    """Atomic increment of <namespace>/local/STATS.json counters.
+
+    Same contract as the hook-side bump_stats; lives here so write-* CLI
+    commands can update counts independently of any hook context.
+    """
+    if not deltas:
+        return
+    path = scoped_root / "local" / "STATS.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(current, dict):
+                current = {}
+        except (OSError, json.JSONDecodeError):
+            current = {}
+        lifetime = current.setdefault("lifetime", {})
+        for key, delta in deltas.items():
+            try:
+                d = int(delta)
+            except (TypeError, ValueError):
+                continue
+            lifetime[key] = int(lifetime.get(key, 0) or 0) + d
+        current["last_event_ts"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        atomic_write_text(path, json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    except Exception:
+        return
 
 
 # Topic keyword routing: lightweight, regex-based, no LLM. Order matters —
@@ -1693,6 +1729,107 @@ def do_anatomy_list(args: argparse.Namespace) -> dict:
             "tokens_est": totals.get("tokens_est", 0),
         })
     return {"projects": projects, "count": len(projects)}
+
+
+def do_status(args: argparse.Namespace) -> dict:
+    """Aggregate dashboard for the using-memory installation.
+
+    Reads <namespace>/local/STATS.json (real event counters, no estimates),
+    plus the anatomy index, and computes two diagnostic ratios:
+      - anatomy_hit_rate     = anatomy_attached_count / sessions
+      - stop_block_ratio     = stop_blocks / (stop_blocks + stop_throttled_passthrough)
+
+    Both ratios are diagnostic, not performance claims. The hit rate tells
+    the user how often SessionStart found a registered project; a low rate
+    suggests more anatomy-register calls would help. The block ratio tells
+    the user whether the N=8 throttle is too aggressive (high → too many
+    blocks) or too lax (very low → silent summaries doing all the work).
+    """
+    primary_root, primary_namespace = load_primary_for_write(args)
+    scoped_root = namespace_root(primary_root, primary_namespace)
+    stats_path = scoped_root / "local" / "STATS.json"
+    lifetime: dict = {}
+    last_event_ts: str | None = None
+    if stats_path.exists():
+        try:
+            raw = json.loads(stats_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                lt = raw.get("lifetime")
+                if isinstance(lt, dict):
+                    lifetime = lt
+                last_event_ts = raw.get("last_event_ts")
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def _g(k: str) -> int:
+        try:
+            return int(lifetime.get(k, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    sessions = _g("sessions")
+    attached = _g("anatomy_attached_count")
+    truncated = _g("anatomy_truncated_count")
+    hints = _g("anatomy_hint_emitted")
+    attached_tokens = _g("anatomy_attached_tokens_est")
+    upserts = _g("anatomy_upserts")
+    log_auto = _g("log_entries_auto")
+    log_user = _g("log_entries_user")
+    blocks = _g("stop_blocks")
+    passthrough = _g("stop_throttled_passthrough")
+    precompact = _g("precompact_blocks")
+
+    hit_rate = round(attached / sessions, 3) if sessions else None
+    total_stops = blocks + passthrough
+    block_ratio = round(blocks / total_stops, 3) if total_stops else None
+
+    index = _anatomy_load_index(scoped_root)
+    projects: list[dict] = []
+    total_files = 0
+    total_tokens = 0
+    for slug in sorted(index.keys()):
+        info = index[slug] or {}
+        doc = _anatomy_load_doc(scoped_root, slug)
+        totals = (doc.get("totals") or {}) if isinstance(doc, dict) else {}
+        files = int(totals.get("files", 0) or 0)
+        tokens = int(totals.get("tokens_est", 0) or 0)
+        total_files += files
+        total_tokens += tokens
+        projects.append({
+            "slug": slug,
+            "root": info.get("root"),
+            "files": files,
+            "tokens_est": tokens,
+            "scanned": bool(doc),
+        })
+
+    return {
+        "stats_path": str(stats_path),
+        "last_event_ts": last_event_ts,
+        "lifetime": {
+            "sessions": sessions,
+            "anatomy_attached_count": attached,
+            "anatomy_truncated_count": truncated,
+            "anatomy_hint_emitted": hints,
+            "anatomy_attached_tokens_est": attached_tokens,
+            "anatomy_upserts": upserts,
+            "log_entries_auto": log_auto,
+            "log_entries_user": log_user,
+            "stop_blocks": blocks,
+            "stop_throttled_passthrough": passthrough,
+            "precompact_blocks": precompact,
+        },
+        "ratios": {
+            "anatomy_hit_rate": hit_rate,
+            "stop_block_ratio": block_ratio,
+        },
+        "anatomy": {
+            "registered_projects": len(projects),
+            "total_files": total_files,
+            "total_tokens_est": total_tokens,
+            "projects": projects,
+        },
+    }
 
 
 def _longest_prefix_project_match(scoped_root: Path, target: Path) -> tuple[str | None, Path | None]:
@@ -2724,6 +2861,15 @@ def cmd_anatomy_upsert_file(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--json", action="store_true")
 
 
+def cmd_status(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "status",
+        help="Aggregate dashboard: lifetime hook event counts (anatomy attaches, log writes, stop blocks, precompact), diagnostic ratios, and registered anatomy projects.",
+    )
+    p.add_argument("--config", type=str, default=None)
+    p.add_argument("--json", action="store_true", help="Emit raw JSON instead of the human-readable dashboard.")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="using-memory CLI")
     sub = parser.add_subparsers(dest="cmd")
@@ -2743,6 +2889,7 @@ def main(argv=None) -> None:
     cmd_anatomy_set(sub)
     cmd_anatomy_list(sub)
     cmd_anatomy_upsert_file(sub)
+    cmd_status(sub)
     args = parser.parse_args(argv)
     if not args.cmd:
         parser.print_help()
@@ -2779,13 +2926,67 @@ def main(argv=None) -> None:
         result = do_anatomy_list(args)
     elif args.cmd == "anatomy-upsert-file":
         result = do_anatomy_upsert_file(args)
+    elif args.cmd == "status":
+        result = do_status(args)
     else:
         parser.print_help()
         sys.exit(2)
-    if args.json:
+    if args.cmd == "status" and not args.json:
+        print(_format_status(result))
+    elif args.json:
         print(json.dumps(result, ensure_ascii=False))
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _format_status(result: dict) -> str:
+    """Render a using-memory status dict as a human-readable dashboard."""
+    lt = result.get("lifetime") or {}
+    ratios = result.get("ratios") or {}
+    anatomy = result.get("anatomy") or {}
+    last_ts = result.get("last_event_ts") or "(never)"
+
+    def pct(v):
+        return "n/a" if v is None else f"{v * 100:.1f}%"
+
+    lines = [
+        "using-memory status",
+        "===================",
+        f"Last event: {last_ts}",
+        f"Stats file: {result.get('stats_path')}",
+        "",
+        "Lifetime counters",
+        "-----------------",
+        f"  sessions started               : {lt.get('sessions', 0)}",
+        f"  anatomy attached on start      : {lt.get('anatomy_attached_count', 0)}",
+        f"     of which truncated to summary: {lt.get('anatomy_truncated_count', 0)}",
+        f"  anatomy hint emitted           : {lt.get('anatomy_hint_emitted', 0)}  (cwd in unregistered git repo)",
+        f"  anatomy tokens injected (est)  : {lt.get('anatomy_attached_tokens_est', 0)}",
+        f"  anatomy file upserts (hooks)   : {lt.get('anatomy_upserts', 0)}",
+        f"  log entries written by user/AI : {lt.get('log_entries_user', 0)}",
+        f"  log entries silent-appended    : {lt.get('log_entries_auto', 0)}",
+        f"  Stop hard-blocks (detail save) : {lt.get('stop_blocks', 0)}",
+        f"  Stop throttled passthroughs    : {lt.get('stop_throttled_passthrough', 0)}",
+        f"  PreCompact emergency saves     : {lt.get('precompact_blocks', 0)}",
+        "",
+        "Diagnostic ratios",
+        "-----------------",
+        f"  anatomy hit rate (attach/sessions) : {pct(ratios.get('anatomy_hit_rate'))}",
+        f"  Stop block ratio  (block/total)    : {pct(ratios.get('stop_block_ratio'))}",
+        "",
+        f"Registered projects: {anatomy.get('registered_projects', 0)}  "
+        f"(total {anatomy.get('total_files', 0)} files, {anatomy.get('total_tokens_est', 0)} est tokens)",
+    ]
+    for proj in anatomy.get("projects", [])[:20]:
+        scanned = "scanned" if proj.get("scanned") else "NOT SCANNED"
+        lines.append(
+            f"  - {proj['slug']:<24} {proj.get('files', 0):>5} files  "
+            f"{proj.get('tokens_est', 0):>7} tok  [{scanned}]  → {proj.get('root', '')}"
+        )
+    extra = max(0, len(anatomy.get("projects", [])) - 20)
+    if extra:
+        lines.append(f"  ... and {extra} more")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

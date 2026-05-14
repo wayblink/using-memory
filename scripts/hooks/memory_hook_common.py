@@ -232,6 +232,74 @@ def _memory_tool_path() -> str:
     return str(Path.home() / ".claude" / "skills" / "using-memory" / "scripts" / "memory_tool.py")
 
 
+def _stats_path() -> Path | None:
+    """Resolve <primary memory root>/<namespace>/local/STATS.json.
+
+    Returns None when the config isn't readable yet — silent fail keeps
+    hook stability strict; STATS.json is best-effort accounting.
+    """
+    try:
+        config = _resolve_memory_config()
+        if not config:
+            return None
+        import yaml as _yaml  # local import: hook common avoids hard dep until needed
+        with open(config, "r", encoding="utf-8") as fh:
+            cfg = _yaml.safe_load(fh) or {}
+        roots = cfg.get("memory_roots") or []
+        for root in roots:
+            if not isinstance(root, dict):
+                continue
+            if root.get("role") != "primary":
+                continue
+            raw = root.get("path")
+            if not raw:
+                continue
+            namespace = root.get("namespace") or "main"
+            base = Path(os.path.expanduser(os.path.expandvars(str(raw))))
+            return base / str(namespace) / "local" / "STATS.json"
+    except Exception:
+        return None
+    return None
+
+
+def bump_stats(deltas: dict[str, Any]) -> None:
+    """Atomically add ``deltas`` into <namespace>/local/STATS.json.
+
+    Each key in ``deltas`` is an integer counter; missing keys initialise to
+    0. Updates ``last_event_ts`` to wall-clock. Best-effort: any I/O or
+    parsing failure is swallowed so hook stability isn't tied to stats.
+    """
+    if not deltas:
+        return
+    path = _stats_path()
+    if not path:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(current, dict):
+                current = {}
+        except (OSError, json.JSONDecodeError):
+            current = {}
+        lifetime = current.setdefault("lifetime", {})
+        for key, delta in deltas.items():
+            try:
+                delta_int = int(delta)
+            except (TypeError, ValueError):
+                continue
+            lifetime[key] = int(lifetime.get(key, 0) or 0) + delta_int
+        current["last_event_ts"] = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp, path)
+    except Exception:
+        return
+
+
 # Tool names that produce or modify a file we want to refresh in anatomy.
 _ANATOMY_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Create"}
 
@@ -269,6 +337,9 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
     """Best-effort: call `memory_tool.py anatomy-upsert-file <path>` for every
     file written/edited by this tool call. Silent on failure — anatomy drift
     is recoverable via `anatomy-scan`, blocking hooks on this is not.
+
+    Counts each subprocess that returned action=updated|removed into
+    anatomy_upserts so the dashboard can show incremental maintenance volume.
     """
     try:
         paths = _extract_written_paths(payload)
@@ -277,6 +348,7 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
         config = _resolve_memory_config()
         if not config:
             return
+        upserts = 0
         for raw in paths:
             try:
                 cmd = [
@@ -285,25 +357,39 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
                     "anatomy-upsert-file",
                     "--config", config,
                     raw,
+                    "--json",
                 ]
-                subprocess.run(cmd, capture_output=True, timeout=8)
+                result = subprocess.run(cmd, capture_output=True, timeout=8, text=True)
+                if result.returncode == 0:
+                    try:
+                        data = json.loads(result.stdout or "{}")
+                        if data.get("changed"):
+                            upserts += 1
+                    except json.JSONDecodeError:
+                        pass
             except Exception:
                 continue
+        if upserts:
+            bump_stats({"anatomy_upserts": upserts})
     except Exception:
         return
 
 
-def fetch_session_start_anatomy(payload: dict[str, Any]) -> str | None:
+def fetch_session_start_anatomy(payload: dict[str, Any]) -> tuple[str | None, dict[str, int]]:
     """Best-effort: call `memory_tool.py load --anatomy --json` and return
-    the rendered anatomy markdown (or hint) to inject into SessionStart context.
+    (markdown, stats_deltas) for the SessionStart context injection.
 
-    Returns None when the lookup fails, config is missing, or no anatomy is
-    available. Never raises; hook stability is more important than DX.
+    ``stats_deltas`` is an empty dict on failure / no anatomy; otherwise it
+    contains the counters this call earned (e.g. anatomy_attached_count=1,
+    anatomy_attached_tokens_est=N, anatomy_truncated_count=1,
+    anatomy_hint_emitted=1). Caller funnels it into bump_stats so the
+    counters reflect what actually happened.
     """
+    deltas: dict[str, int] = {}
     try:
         config = _resolve_memory_config()
         if not config:
-            return None
+            return None, deltas
         cwd = payload.get("cwd") or os.getcwd()
         cmd = [
             sys.executable or "python3",
@@ -316,25 +402,35 @@ def fetch_session_start_anatomy(payload: dict[str, Any]) -> str | None:
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=20, text=True)
         if result.returncode != 0:
-            return None
+            return None, deltas
         data = json.loads(result.stdout or "{}")
         anatomy = data.get("anatomy") if isinstance(data, dict) else None
         if not isinstance(anatomy, dict):
-            return None
+            return None, deltas
         if anatomy.get("matched"):
             content = anatomy.get("content") or ""
             warning = anatomy.get("warning") or ""
             if content:
-                return content
+                deltas["anatomy_attached_count"] = 1
+                # ``content`` is already capped by load --anatomy-max-tokens.
+                # We record the rendered char count over the estimator ratio
+                # (~3.75 chars/token mixed) so the dashboard shows a real
+                # number, not the per-call cap.
+                deltas["anatomy_attached_tokens_est"] = max(1, int(len(content) / 3.75 + 0.5))
+                if anatomy.get("truncated"):
+                    deltas["anatomy_truncated_count"] = 1
+                return content, deltas
             if warning:
-                return f"## Anatomy\n\n{warning}\n"
-            return None
+                deltas["anatomy_attached_count"] = 1  # matched but unscanned still counts as an attach attempt
+                return f"## Anatomy\n\n{warning}\n", deltas
+            return None, deltas
         hint = anatomy.get("hint")
         if hint:
-            return f"## Anatomy hint\n\n{hint}\n"
-        return None
+            deltas["anatomy_hint_emitted"] = 1
+            return f"## Anatomy hint\n\n{hint}\n", deltas
+        return None, deltas
     except Exception:
-        return None
+        return None, deltas
 
 
 def silent_summary_write(payload: dict[str, Any], state: dict[str, Any], last_message: str) -> bool:
@@ -396,11 +492,12 @@ def run(host: str) -> int:
         state.setdefault("important_events", [])
         save_state(payload, host, state)
         reminder = memory_protocol_reminder()
-        anatomy_md = fetch_session_start_anatomy(payload)
+        anatomy_md, anatomy_deltas = fetch_session_start_anatomy(payload)
         if anatomy_md:
             context_text = f"{reminder}\n\n---\n\n{anatomy_md}"
         else:
             context_text = reminder
+        bump_stats({"sessions": 1, **anatomy_deltas})
         print(json.dumps(additional_context(event, context_text), ensure_ascii=False))
         return 0
 
@@ -469,6 +566,7 @@ def run(host: str) -> int:
 
         if should_gate:
             save_state(payload, host, state)
+            bump_stats({"stop_blocks": 1})
             print(json.dumps({"decision": "block", "reason": stop_gate_reason(events, last_message)}, ensure_ascii=False))
             return 0
 
@@ -478,6 +576,7 @@ def run(host: str) -> int:
         # times within it (sub-agent finishes, etc.).
         last_summary_turn = int(state.get("last_summary_turn") or -1)
         summary_count = int(state.get("summary_append_count") or 0)
+        wrote_summary = False
         if (
             is_substantial
             and current_turns > 0
@@ -488,8 +587,13 @@ def run(host: str) -> int:
             if ok:
                 state["last_summary_turn"] = current_turns
                 state["summary_append_count"] = summary_count + 1
+                wrote_summary = True
 
         save_state(payload, host, state)
+        deltas = {"stop_throttled_passthrough": 1}
+        if wrote_summary:
+            deltas["log_entries_auto"] = 1
+        bump_stats(deltas)
         print("{}")
         return 0
 
@@ -504,6 +608,7 @@ def run(host: str) -> int:
             print("{}")
             return 0
         save_state(payload, host, state)
+        bump_stats({"precompact_blocks": 1})
         print(json.dumps({"decision": "block", "reason": precompact_gate_reason()}, ensure_ascii=False))
         return 0
 

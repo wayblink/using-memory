@@ -163,6 +163,7 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 - `search <query>`: full-text search across `<namespace>/docs/*.md`, `<namespace>/MEMORY.md`, and the configured namespace log. Docs and memory cover primary plus reference roots; log covers the primary root's configured namespace only. Flags: `--config`, `--log-days N`, `--no-docs`, `--no-memory`, `--no-log`, `--project` / `--topic` (repeatable; same axis is OR, different axes are AND; **scope reduces to log-only when either is set**), `--json`. Hits whose text contains `[[anatomy:slug/rel]]` references include an `anatomy_links` field with the resolved snapshot description.
 - `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, repair missing `<namespace>/docs/index.json` entries, and audit anatomy projects (per-project `stale_files` / `new_files` drift, plus `broken_log_refs` for `[[anatomy:...]]` citations whose targets no longer exist). Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
 - `stats`: aggregate tag counts across the configured namespace log and `<namespace>/MEMORY.md`. Flags: `--config`, `--json`.
+- `status`: lifetime dashboard. Reads `<namespace>/local/STATS.json` (real event counters incremented by hooks and write-* commands — never estimated) plus the anatomy index, prints session counts / anatomy attaches / log writes / hook blocks / hook passthroughs plus two diagnostic ratios (`anatomy_hit_rate`, `stop_block_ratio`). Flags: `--config`, `--json` (raw dict instead of dashboard).
 - `export`: format a Markdown summary; stdout by default or `--dest FILE` to append. Flags: `--config`, `--dest`, `--json`.
 - `anatomy-list`: list registered anatomy projects with file/token counts. Flags: `--config`, `--json`.
 - `anatomy-show <slug|root>`: print the rendered anatomy markdown for a project. Errors if the project has not been scanned yet.
@@ -197,6 +198,21 @@ The Claude Code / Codex hook calls `load --anatomy --cwd <session cwd>` on every
 The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations, extracts the touched file path(s), and calls `anatomy-upsert-file` for each. `desc_source=user` entries are preserved through every refresh — only tokens/mtime/kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot if previously indexed.
 
 For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed).
+
+## Health Dashboard (`status`)
+
+`<namespace>/local/STATS.json` is an event-driven counter file maintained by the hooks and the write-* commands. It contains real counts — no estimates, no synthetic "savings" numbers — for:
+
+- `sessions`, `anatomy_attached_count`, `anatomy_truncated_count`, `anatomy_hint_emitted`, `anatomy_attached_tokens_est` (rendered chars / 3.75), `anatomy_upserts`
+- `log_entries_user` (write-log invocations whose `--source` is not `auto`), `log_entries_auto` (silent hook-driven summary appends)
+- `stop_blocks`, `stop_throttled_passthrough`, `precompact_blocks`
+
+`memory_tool.py status` prints these along with two diagnostic ratios:
+
+- `anatomy_hit_rate = anatomy_attached_count / sessions` — low values mean cwd rarely lands inside a registered project; consider running `anatomy-register` on more roots.
+- `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `STOP_DETAIL_TURN_INTERVAL` in the hook); near-zero values mean silent summaries are doing all the work.
+
+Both ratios are diagnostic, not performance claims. The counters never assert "X% token savings" because the system has no real-API token visibility — it only knows what it injected and what it blocked.
 
 ## Hook Behaviour
 
