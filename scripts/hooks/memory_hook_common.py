@@ -149,26 +149,86 @@ def memory_protocol_reminder() -> str:
 
 
 def stop_gate_reason(events: list[str], last_message: str) -> str:
-    event_summary = "; ".join(events[-6:]) if events else "the final answer indicates completed work"
+    """Block reason for the Stop gate.
+
+    Kept short on purpose. The model already has the full operation history
+    in its own conversation context for the current turn — replaying tool
+    payloads through this reason is wasted tokens and noisy stderr for the
+    user. We surface just enough signal (event count + tool kinds) for the
+    model to know what to record.
+    """
+    count = len(events)
+    if count:
+        kinds = []
+        seen: set[str] = set()
+        for evt in events:
+            # _compact_event_summary always produces "kind: ..." prefixes,
+            # but historical state files may still hold raw payloads. Be
+            # defensive about the parse so we never fall over.
+            kind = evt.split(":", 1)[0].strip() if ":" in evt else evt[:20].strip()
+            if kind and kind not in seen:
+                seen.add(kind)
+                kinds.append(kind)
+            if len(kinds) >= 5:
+                break
+        kinds_label = ", ".join(kinds) if kinds else "operation"
+        return (
+            f"Before stopping, run scripts/memory_tool.py write-log to record this turn: "
+            f"{count} important event(s) [{kinds_label}]. Include affected files, result, "
+            f"identifiers (commit/PR/deploy), verification, and unresolved risks."
+        )
     return (
-        "Before stopping, enforce the using-memory write gate. This turn appears to contain operation "
-        f"history that should survive restart: {event_summary}. Run scripts/memory_tool.py write-log "
-        "against the configured memory repo and record the concrete operation facts/key events: commands "
-        "or hook events when relevant, affected files, result status, commit/PR/deploy identifiers if any, "
-        "verification performed, and unresolved risks. Keep durable MEMORY.md curated; use the JSONL log "
-        "for comprehensive operation history. After the log write succeeds, continue with the final response."
+        "Before stopping, run scripts/memory_tool.py write-log to record this turn's "
+        "concrete operations, result, identifiers, verification, and unresolved risks."
     )
 
 
 def precompact_gate_reason() -> str:
+    """Compact block reason for PreCompact. Same philosophy as stop_gate_reason."""
     return (
-        "Context is about to be compacted. Before the window shrinks, run scripts/memory_tool.py write-log "
-        "against the configured memory repo with level=summary and record: (1) the current task and goal, "
-        "(2) unfinished subgoals and the next-session entry point, (3) key identifiers (file paths, commit "
-        "SHAs, branch names, image/Helm/PR/deploy refs) that will be needed to resume, (4) any unresolved "
-        "issues or risks. Promote any confirmed decisions or durable lessons to write-memory. After the "
-        "write succeeds, allow compaction to proceed."
+        "Context will be compacted shortly. Run scripts/memory_tool.py write-log "
+        "(level=summary) before the window shrinks: current task and unfinished "
+        "subgoals, key identifiers (paths/SHAs/branches/PR/deploy), open risks. "
+        "Promote any confirmed decisions or lessons to write-memory."
     )
+
+
+# Compact 60-char-ish hint suffixes for the most common tools. Kept agnostic
+# so both Claude Code and Codex payload shapes can feed in; missing keys are
+# tolerated.
+def _compact_event_summary(payload: dict[str, Any], fallback_text: str) -> str:
+    """Build a short event summary like ``Bash: git push origin main`` or
+    ``Write: scripts/memory_tool.py``.
+
+    Falls back to the first 80 chars of fallback_text when the payload has no
+    recognisable tool_name. Total output is hard-capped at 100 chars so the
+    state file stays bounded.
+    """
+    tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").strip()
+    ti = payload.get("tool_input") or payload.get("toolInput") or {}
+    hint = ""
+    if isinstance(ti, dict):
+        # Order matters: prefer command for shell tools, then file/path for
+        # write/edit tools, then a generic stringify.
+        for key in ("command", "file_path", "path", "notebook_path", "url", "query", "pattern"):
+            value = ti.get(key)
+            if isinstance(value, str) and value.strip():
+                hint = value.strip()
+                break
+        if not hint:
+            try:
+                hint = json.dumps(ti, ensure_ascii=False)[:80]
+            except Exception:
+                hint = str(ti)[:80]
+    if tool_name:
+        hint_part = f": {hint}" if hint else ""
+        summary = f"{tool_name}{hint_part}"
+    else:
+        # No tool_name (e.g. ConfigChange / PermissionDenied) — fall back to a
+        # whitespace-collapsed snippet of the raw text.
+        summary = re.sub(r"\s+", " ", fallback_text).strip()
+    summary = re.sub(r"\s+", " ", summary).strip()
+    return summary[:100]
 
 
 def count_human_turns(transcript_path: str | None) -> int:
@@ -520,7 +580,7 @@ def run(host: str) -> int:
             state["memory_written"] = True
         if IMPORTANT_OPERATION_RE.search(text):
             events = list(state.get("important_events") or [])
-            summary = re.sub(r"\s+", " ", text).strip()[:500]
+            summary = _compact_event_summary(payload, text)
             if summary and summary not in events:
                 events.append(summary)
             state["important_events"] = events[-20:]
