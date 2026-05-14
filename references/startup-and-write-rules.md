@@ -88,6 +88,21 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 - `log_summary`: key outcomes, milestones, release status, or verified results.
 - `write_memory` when necessary
 
+## Log Body Discipline
+
+The `text` field is where reconstruction value lives. Operational tags (`operation`, `build`, `deploy`, `verification`, `test`, `debug`, `fix`, `decision`, `analysis`, `milestone`, `commit`, `release`, `issue`) MUST use a structured Markdown body with explicit sections: `## <one-line title>`, then `Context`, `Operations`, `Result` or `Verification`, and `Decisions` / `Open`. See `SKILL.md` section "Log Entry Body Schema" for the full schema and a worked example.
+
+Operational principles:
+
+- Reproducibility: an `Operations` bullet must be specific enough that the action can be repeated without re-investigation. Include absolute paths, exact commands, parameters, commit SHAs, image references with digest or short SHA, Helm release + revision, namespace, and sampled pod names.
+- Failure visibility: failures, skips, and "not done because X" facts MUST appear in `Result` / `Verification`. A log entry that hides known failures is harmful — later sessions assume the system is healthier than it is.
+- Continuity: when work is unfinished, the `Decisions / Open` section is the next-session starting point. Always end an in-progress turn with a concrete next step.
+- `files` field: always a JSON array of strings, one path per element. Never a comma-joined string.
+
+Length guidance: `level=detail` entries target 800–3000 characters; `level=summary` targets 300–800. Anything under 200 characters almost certainly dropped a required section.
+
+Knowledge tags (`note`, `lesson`, `fact`, `insight`, `pattern`, `context`) may use a relaxed format — `## <heading>` plus paragraphs — but should still cite concrete identifiers (paths, SHAs, versions) when applicable.
+
 ## Distillation Rules
 
 - Distill long-term memory from log entries only during lightweight maintenance moments. A normal conversation turn should not trigger distillation every time.

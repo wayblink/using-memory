@@ -72,6 +72,69 @@ Each `<namespace>/log/YYYY-MM-DD.jsonl` file is newline-delimited JSON with one 
 | `confidence` | Optional 1-10 score |
 | `files` | Optional list of related file paths |
 
+## Log Entry Body Schema
+
+The `text` field of a log entry is the actual operation record. A one-sentence `text` is almost always under-specified and useless three days later. Treat the body as a small Markdown document with explicit sections; aim for a structured, reproducible style, not a flat sentence.
+
+### Required structure
+
+The `text` body MUST be structured Markdown with section headers, not a single prose sentence. For any tag of `operation`, `build`, `deploy`, `verification`, `test`, `debug`, `fix`, `decision`, `analysis`, `milestone`, `commit`, `release`, or `issue`, the body MUST contain at minimum these sections, in this order:
+
+1. **Heading (`## <one-line title>`)** — what happened, in one sentence.
+2. **`Context`** — why this was done, what triggered it, and pointers to related prior entries (date, commit SHA, ticket id, previous log entry).
+3. **`Operations`** — the actual actions taken, one per bullet. Each bullet MUST be specific enough that the operation could be reproduced without re-asking. Include absolute paths, exact commands, parameters, commit SHAs, branch names, Helm release + revision, image full reference with digest or short SHA, sampled pod names, Kubernetes namespace, and host endpoints.
+4. **`Result` / `Verification`** — observable outcome: exit codes, smoke results, row counts, sizes, digests, HTTP status, log lines hit. Failures and skips MUST be written explicitly here (e.g. `registry push: 401 unauthorized on hub.i.basemind.com/spark/spark`, `not pushed yet`, `smoke not run because image not pullable`) — never omit a failure to make the entry look clean.
+5. **`Decisions` / `Open`** — decisions made during the turn, open questions, parking points, and the next-session starting point if work is unfinished.
+
+For `note`, `lesson`, `fact`, `insight`, `pattern`, `context`: structure is recommended but may be relaxed to `## <heading>` plus body paragraphs. Even so, cite concrete identifiers (paths, SHAs, versions) when the entry references code or systems.
+
+### Length and concreteness
+
+- Target body length: **800–3000 characters** for `level=detail`, **300–800** for `level=summary`. Entries shorter than 200 characters almost always indicate a dropped Context, Operations, or Result section — go back and add it.
+- Every file path mentioned in the body should be an **absolute path** (e.g. `/data/workspace/spark/build-spark-image-local.sh`), not a bare filename. The `files` field is for indexing only and does not replace inline paths.
+- Quantify whenever possible: row counts, build step `N/M`, image size, commit SHA short hash, Helm revision number, pod restart count, log message verbatim.
+- When something failed or was deferred, say so. A log entry that omits known failures is worse than no log entry, because future sessions trust it.
+
+### `files` field discipline
+
+- `files` MUST be a JSON array of strings; pass one `--files <path>` per file. Never join multiple paths into a single comma-separated string (`["a.py,b.py"]` is wrong; `["a.py","b.py"]` is correct).
+- Prefer absolute paths in `files` when the entry references files outside the memory repo.
+- `files` is for `maintain` stale-detection and grep indexing; it does not replace listing paths inline in the body.
+
+### Good example
+
+```text
+## Spark Java 17 image build pushed to dev branch, registry push blocked
+
+Context
+- Triggered by user request 2026-05-13: produce a Java 17 Spark image consumable by Kyuubi prod and DolphinScheduler.
+- Branch: spark-3.5.7-java17-image-c93fa99e, base commit c93fa99e8254. Continues the 2026-05-13 12:53 build log entry.
+
+Operations
+- Edited `/data/workspace/spark/pom.xml` and `/data/workspace/spark/assembly/pom.xml`: set `java.version=17`, removed legacy `--add-opens` entries.
+- Ran `/data/workspace/spark/build-spark-image-local.sh` after `export SPARK_HOME=/data/workspace/spark/dist` to stop `docker-image-tool` from picking up `/opt/spark` from the host.
+- Built images `hub.i.basemind.com/spark/spark:3.5.7-STEP-rc2-c93fa99e8254-java17` (b2015d776c99, 1.47GB) and `spark-py:<same tag>` (d211d518df6c, 1.54GB).
+- Committed and pushed at 178c3a2b2d on origin/spark-3.5.7-java17-image-c93fa99e.
+
+Verification
+- Local smoke: Ubuntu 22.04 jammy, Java 17.0.18, Spark 3.5.7-STEP-rc2, PySpark import OK, SparkPi OK.
+- Registry push: BLOCKED. `hub.i.basemind.com/spark/{spark,spark-py}` → 401 unauthorized; `registry.platform.shaipower.com/spark/*` → denied; `hub.i.basemind.com/wanganyang/*` project does not exist.
+- Kyuubi prod baseline still alive: beeline `jdbc:hive2://10.130.33.104:10009/default`, `SELECT 1` → 1, app `spark-2c2f46fe193841378c26a7a6eb3772a5`.
+- Prod validation of the new image: NOT RUN, image is not yet pushable.
+
+Decisions / Open
+- Need a writable registry path before prod can pull the new image. Ask user: which `hub.i.basemind.com` namespace has push rights for this account; or stand up a personal Harbor project.
+- Until then, image lives only on the local host.
+```
+
+### Bad example — do not write entries that look like this
+
+```text
+Built local Java17 Spark image; smoke passed; not pushed yet.
+```
+
+This skips Context, hides which paths were touched, omits commit SHA, omits the failure mode (`not pushed yet` does not say why), and is unreproducible. A future session must re-investigate from scratch.
+
 ## Memory Tool Commands
 
 Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executing it directly or with `python3`; do not assume a `python` shim exists.
