@@ -193,42 +193,93 @@ def precompact_gate_reason() -> str:
     )
 
 
-# Compact 60-char-ish hint suffixes for the most common tools. Kept agnostic
-# so both Claude Code and Codex payload shapes can feed in; missing keys are
-# tolerated.
-def _compact_event_summary(payload: dict[str, Any], fallback_text: str) -> str:
-    """Build a short event summary like ``Bash: git push origin main`` or
-    ``Write: scripts/memory_tool.py``.
+# Tool-input keys whose value is the most useful one-line hint for the
+# event summary. Ordered by preference: shell command beats file path beats
+# generic URL/query. Used by _summarise_single_tool_call.
+_TOOL_INPUT_HINT_KEYS = (
+    "command", "file_path", "path", "notebook_path", "url", "query", "pattern"
+)
+# Keys we explicitly skip when falling back to stringify on tool_input — they
+# carry environmental metadata, not what the tool is actually doing.
+_TOOL_INPUT_METADATA_KEYS = {"cwd", "description", "effort", "permission_mode", "timeout"}
 
-    Falls back to the first 80 chars of fallback_text when the payload has no
-    recognisable tool_name. Total output is hard-capped at 100 chars so the
-    state file stays bounded.
+
+def _summarise_single_tool_call(call: dict[str, Any]) -> str:
+    """Render one tool call as ``ToolName: hint`` (max 100 chars).
+
+    A ``call`` shape can be either the outer hook payload itself (PostToolUse)
+    or one entry of a PostToolBatch's ``tool_calls`` list. We support both by
+    only reading the relevant fields.
     """
-    tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").strip()
-    ti = payload.get("tool_input") or payload.get("toolInput") or {}
+    tool_name = str(
+        call.get("tool_name") or call.get("toolName") or ""
+    ).strip()
+    ti = call.get("tool_input") or call.get("toolInput") or {}
     hint = ""
     if isinstance(ti, dict):
-        # Order matters: prefer command for shell tools, then file/path for
-        # write/edit tools, then a generic stringify.
-        for key in ("command", "file_path", "path", "notebook_path", "url", "query", "pattern"):
+        for key in _TOOL_INPUT_HINT_KEYS:
             value = ti.get(key)
             if isinstance(value, str) and value.strip():
                 hint = value.strip()
                 break
         if not hint:
-            try:
-                hint = json.dumps(ti, ensure_ascii=False)[:80]
-            except Exception:
-                hint = str(ti)[:80]
+            # Filter out environment/metadata keys before JSON-dumping so the
+            # summary never starts with cwd/effort/permission_mode noise.
+            filtered = {
+                k: v for k, v in ti.items()
+                if k not in _TOOL_INPUT_METADATA_KEYS
+            }
+            if filtered:
+                try:
+                    hint = json.dumps(filtered, ensure_ascii=False)[:80]
+                except Exception:
+                    hint = str(filtered)[:80]
     if tool_name:
         hint_part = f": {hint}" if hint else ""
         summary = f"{tool_name}{hint_part}"
     else:
-        # No tool_name (e.g. ConfigChange / PermissionDenied) — fall back to a
-        # whitespace-collapsed snippet of the raw text.
-        summary = re.sub(r"\s+", " ", fallback_text).strip()
-    summary = re.sub(r"\s+", " ", summary).strip()
-    return summary[:100]
+        summary = hint
+    return re.sub(r"\s+", " ", summary).strip()[:100]
+
+
+def _compact_event_summary(payload: dict[str, Any], fallback_text: str) -> str:
+    """Build a short event summary for a PostToolUse / PostToolBatch payload.
+
+    PostToolUse delivers one tool call inline (tool_name / tool_input on the
+    root payload). PostToolBatch delivers a ``tool_calls`` list of entries
+    with the same per-call shape. For batches, summarise the first call so
+    the surrounding event list keeps to one slot per hook fire.
+
+    Falls back to a whitespace-collapsed snippet of ``fallback_text`` when no
+    recognisable tool call is present. Output hard-capped at 100 chars.
+    """
+    # PostToolBatch: pick the first tool call and summarise that.
+    tool_calls = payload.get("tool_calls") or payload.get("toolCalls")
+    if isinstance(tool_calls, list) and tool_calls:
+        first = tool_calls[0]
+        if isinstance(first, dict):
+            summary = _summarise_single_tool_call(first)
+            if summary:
+                # Hint at additional batched calls when present.
+                extra = len(tool_calls) - 1
+                if extra > 0:
+                    summary = f"{summary} (+{extra} more)"
+                return summary[:100]
+
+    # PostToolUse: tool_name / tool_input are top-level.
+    summary = _summarise_single_tool_call(payload)
+    if summary:
+        return summary
+
+    # No recognisable tool call (ConfigChange / PermissionDenied / odd
+    # event names): fall back to a whitespace-collapsed snippet of the raw
+    # text, but make sure we don't surface a JSON dump of the whole payload.
+    cleaned = re.sub(r"\s+", " ", fallback_text or "").strip()
+    if cleaned.startswith("{") and "tool_name" not in cleaned:
+        # Strip leading JSON object syntax so the summary doesn't start with
+        # `{"cwd"` etc.
+        cleaned = re.sub(r"^[\{\[\"][^\"]*[\"\}\]:,\s]*", "", cleaned).strip()
+    return cleaned[:100]
 
 
 def count_human_turns(transcript_path: str | None) -> int:
