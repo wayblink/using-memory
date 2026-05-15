@@ -80,7 +80,7 @@ Writes are routed by information type:
 - Stable facts, confirmed decisions, and long-term lessons go to `<namespace>/MEMORY.md`.
 - Wiki, SOP, todo, plan, and project notes go to `<namespace>/docs/*.md`, with `<namespace>/docs/index.json` updated at the same time.
 - Same-day process notes, operation history, temporary context, and unconfirmed information usually go to `<namespace>/log/YYYY-MM-DD.jsonl`.
-- Project file snapshots go to `<namespace>/anatomy/<slug>.json` via `anatomy-register` + `anatomy-scan` (or the incremental PostToolUse hook).
+- Project file snapshots go to `<namespace>/anatomy/<slug>.json` via `anatomy-register` (cheap pointer) plus the incremental PostToolUse hook. `anatomy-scan` is an opt-in heavy operation for full project maps.
 
 Open issues, temporary assumptions, and unconfirmed plans are not written directly to `<namespace>/MEMORY.md` by default.
 
@@ -109,17 +109,28 @@ Same axis repeats are OR, different axes AND. When `search` is called with eithe
 
 Anatomy is the *project* dimension: a small per-project file index with kind / token estimate / one-line description per source file. Use it when you want a project map without re-reading every file.
 
-### Register and scan
+Anatomy is built **lazily**. Registration is cheap (a pointer in `_index.json`); the snapshot fills incrementally as PostToolUse upserts files you actually edit. Run `anatomy-scan` only when you explicitly want a full project map.
+
+### Register (cheap) and let it fill incrementally
 
 ```bash
-python3 scripts/memory_tool.py anatomy-register ~/yard/spark-ann          # slug defaults to basename
+python3 scripts/memory_tool.py anatomy-register ~/yard/spark-ann          # slug defaults to basename; writes pointer only, no scan
 python3 scripts/memory_tool.py anatomy-register ~/yard/spark-ann --slug spark
-python3 scripts/memory_tool.py anatomy-scan spark-ann                      # full scan
-python3 scripts/memory_tool.py anatomy-show spark-ann                      # render markdown
-python3 scripts/memory_tool.py anatomy-set spark-ann src/api.py \
-  --desc "JWT auth gateway. Trust boundary."                               # locks desc against future scans
 python3 scripts/memory_tool.py anatomy-list                                # registered projects
+python3 scripts/memory_tool.py anatomy-set spark src/api.py \
+  --desc "JWT auth gateway. Trust boundary."                               # pin a critical-file description
 ```
+
+After `anatomy-register`, no `<slug>.json` exists yet. PostToolUse will create it on the first `Write` / `Edit` against the project. SessionStart auto-attach still works: it returns the registered root (without files) and the standard memory-protocol reminder.
+
+### Opt-in full scan
+
+```bash
+python3 scripts/memory_tool.py anatomy-scan spark-ann                      # walks every indexable file, writes <slug>.json/.md
+python3 scripts/memory_tool.py anatomy-show spark-ann                      # render markdown
+```
+
+`anatomy-scan` is opt-in because it's expensive on large repos: a Spark-sized tree produces a multi-MB JSON and slows every subsequent `upsert-file`. Skip it for projects with large vendored / build / thirdparty subtrees (`ep/`, `vendor/`, generated `dist/` siblings) — incremental upserts already capture the files you actually touch.
 
 Registration is explicit on purpose: `cd ~/Downloads` should not silently create a snapshot, and slug collisions are surfaced at registration time so they cannot drift. Same root + same slug is idempotent; conflicting slug requires explicit `--slug` to disambiguate.
 
@@ -133,9 +144,9 @@ The bundled hook calls this on every SessionStart and appends the rendered anato
 
 ### Incremental upkeep
 
-The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations and calls `anatomy-upsert-file` for each touched path. `desc_source: user` entries (set via `anatomy-set`) are preserved through every refresh — only tokens / mtime / kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot.
+The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations and calls `anatomy-upsert-file` for each touched path. This is the primary way the snapshot grows. `desc_source: user` entries (set via `anatomy-set`) are preserved through every refresh — only tokens / mtime / kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot.
 
-Run `memory_tool.py maintain` periodically for full reconciliation: it reports `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not in snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed).
+Run `memory_tool.py maintain` periodically for full reconciliation: it reports `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not in snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed). Right after registration-only setup, `new_files` will be large by design — do not run `anatomy-scan` just to clear it.
 
 ## Health Dashboard (`status` + `/memstatus`)
 

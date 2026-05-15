@@ -173,8 +173,8 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 - `write-memory`: append one curated `<namespace>/MEMORY.md` entry. Required: `--config`, `--date`, `--tag`, `--text`; `write-memory` accepts only `fact`, `decision`, and `lesson`.
 - `write-preference`: append one stable `<namespace>/PREFERENCES.md` entry. Required: `--config`, `--text`.
 - `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--config`, `--doc`, `--title`, `--doc-type`, `--modified`, `--text`; optional metadata: `--project`, `--doc-tag`, `--summary`.
-- `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent.
-- `anatomy-scan <slug|root>`: full re-scan of a registered project. Preserves `desc_source=user` entries (refreshes their tokens/mtime/kind, does not overwrite their desc).
+- `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Cheap: writes a pointer into `_index.json` only and does **not** scan files. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent. The snapshot fills lazily via PostToolUse `anatomy-upsert-file` — only run `anatomy-scan` when you explicitly want a full project map.
+- `anatomy-scan <slug|root>`: full re-scan of a registered project. Opt-in heavy operation: walks every indexable file under the root and writes `<slug>.json` / `<slug>.md`. Preserves `desc_source=user` entries (refreshes their tokens/mtime/kind, does not overwrite their desc). Avoid running it on projects with large vendored / thirdparty trees — those bloat the snapshot to tens of MB.
 - `anatomy-set <slug|root> <relpath> --desc TEXT`: manually set or refine one file's description. Marks `desc_source=user` so future scans don't overwrite it.
 - `anatomy-upsert-file <abs-path>`: refresh or remove the anatomy entry for one file. Used by the PostToolUse hook for incremental maintenance; safe to call manually too. Silently no-ops on files outside every registered project.
 
@@ -184,7 +184,18 @@ Anatomy is the project-snapshot dimension. It lives at `<namespace>/anatomy/{_in
 
 Use it to answer "what does this project contain?" without paying for a full re-read each session.
 
-### Registration is explicit
+### Default growth path: register, then let it fill incrementally
+
+Anatomy is built **lazily by default**. The intended lifecycle is:
+
+1. `anatomy-register <root>` — cheap. Writes a single pointer into `_index.json` so SessionStart auto-attach and `[[anatomy:...]]` log refs can find the project. **No file scan happens here**, and no `<slug>.json` is created yet.
+2. The PostToolUse hook calls `anatomy-upsert-file` on every `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` against a registered project root. The snapshot grows to reflect the files you actually touched.
+3. `anatomy-set <slug> <relpath> --desc "..."` to pin a short description on load-bearing files (trust boundaries, build entrypoints, config schemas). These are preserved through future scans.
+4. `anatomy-scan <slug>` only when you explicitly want a project-wide map — e.g., onboarding a new repo, prepping a refactor, or producing an audit. **Skip this for projects with large vendored / build / thirdparty trees** (`ep/`, `vendor/`, generated `dist/` siblings, etc.) — they bloat the snapshot to tens of MB and slow every subsequent `upsert-file`.
+
+Treat `anatomy-scan` as an opt-in heavy operation, not part of registration. A registered-but-unscanned project still works: `load --anatomy` returns the registered root without files, the SessionStart hook still injects the standard reminder, and PostToolUse upserts start populating files on the first edit.
+
+### Registration is explicit (no auto-detect)
 
 `memory_tool.py anatomy-register <root> [--slug NAME]` is required before a project shows up in `load --anatomy` matches. cwd-only auto-detection is intentionally NOT supported — random `cd` into `~/Downloads` should not silently create snapshots, and slug collisions are surfaced at registration time so they cannot drift.
 
@@ -196,7 +207,7 @@ The Claude Code / Codex hook calls `load --anatomy --cwd <session cwd>` on every
 
 The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations, extracts the touched file path(s), and calls `anatomy-upsert-file` for each. `desc_source=user` entries are preserved through every refresh — only tokens/mtime/kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot if previously indexed.
 
-For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed).
+For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed). Note that `new_files` after a registration-only setup will list every indexable file under the root — that is expected; do not interpret it as drift, and do not run `anatomy-scan` just to silence it.
 
 ## Health Dashboard (`status`)
 
