@@ -21,7 +21,6 @@ except ImportError:  # pragma: no cover - Windows fallback for portable installs
     fcntl = None
 
 DEFAULT_CONFIG_PATH = "~/.skills/using-memory/config.yaml"
-LOCAL_CONTEXT_FILES = ("MACHINE.md", "ENV.md", "WORKSPACE.md")
 DOC_ENTRY_REQUIRED_FIELDS = ("path", "title", "type", "modified")
 DEFAULT_NAMESPACE = "main"
 SETUP_HINT = "Run `python3 scripts/memory_tool.py setup` to configure memory path, optional remote Git repo, namespace, and machine ID."
@@ -752,7 +751,6 @@ def log_dates_for_load(args: argparse.Namespace, target: date, read_today: bool,
 
 def append_log_jsonl_sources(
     sources_list: list,
-    local_context: list,
     log_entries: list,
     warnings: list,
     primary_root: Path,
@@ -852,7 +850,6 @@ def do_load(args: argparse.Namespace) -> dict:
     target = parse_iso_date(args.date, "--date") if args.date else date.today()
     sources_list = []
     preferences, durable_memory, doc_set = [], [], []
-    local_context = []
     log_entries = []
     if roots_exist:
         ordered_roots = primary_list + ref_list
@@ -931,7 +928,6 @@ def do_load(args: argparse.Namespace) -> dict:
         log_dates = log_dates_for_load(args, target, read_today, read_yesterday)
         append_log_jsonl_sources(
             sources_list,
-            local_context,
             log_entries,
             warnings,
             primary_root,
@@ -942,17 +938,6 @@ def do_load(args: argparse.Namespace) -> dict:
             project_filter=getattr(args, "project", None),
             topic_filter=getattr(args, "topic", None),
         )
-
-        for local_name in LOCAL_CONTEXT_FILES:
-            local_source = read_source(
-                namespace_root(primary_root, primary_namespace) / "local" / local_name,
-                "local_context",
-                "primary",
-                primary_machine,
-            )
-            sources_list.append(local_source)
-            if local_source["loaded"]:
-                local_context.append(local_source["content"])
     else:
         warnings.append("no primary root configured; read_today and read_yesterday are no-ops")
 
@@ -974,7 +959,6 @@ def do_load(args: argparse.Namespace) -> dict:
         "sources": sources_list,
         "preferences": preferences,
         "durable_memory": durable_memory,
-        "local_context": local_context,
         "log_entries": log_entries,
         "doc_hits": doc_set,
         "warnings": warnings,
@@ -2546,9 +2530,6 @@ def initialize_namespace(memory_root: Path, namespace: str, machine_id: str) -> 
             {"version": 1, "documents": []}, ensure_ascii=False, indent=2
         )
         + "\n",
-        scoped_root / "local" / "MACHINE.md": f"# Machine\n\n- machine_id: {machine_id}\n",
-        scoped_root / "local" / "ENV.md": "# Environment\n\n",
-        scoped_root / "local" / "WORKSPACE.md": "# Workspaces\n\n",
     }
     for path, content in seed_files.items():
         if not path.exists():

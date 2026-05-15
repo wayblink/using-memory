@@ -20,7 +20,7 @@ description: Memory protocol for persisted cross-session context and operation c
 - When memory loading is needed, load order is strict and must happen in this exact sequence:
   1. Load all configured `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md` files across configured repos.
   2. Browse each configured repo's `<namespace>/docs/index.json`; when the user task matches indexed metadata, load only the matching `<namespace>/docs/*.md` files.
-  3. Then load only the local primary repo's configured namespace entries at `<namespace>/log/YYYY-MM-DD.jsonl` and namespace-local notes at `<namespace>/local/MACHINE.md`, `<namespace>/local/ENV.md`, and `<namespace>/local/WORKSPACE.md`.
+  3. Then load only the local primary repo's configured namespace entries at `<namespace>/log/YYYY-MM-DD.jsonl`. The `<namespace>/local/` directory is reserved for machine-local accounting (STATS.json), not for context loading.
 - Only the local primary repo is writable by default.
 - Log entries from other namespaces are ignored by default.
 - Config `namespace` is a single path segment used for all memory files; it defaults to `main` when omitted.
@@ -28,7 +28,7 @@ description: Memory protocol for persisted cross-session context and operation c
 - Canonical log path: `<namespace>/log/YYYY-MM-DD.jsonl`; do not create a `YYYY/` layer for log files.
 - Log loading defaults to today and yesterday, but explicit `load --log-from/--log-to` or `load --log-days` may expand the primary repo log window.
 - `load --log-query` filters the selected primary log window against `text` and loads only matching entries into `log_entries`.
-- `<namespace>/local/` stores namespace-local facts only; do not put dated log entries under `local/`.
+- `<namespace>/local/` is reserved for machine-local accounting (today: `STATS.json`). It is never auto-loaded into the session snapshot; do not put context content under `local/`.
 - On-demand document loading is allowed only when the user task clearly matches entries in `<namespace>/docs/index.json`.
 
 ## Skill Position
@@ -48,7 +48,6 @@ description: Memory protocol for persisted cross-session context and operation c
 ## Session Snapshot
 - `preferences`
 - `durable_memory`
-- `local_context`
 - `log_entries`
 - `doc_hits`
 - `sources`
@@ -251,7 +250,6 @@ Routing:
 - Stable facts, confirmed decisions, and durable lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`.
 - Open issues, parking points, and unresolved risks stay out of `<namespace>/MEMORY.md` unless they become confirmed decisions, durable lessons, or stable facts.
 - Stable user preferences go to `<namespace>/PREFERENCES.md` through `scripts/memory_tool.py write-preference`.
-- Namespace-local facts belong in `<namespace>/local/MACHINE.md`, `<namespace>/local/ENV.md`, or `<namespace>/local/WORKSPACE.md` only through explicit maintenance.
 
 Never write:
 
