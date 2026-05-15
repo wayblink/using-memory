@@ -1032,14 +1032,14 @@ def do_write_log(args: argparse.Namespace) -> dict:
 
 
 def _bump_lifetime_stats(scoped_root: Path, deltas: dict) -> None:
-    """Atomic increment of <namespace>/local/STATS.json counters.
+    """Atomic increment of <namespace>/STATS.json counters.
 
     Same contract as the hook-side bump_stats; lives here so write-* CLI
     commands can update counts independently of any hook context.
     """
     if not deltas:
         return
-    path = scoped_root / "local" / "STATS.json"
+    path = scoped_root / "STATS.json"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -1718,8 +1718,8 @@ def do_anatomy_list(args: argparse.Namespace) -> dict:
 def do_status(args: argparse.Namespace) -> dict:
     """Aggregate dashboard for the using-memory installation.
 
-    Reads <namespace>/local/STATS.json (real event counters, no estimates),
-    plus the anatomy index, and computes two diagnostic ratios:
+    Reads <namespace>/STATS.json (real event counters, no estimates), plus
+    the anatomy index, and computes two diagnostic ratios:
       - anatomy_hit_rate     = anatomy_attached_count / sessions
       - stop_block_ratio     = stop_blocks / (stop_blocks + stop_throttled_passthrough)
 
@@ -1731,7 +1731,12 @@ def do_status(args: argparse.Namespace) -> dict:
     """
     primary_root, primary_namespace = load_primary_for_write(args)
     scoped_root = namespace_root(primary_root, primary_namespace)
-    stats_path = scoped_root / "local" / "STATS.json"
+    stats_path = scoped_root / "STATS.json"
+    # Backward compat: pre-V2.4 installs had it under local/. If only the old
+    # path exists, surface it so the dashboard still works during transition.
+    legacy_path = scoped_root / "local" / "STATS.json"
+    if not stats_path.exists() and legacy_path.exists():
+        stats_path = legacy_path
     lifetime: dict = {}
     last_event_ts: str | None = None
     if stats_path.exists():

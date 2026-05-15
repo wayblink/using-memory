@@ -293,7 +293,7 @@ def _memory_tool_path() -> str:
 
 
 def _stats_path() -> Path | None:
-    """Resolve <primary memory root>/<namespace>/local/STATS.json.
+    """Resolve <primary memory root>/<namespace>/STATS.json.
 
     Returns None when the config isn't readable yet — silent fail keeps
     hook stability strict; STATS.json is best-effort accounting.
@@ -316,14 +316,14 @@ def _stats_path() -> Path | None:
                 continue
             namespace = root.get("namespace") or "main"
             base = Path(os.path.expanduser(os.path.expandvars(str(raw))))
-            return base / str(namespace) / "local" / "STATS.json"
+            return base / str(namespace) / "STATS.json"
     except Exception:
         return None
     return None
 
 
 def bump_stats(deltas: dict[str, Any]) -> None:
-    """Atomically add ``deltas`` into <namespace>/local/STATS.json.
+    """Atomically add ``deltas`` into <namespace>/STATS.json.
 
     Each key in ``deltas`` is an integer counter; missing keys initialise to
     0. Updates ``last_event_ts`` to wall-clock. Best-effort: any I/O or

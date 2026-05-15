@@ -20,7 +20,7 @@ description: Memory protocol for persisted cross-session context and operation c
 - When memory loading is needed, load order is strict and must happen in this exact sequence:
   1. Load all configured `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md` files across configured repos.
   2. Browse each configured repo's `<namespace>/docs/index.json`; when the user task matches indexed metadata, load only the matching `<namespace>/docs/*.md` files.
-  3. Then load only the local primary repo's configured namespace entries at `<namespace>/log/YYYY-MM-DD.jsonl`. The `<namespace>/local/` directory is reserved for machine-local accounting (STATS.json), not for context loading.
+  3. Then load only the local primary repo's configured namespace entries at `<namespace>/log/YYYY-MM-DD.jsonl`. The per-machine `<namespace>/STATS.json` accounting file is never auto-loaded.
 - Only the local primary repo is writable by default.
 - Log entries from other namespaces are ignored by default.
 - Config `namespace` is a single path segment used for all memory files; it defaults to `main` when omitted.
@@ -28,7 +28,7 @@ description: Memory protocol for persisted cross-session context and operation c
 - Canonical log path: `<namespace>/log/YYYY-MM-DD.jsonl`; do not create a `YYYY/` layer for log files.
 - Log loading defaults to today and yesterday, but explicit `load --log-from/--log-to` or `load --log-days` may expand the primary repo log window.
 - `load --log-query` filters the selected primary log window against `text` and loads only matching entries into `log_entries`.
-- `<namespace>/local/` is reserved for machine-local accounting (today: `STATS.json`). It is never auto-loaded into the session snapshot; do not put context content under `local/`.
+- `<namespace>/STATS.json` is machine-local event accounting maintained by the hooks and write-* commands. It is never auto-loaded into the session snapshot and is intentionally not synced to reference roots (per-machine counts only).
 - On-demand document loading is allowed only when the user task clearly matches entries in `<namespace>/docs/index.json`.
 
 ## Skill Position
@@ -162,7 +162,7 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 - `search <query>`: full-text search across `<namespace>/docs/*.md`, `<namespace>/MEMORY.md`, and the configured namespace log. Docs and memory cover primary plus reference roots; log covers the primary root's configured namespace only. Flags: `--config`, `--log-days N`, `--no-docs`, `--no-memory`, `--no-log`, `--project` / `--topic` (repeatable; same axis is OR, different axes are AND; **scope reduces to log-only when either is set**), `--json`. Hits whose text contains `[[anatomy:slug/rel]]` references include an `anatomy_links` field with the resolved snapshot description.
 - `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, repair missing `<namespace>/docs/index.json` entries, and audit anatomy projects (per-project `stale_files` / `new_files` drift, plus `broken_log_refs` for `[[anatomy:...]]` citations whose targets no longer exist). Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
 - `stats`: aggregate tag counts across the configured namespace log and `<namespace>/MEMORY.md`. Flags: `--config`, `--json`.
-- `status`: lifetime dashboard. Reads `<namespace>/local/STATS.json` (real event counters incremented by hooks and write-* commands — never estimated) plus the anatomy index, prints session counts / anatomy attaches / log writes / hook blocks / hook passthroughs plus two diagnostic ratios (`anatomy_hit_rate`, `stop_block_ratio`). Flags: `--config`, `--json` (raw dict instead of dashboard).
+- `status`: lifetime dashboard. Reads `<namespace>/STATS.json` (real event counters incremented by hooks and write-* commands — never estimated) plus the anatomy index, prints session counts / anatomy attaches / log writes / hook blocks / hook passthroughs plus two diagnostic ratios (`anatomy_hit_rate`, `stop_block_ratio`). Flags: `--config`, `--json` (raw dict instead of dashboard).
 - `export`: format a Markdown summary; stdout by default or `--dest FILE` to append. Flags: `--config`, `--dest`, `--json`.
 - `anatomy-list`: list registered anatomy projects with file/token counts. Flags: `--config`, `--json`.
 - `anatomy-show <slug|root>`: print the rendered anatomy markdown for a project. Errors if the project has not been scanned yet.
@@ -200,7 +200,7 @@ For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces
 
 ## Health Dashboard (`status`)
 
-`<namespace>/local/STATS.json` is an event-driven counter file maintained by the hooks and the write-* commands. It contains real counts — no estimates, no synthetic "savings" numbers — for:
+`<namespace>/STATS.json` is an event-driven counter file maintained by the hooks and the write-* commands. It contains real counts — no estimates, no synthetic "savings" numbers — for:
 
 - `sessions`, `anatomy_attached_count`, `anatomy_truncated_count`, `anatomy_hint_emitted`, `anatomy_attached_tokens_est` (rendered chars / 3.75), `anatomy_upserts`
 - `log_entries_user` (write-log invocations whose `--source` is not `auto`), `log_entries_auto` (silent hook-driven summary appends)
