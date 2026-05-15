@@ -2,7 +2,6 @@
 
 `README.md`
 - Overview for humans. Explain how the repo is Git-managed and portable.
-- Mention that `<namespace>/local/ENV.md` and `<namespace>/local/MACHINE.md` stay scoped to one namespace.
 
 `SCHEMA.md`
 - This file. Document the responsibilities of every sibling.
@@ -20,23 +19,31 @@
 `<namespace>/docs/*.md`
 - Indexed documents loaded only on demand after `<namespace>/docs/index.json` matches the current task. They explain reusable workflows, SOPs, plans, todo lists, wiki notes, or project context fragments. Use `scripts/memory_tool.py upsert-doc` so body and index stay synchronized.
 
-`<namespace>/local/MACHINE.md` & `<namespace>/local/ENV.md`
-- Namespace-specific identity and environment facts. These files are loaded only for the configured namespace.
-
-`<namespace>/local/WORKSPACE.md`
-- Namespace-specific workspace roots, repo paths, project entry points, and mount details. Keep dated work logs out of this file; use `<namespace>/log/YYYY-MM-DD.jsonl` for dated notes.
-
 `<namespace>/log/YYYY-MM-DD.jsonl`
-- Append-only operation logs in newline-delimited JSON. Each line is a self-contained JSON object with local-timezone ISO `ts` including an offset, `date`, `tag`, `level`, `source`, `text`, and optional `confidence`, `files`. Use `scripts/memory_tool.py write-log` to append. Keeping records structured makes `search`, `maintain`, `stats`, and `load` reliable without index builds.
+- Append-only operation logs in newline-delimited JSON. Each line is a self-contained JSON object with local-timezone ISO `ts` including an offset, `date`, `tag`, `level`, `source`, `text`, and optional `confidence`, `files`, `project`, `topic`. Use `scripts/memory_tool.py write-log` to append. Keeping records structured makes `search`, `maintain`, `stats`, and `load` reliable without index builds.
+
+`<namespace>/anatomy/_index.json`
+- Registry of project roots that have anatomy snapshots, keyed by slug (lowercase `[a-z0-9._-]`, 1..64 chars). Slug collisions are surfaced at registration time and require explicit `--slug` to disambiguate.
+
+`<namespace>/anatomy/<slug>.json`
+- Source of truth for a project snapshot: `project`, `root`, `scanned_at`, `totals`, and per-file entries with `desc`, `desc_source` (`auto` / `user` / `empty`), `tokens_est`, `kind`, `mtime`. `desc_source: user` entries set via `anatomy-set` survive every future scan or PostToolUse upsert; only tokens / mtime / kind are refreshed.
+
+`<namespace>/anatomy/<slug>.md`
+- Auto-rendered from `<slug>.json`. Used by `anatomy-show` and by SessionStart context injection (capped at ~2000 tokens, fallback to a top-level directory summary above the cap).
+
+`<namespace>/STATS.json`
+- Machine-local event counter file. Maintained by hooks (`bump_stats`) and write-* commands. Counters are real events — not estimates. Never auto-loaded into a session snapshot; read by `memory_tool.py status`. Intentionally not synced to reference roots because counts are per-machine.
 
 Allowed lightweight tags:
 - `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context`
 - `[issue]` is for log entries or indexed todo/plan documents only; it is not accepted by `write-memory`.
 
+Optional log axes (`project` / `topic`):
+- Lowercase `[a-z0-9._-]`, 1..64 chars; only written when present (no null pollution). Auto-routed by `write-log` from cwd / `--files` / text keywords when omitted, and filterable via `search/load --project --topic`.
+- Anatomy citations like `[[anatomy:<slug>/<rel>]]` are auto-appended to the log entry's `text` when `--files` lives inside a registered project; `search` resolves them and returns the snapshot description under `anatomy_links`.
+
 CLI write boundary:
 - `write-preference` appends stable preferences to `<namespace>/PREFERENCES.md`.
 - `write-memory` appends only `fact`, `decision`, or `lesson` entries to `<namespace>/MEMORY.md`.
 - `upsert-doc` writes `<namespace>/docs/*.md` and updates `<namespace>/docs/index.json` in the same operation.
-
-**Local ENV note:**
-When a machine loads the repo, it reads `<namespace>/local/ENV.md` only for the configured namespace. Other namespaces' local files stay isolated even though they live in the same Git repo.
+- `anatomy-register` / `-scan` / `-set` / `-upsert-file` maintain `<namespace>/anatomy/`. Anatomy is event-driven (PostToolUse hook) plus user-curated descriptions.

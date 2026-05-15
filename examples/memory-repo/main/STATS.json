@@ -1,0 +1,15 @@
+{
+  "last_event_ts": "2026-05-14T20:35:21+08:00",
+  "lifetime": {
+    "anatomy_attached_count": 4,
+    "anatomy_attached_tokens_est": 1120,
+    "anatomy_hint_emitted": 1,
+    "anatomy_upserts": 7,
+    "log_entries_auto": 9,
+    "log_entries_user": 5,
+    "precompact_blocks": 1,
+    "sessions": 6,
+    "stop_blocks": 3,
+    "stop_throttled_passthrough": 18
+  }
+}

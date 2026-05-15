@@ -31,6 +31,19 @@ class MemoryHookTests(unittest.TestCase):
     def test_codex_stop_blocks_when_operation_has_no_memory_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_dir = Path(tmp)
+            # Explicit memory trigger via UserPromptSubmit short-circuits the
+            # N=8 turn-count throttle, so a single PostToolUse + Stop suffices
+            # to test the block path.
+            self.run_hook(
+                CODEX_HOOK,
+                {
+                    "session_id": "abc",
+                    "turn_id": "t1",
+                    "hook_event_name": "UserPromptSubmit",
+                    "prompt": "please save this commit to memory",
+                },
+                state_dir,
+            )
             self.run_hook(
                 CODEX_HOOK,
                 {

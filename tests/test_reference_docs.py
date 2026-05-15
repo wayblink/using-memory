@@ -49,15 +49,22 @@ class ReferenceDocTests(unittest.TestCase):
             "<namespace>/MEMORY.md",
             "<namespace>/PREFERENCES.md",
             "<namespace>/docs/index.json",
-            "<namespace>/local/MACHINE.md",
-            "<namespace>/local/ENV.md",
-            "<namespace>/local/WORKSPACE.md",
+            "<namespace>/anatomy/",
+            "<namespace>/STATS.json",
             "<namespace>/log/",
         ]
 
         for snippet in required_snippets:
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, text, f"repo-layout.md must mention {snippet}")
+
+        for legacy in [
+            "<namespace>/local/MACHINE.md",
+            "<namespace>/local/ENV.md",
+            "<namespace>/local/WORKSPACE.md",
+        ]:
+            with self.subTest(legacy=legacy):
+                self.assertNotIn(legacy, text, f"repo-layout.md must no longer mention {legacy}")
 
     def test_repo_layout_has_recommended_tree_lines(self):
         text = self.read_repo_layout()
@@ -72,16 +79,17 @@ class ReferenceDocTests(unittest.TestCase):
                 "    SCHEMA.md",
                 "    MEMORY.md",
                 "    PREFERENCES.md",
+                "    STATS.json",
                 "    docs/",
                 "      index.json",
                 "      workflow.md",
                 "      coding.md",
                 "    log/",
                 "      2026-04-13.jsonl",
-                "    local/",
-                "      MACHINE.md",
-                "      ENV.md",
-                "      WORKSPACE.md",
+                "    anatomy/",
+                "      _index.json",
+                "      spark-ann.json",
+                "      spark-ann.md",
             ]
         )
         self.assertEqual(
@@ -102,9 +110,8 @@ class ReferenceDocTests(unittest.TestCase):
             "`<namespace>/log/`",
             "`<namespace>/docs/`",
             "`<namespace>/docs/index.json`",
-            "`<namespace>/local/MACHINE.md`",
-            "`<namespace>/local/ENV.md`",
-            "`<namespace>/local/WORKSPACE.md`",
+            "`<namespace>/anatomy/`",
+            "`<namespace>/STATS.json`",
         ]:
             with self.subTest(resource=resource):
                 self.assertTrue(
@@ -140,7 +147,6 @@ class ReferenceDocTests(unittest.TestCase):
             "load --log-from/--log-to",
             "load --log-days",
             "load --log-query",
-            "`<namespace>/local/*` from other namespaces is ignored by default",
             "Log entries from other namespaces are ignored by default",
             "default toward recording concrete operation history and key events",
             "Do not apply a heavy",
@@ -164,9 +170,9 @@ class ReferenceDocTests(unittest.TestCase):
         for phrase in [
             "preferences",
             "durable_memory",
-            "local_context",
             "doc_hits",
             "sources",
+            "anatomy",
             "`level`",
             "skip",
             "log_detail",
@@ -176,6 +182,9 @@ class ReferenceDocTests(unittest.TestCase):
         ]:
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+
+        # local_context was removed in V2.3.
+        self.assertNotIn("local_context", text)
 
         for phrase in [
             "scripts/memory_tool.py write-preference",

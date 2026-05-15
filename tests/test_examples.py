@@ -58,15 +58,18 @@ class ExampleTests(unittest.TestCase):
             "main/SCHEMA.md",
             "main/MEMORY.md",
             "main/PREFERENCES.md",
+            "main/STATS.json",
             "main/docs/index.json",
             "main/docs/workflow.md",
-            "main/local/MACHINE.md",
-            "main/local/ENV.md",
-            "main/local/WORKSPACE.md",
+            "main/anatomy/_index.json",
+            "main/anatomy/spark-ann.json",
+            "main/anatomy/spark-ann.md",
             "main/log/2026-04-13.jsonl",
         ]
         for rel in required:
             self.assertTrue((ROOT / "examples/memory-repo" / rel).exists(), rel)
+        # The legacy local/ directory must not be re-introduced; V2.3 dropped it.
+        self.assertFalse((ROOT / "examples/memory-repo/main/local").exists())
 
     def test_log_example_uses_lightweight_tags(self):
         import json

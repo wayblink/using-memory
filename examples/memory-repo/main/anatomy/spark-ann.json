@@ -1,0 +1,32 @@
+{
+  "files": {
+    "README.md": {
+      "desc": "Spark-ANN — approximate nearest neighbour service on top of Spark",
+      "desc_source": "auto",
+      "kind": "prose",
+      "mtime": "2026-05-14T09:42:00+08:00",
+      "tokens_est": 38
+    },
+    "build.sh": {
+      "desc": "Build Java17 Spark image. Requires SPARK_HOME=./dist before invocation.",
+      "desc_source": "user",
+      "kind": "script",
+      "mtime": "2026-05-13T22:11:04+08:00",
+      "tokens_est": 64
+    },
+    "src/api.py": {
+      "desc": "JWT auth gateway. Trust boundary; do not bypass.",
+      "desc_source": "user",
+      "kind": "code",
+      "mtime": "2026-05-12T17:05:12+08:00",
+      "tokens_est": 180
+    }
+  },
+  "project": "spark-ann",
+  "root": "/Users/sample/yard/spark-ann",
+  "scanned_at": "2026-05-14T10:01:30+08:00",
+  "totals": {
+    "files": 3,
+    "tokens_est": 282
+  }
+}

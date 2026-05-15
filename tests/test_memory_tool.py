@@ -129,15 +129,10 @@ memory_roots:
                     self.namespace_root(reference) / "docs" / "index.json",
                     self.namespace_root(primary) / "log" / "2026-05-06.jsonl",
                     self.namespace_root(primary) / "log" / "2026-05-05.jsonl",
-                    self.namespace_root(primary) / "local" / "MACHINE.md",
-                    self.namespace_root(primary) / "local" / "ENV.md",
-                    self.namespace_root(primary) / "local" / "WORKSPACE.md",
                 ],
             )
             serialized = json.dumps(result, ensure_ascii=False)
             self.assertNotIn("today reference", serialized)
-            self.assertNotIn("env reference", serialized)
-            self.assertNotIn("workspace reference", serialized)
             self.assertIn("today primary", serialized)
             self.assertEqual(result["doc_hits"], [])
 
@@ -170,10 +165,10 @@ memory_roots:
             self.assertIn(primary / "shaipower" / "MEMORY.md", loaded)
             self.assertIn(primary / "shaipower" / "docs" / "index.json", loaded)
             self.assertIn(primary / "shaipower" / "log" / "2026-05-06.jsonl", loaded)
-            self.assertIn(primary / "shaipower" / "local" / "ENV.md", loaded)
+            # local/ files are no longer auto-loaded (V2.3 removed local_context).
+            self.assertNotIn(primary / "shaipower" / "local" / "ENV.md", loaded)
             serialized = json.dumps(result, ensure_ascii=False)
             self.assertIn("today primary machine", serialized)
-            self.assertIn("env primary", serialized)
             self.assertNotIn("wrong namespace", serialized)
 
     def test_load_orders_references_by_priority(self):
@@ -1032,6 +1027,8 @@ memory_roots:
             self.assertIn("today primary machine", log_texts)
 
     def test_load_keeps_log_entries_out_of_local_context(self):
+        # V2.3 removed local_context entirely. This test now just verifies the
+        # parsed log line lands in log_entries and not in some other section.
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             primary = self.make_repo(base, "primary", machine_id="primary")
@@ -1045,10 +1042,9 @@ memory_roots:
                 "--json",
             )
 
-            serialized_local = "\n".join(result["local_context"])
-            self.assertIn("machine primary", serialized_local)
-            self.assertNotIn("today primary machine", serialized_local)
-            self.assertIn("today primary machine", [entry["text"] for entry in result["log_entries"]])
+            self.assertNotIn("local_context", result)
+            log_texts = [entry["text"] for entry in result["log_entries"]]
+            self.assertIn("today primary machine", log_texts)
 
     def test_load_reports_corrupt_log_jsonl_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1468,7 +1464,11 @@ class MemorySetupTests(unittest.TestCase):
                 ).stdout.strip(),
                 str(origin),
             )
-            self.assertTrue((memory_root / "main" / "local" / "MACHINE.md").exists())
+            # Setup seeds the namespace baseline files; local/* was dropped in V2.3.
+            self.assertTrue((memory_root / "main" / "MEMORY.md").exists())
+            self.assertTrue((memory_root / "main" / "PREFERENCES.md").exists())
+            self.assertTrue((memory_root / "main" / "docs" / "index.json").exists())
+            self.assertFalse((memory_root / "main" / "local").exists())
             self.assertIn("remote:", config.read_text(encoding="utf-8"))
 
     def test_setup_pulls_existing_git_checkout_when_remote_is_configured(self):

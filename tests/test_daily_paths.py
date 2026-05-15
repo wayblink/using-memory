@@ -14,7 +14,6 @@ class DailyPathTests(unittest.TestCase):
             "references/repo-layout.md",
             "examples/memory-repo/main/SCHEMA.md",
             "examples/memory-repo/main/docs/workflow.md",
-            "examples/memory-repo/main/local/WORKSPACE.md",
         ]:
             with self.subTest(rel=rel):
                 text = (ROOT / rel).read_text(encoding="utf-8")
@@ -34,7 +33,6 @@ class DailyPathTests(unittest.TestCase):
             "references/repo-layout.md",
             "examples/memory-repo/main/SCHEMA.md",
             "examples/memory-repo/main/docs/workflow.md",
-            "examples/memory-repo/main/local/WORKSPACE.md",
         ]:
             with self.subTest(rel=rel):
                 text = (ROOT / rel).read_text(encoding="utf-8")
@@ -50,7 +48,6 @@ class DailyPathTests(unittest.TestCase):
             "references/repo-layout.md",
             "examples/memory-repo/main/SCHEMA.md",
             "examples/memory-repo/main/docs/workflow.md",
-            "examples/memory-repo/main/local/WORKSPACE.md",
         ]:
             with self.subTest(rel=rel):
                 text = (ROOT / rel).read_text(encoding="utf-8")

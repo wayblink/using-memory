@@ -552,7 +552,8 @@ def append_preference_entry(root: Path, text: str) -> Path:
 
 
 def looks_like_memory_namespace_root(path: Path) -> bool:
-    markers = ("MEMORY.md", "PREFERENCES.md", "log", "docs", "local")
+    # "local" is kept as a backward-compat marker; pre-V2.3 namespaces had it.
+    markers = ("MEMORY.md", "PREFERENCES.md", "log", "docs", "anatomy", "STATS.json", "local")
     return any((path / marker).exists() for marker in markers)
 
 
@@ -2522,7 +2523,7 @@ def prepare_git_memory_root(memory_root: Path, remote: str) -> str:
 def initialize_namespace(memory_root: Path, namespace: str, machine_id: str) -> list[str]:
     scoped_root = namespace_root(memory_root, namespace)
     changed = []
-    for rel in ["docs", "log", "local"]:
+    for rel in ["docs", "log"]:
         target = scoped_root / rel
         if not target.exists():
             target.mkdir(parents=True, exist_ok=True)

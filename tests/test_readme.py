@@ -12,9 +12,14 @@ class ReadmeTests(unittest.TestCase):
 
         self.assertIn("memory_roots:", text)
         self.assertIn("role: primary", text)
-        self.assertIn("<namespace>/local/MACHINE.md", text)
-        self.assertIn("<namespace>/local/ENV.md", text)
-        self.assertIn("<namespace>/local/WORKSPACE.md", text)
+        # V2.0+ layers
+        self.assertIn("<namespace>/anatomy/", text)
+        self.assertIn("<namespace>/STATS.json", text)
+        # Legacy local/ files were removed in V2.3; the README must not
+        # advertise them anymore.
+        self.assertNotIn("<namespace>/local/MACHINE.md", text)
+        self.assertNotIn("<namespace>/local/ENV.md", text)
+        self.assertNotIn("<namespace>/local/WORKSPACE.md", text)
         self.assertNotIn("primary_repo:", text)
         self.assertNotIn("local/<machine-id>/", text)
         self.assertNotIn("namespaces/", text)
@@ -48,14 +53,21 @@ class ReadmeTests(unittest.TestCase):
             "search",
             "maintain",
             "stats",
+            "status",
             "export",
             "write-log",
             "write-memory",
             "write-preference",
             "upsert-doc",
+            "anatomy-register",
+            "anatomy-scan",
+            "anatomy-show",
+            "anatomy-set",
+            "anatomy-list",
+            "anatomy-upsert-file",
         ]:
             with self.subTest(command=command):
-                self.assertIn(f"- `{command}`:", text)
+                self.assertIn(f"`{command}`", text)
 
     def test_project_declares_python_dependency(self):
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")

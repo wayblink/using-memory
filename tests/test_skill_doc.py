@@ -74,7 +74,12 @@ class SkillDocTests(unittest.TestCase):
             "`--log-from` + `--log-to`",
             "`--log-days`",
             "`--log-query`",
-            "`--doc` / `--doc-type` / `--doc-tag` / `--project` / `--doc-query`",
+            "`--doc` / `--doc-type` / `--doc-tag` / `--project` / `--topic` / `--doc-query`",
+            "`--anatomy`",
+            "`status`",
+            "`anatomy-list`",
+            "`anatomy-register",
+            "`anatomy-scan",
         ]:
             with self.subTest(command=command):
                 self.assertIn(command, text)
@@ -88,6 +93,10 @@ class SkillDocTests(unittest.TestCase):
             "## Skill Position",
             "## Config Resolution",
             "## Session Snapshot",
+            "## Memory Dimensions",
+            "## Anatomy",
+            "## Health Dashboard",
+            "## Hook Behaviour",
             "references/repo-layout.md",
             "references/startup-and-write-rules.md",
             "references/machine-setup.md",
@@ -98,10 +107,10 @@ class SkillDocTests(unittest.TestCase):
             "~/.skills/using-memory/config.yaml",
             "preferences",
             "durable_memory",
-            "local_context",
             "log_entries",
             "doc_hits",
             "sources",
+            "anatomy",
             "skip",
             "log_detail",
             "log_summary",
@@ -112,3 +121,6 @@ class SkillDocTests(unittest.TestCase):
         ]:
             with self.subTest(needle=needle):
                 self.assertIn(needle, text)
+        # V2.3 removed local_context from the session snapshot; ensure the
+        # SKILL.md no longer advertises it.
+        self.assertNotIn("`local_context`", text)

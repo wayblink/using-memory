@@ -29,19 +29,18 @@ Skip memory for greetings, one-off questions, simple shell commands, isolated co
 - The canonical log path is fixed at `<namespace>/log/YYYY-MM-DD.jsonl`; today and yesterday are read from `<namespace>/log/*.jsonl` in the local primary repo.
 - Explicit `load --log-from/--log-to` or `load --log-days` may expand the primary log read window; without those flags, only today and yesterday are read.
 - Explicit `load --log-query` parses `<namespace>/log/*.jsonl` line by line and filters entries by the `text` field; only matching entries appear in `log_entries` and loaded log source content.
-- When retrieval is needed, the read order is strict: first load every repo's `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md`, then browse every repo's `<namespace>/docs/index.json`, load matching `<namespace>/docs/*.md` by indexed metadata, and finally read the local primary namespace log window plus `<namespace>/local/MACHINE.md`, `<namespace>/local/ENV.md`, and `<namespace>/local/WORKSPACE.md`.
-- `<namespace>/local/*` from other namespaces is ignored by default so environment details do not pollute the current session.
-- `<namespace>/local/` stores only namespace-local facts, not dated files; dated process notes belong in `<namespace>/log/YYYY-MM-DD.jsonl`.
+- When retrieval is needed, the read order is strict: first load every repo's `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md`, then browse every repo's `<namespace>/docs/index.json`, load matching `<namespace>/docs/*.md` by indexed metadata, and finally read the local primary namespace log window. The per-machine `<namespace>/STATS.json` accounting file is never part of this snapshot.
+- With `load --anatomy`, an additional anatomy block is attached for the registered project whose root is the longest prefix of cwd. SessionStart hooks pass this flag automatically.
 - Log entries from other namespaces are ignored by default. The primary repo's configured namespace is the place for today's writable and readable context.
 
 ## Session Snapshot
 
 - `preferences`
 - `durable_memory`
-- `local_context`
 - `log_entries` — parsed JSON objects from `<namespace>/log/*.jsonl`
 - `doc_hits`
 - `sources`
+- `anatomy` — only present when `load --anatomy` is used
 
 ## docs On-Demand Expansion
 
@@ -74,7 +73,7 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 - Record commands and tool-driven operations that changed state or produced meaningful evidence: file edits, config changes, service restarts, builds, tests, debug findings, fixes, commits, pushes, PR/release/deploy state, hook behavior, and unresolved follow-up.
 - Simple reads, pure browsing, repeated identical calls, and raw temporary output do not need one entry per tool call unless they produced a decision, diagnosis, verification result, or state change.
 - Only the local primary repo receives appended JSONL log entries, at `<namespace>/log/YYYY-MM-DD.jsonl`; other namespaces are never written.
-- There is no automatic `write-local`. Changes to `<namespace>/local/MACHINE.md`, `<namespace>/local/ENV.md`, and `<namespace>/local/WORKSPACE.md` should be explicit maintenance actions.
+- Project file snapshots go to `<namespace>/anatomy/` via the `anatomy-*` commands; the PostToolUse hook calls `anatomy-upsert-file` automatically for write/edit-style tools.
 - Stable preferences go to `<namespace>/PREFERENCES.md` through `scripts/memory_tool.py write-preference`.
 - Stable facts, decisions, and lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`, and only `fact`, `decision`, and `lesson` are allowed.
 - Unresolved issues, parking points, todo risks, and temporary context are not written to `<namespace>/MEMORY.md` by default; keep short-term content in JSONL log entries, and write structured todo or plan material to `<namespace>/docs/`.

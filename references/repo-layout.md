@@ -11,16 +11,17 @@ memory-repo/
     SCHEMA.md
     MEMORY.md
     PREFERENCES.md
+    STATS.json
     docs/
       index.json
       workflow.md
       coding.md
     log/
       2026-04-13.jsonl
-    local/
-      MACHINE.md
-      ENV.md
-      WORKSPACE.md
+    anatomy/
+      _index.json
+      spark-ann.json
+      spark-ann.md
 ```
 
 This tree keeps every memory file under one namespace directory. The repo root is only the Git checkout that contains namespace directories.
@@ -30,7 +31,6 @@ This tree keeps every memory file under one namespace directory. The repo root i
 - A config `path` points to the parent directory that contains namespace directories. `namespace` is a single first-level directory under that root and defaults to `main` when omitted.
 - Do not set `path` to the namespace directory itself. For a namespace at `~/.memories/main`, use `path: ~/.memories` and `namespace: main`; never use `path: ~/.memories/main` with `namespace: main`.
 - Reference repos are always read-only. The current session treats only the primary repo root as writable.
-- Only the primary repo's configured `<namespace>/local/*` content is loaded for the current namespace. Other namespaces remain reference material and do not affect local state.
 - The sample `main/log/2026-04-13.jsonl` shows the structure. Real log files follow `<namespace>/log/YYYY-MM-DD.jsonl` and use the actual date.
 - Do not create a `YYYY/` subdirectory. Legacy year-layered log files should be migrated to `<namespace>/log/YYYY-MM-DD.jsonl`.
 
@@ -43,16 +43,15 @@ This tree keeps every memory file under one namespace directory. The repo root i
 - `<namespace>/log/`: newline-delimited JSON (one entry per line), optimized for append-only context, search, and structured queries. Legacy `.md` log files may exist but are no longer written to.
 - `<namespace>/docs/`: on-demand indexed documents such as `workflow.md`, `coding.md`, and other core knowledge.
 - `<namespace>/docs/index.json`: document index with each document's `title`, `type`, `modified`, `projects`, `tags`, and `path`; loaders browse this index before selecting Markdown bodies. Stable `type` values include `wiki`, `SOP`, `todo`, and `plan`.
-- `<namespace>/local/MACHINE.md`: namespace-local identity, role, hardware, or network traits; loaded only from the primary repo's configured namespace.
-- `<namespace>/local/ENV.md`: namespace-local environment, toolchain versions, and default paths, kept scoped to avoid contaminating other namespaces.
-- `<namespace>/local/WORKSPACE.md`: namespace-local workspaces, repo paths, project entry points, and mount points; loaded only from the primary repo's configured namespace.
+- `<namespace>/anatomy/`: project file-index snapshots. `_index.json` lists registered project roots by slug; `<slug>.json` is the source of truth (per-file `desc`, `desc_source`, `tokens_est`, `kind`, `mtime`) and `<slug>.md` is the auto-rendered view used by `anatomy-show` and SessionStart context injection.
+- `<namespace>/STATS.json`: machine-local event counters maintained by hooks and write-* commands. Read by `memory_tool.py status`; never auto-loaded into a session snapshot. Intentionally not synced to reference roots because counts are per-machine.
 
 ## Log JSONL Schema
 
 Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a self-contained JSON object:
 
 ```json
-{"ts":"2026-05-06T18:30:00+08:00","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"]}
+{"ts":"2026-05-06T18:30:00+08:00","date":"2026-05-06","tag":"lesson","level":"summary","source":"user","text":"insight sentence","confidence":8,"files":["deploy.py"],"project":"using-memory","topic":"hooks"}
 ```
 
 | Field | Type | Req | Notes |
