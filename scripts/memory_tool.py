@@ -1352,19 +1352,28 @@ def _extract_description(file_path: Path, file_kind: str) -> str:
         first_para = re.split(r"\n\s*\n", head.strip(), maxsplit=1)[0]
         return _condense(first_para)
     if file_kind == "code":
-        # Try docstring first (Python)
-        m = re.search(r'^\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', head, flags=re.DOTALL)
+        # Strip a leading shebang line so it does not pollute downstream
+        # heuristics. Without this, files like `#!/usr/bin/env python3\n"""docs"""`
+        # fall past the docstring regex (anchored at start) and end up with
+        # "!/usr/bin/env python3" as the desc.
+        code_head = re.sub(r"\A#![^\n]*\n", "", head, count=1)
+        # Try docstring first (Python) — also handles the case where it lives
+        # at module top-of-file after the shebang.
+        m = re.search(r'^\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', code_head, flags=re.DOTALL)
         if m:
             return _condense(m.group(1))
         # JSDoc / block comment
-        m = re.search(r"^\s*/\*\*?(.*?)\*/", head, flags=re.DOTALL)
+        m = re.search(r"^\s*/\*\*?(.*?)\*/", code_head, flags=re.DOTALL)
         if m:
             cleaned = re.sub(r"^\s*\*\s?", "", m.group(1), flags=re.MULTILINE)
             return _condense(cleaned)
         # Top-of-file line comments
         line_comment = []
-        for line in head.splitlines()[:30]:
+        for line in code_head.splitlines()[:30]:
             s = line.strip()
+            if s.startswith("#!"):
+                # Defensive: should be stripped already, but guard anyway.
+                continue
             if not s:
                 if line_comment:
                     break
@@ -1376,9 +1385,21 @@ def _extract_description(file_path: Path, file_kind: str) -> str:
                 break
         if line_comment:
             return _condense(" ".join(line_comment))
-        # First export / def / class / function signature
+        # Inner-symbol docstring fallback: the first def/class with a
+        # docstring right under it. Useful for Python test files like
+        # `class FooTests(unittest.TestCase):\n    """What FooTests covers."""`
+        # which otherwise resolve to a useless "first symbol: FooTests".
+        m = re.search(
+            r"^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_][\w]*)[^\n]*\n"
+            r"\s*(?:\"\"\"|''')(.*?)(?:\"\"\"|''')",
+            code_head,
+            flags=re.DOTALL | re.MULTILINE,
+        )
+        if m:
+            return _condense(f"{m.group(1)}: {m.group(2)}")
+        # First export / def / class / function signature (last resort)
         m = re.search(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|def|interface|type)\s+([A-Za-z_][\w]*)",
-                      head, flags=re.MULTILINE)
+                      code_head, flags=re.MULTILINE)
         if m:
             return f"first symbol: {m.group(1)}"
         return ""
