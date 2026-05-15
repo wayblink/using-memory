@@ -665,6 +665,19 @@ def extract_markdown_title(path: Path) -> str:
     return path.stem.replace("-", " ").replace("_", " ").strip().title() or path.stem
 
 
+def extract_h1_from_text(text: str) -> str | None:
+    """Return the first ``# Heading`` line from a markdown string, or None."""
+    if not text:
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            candidate = stripped[2:].strip()
+            if candidate:
+                return candidate
+    return None
+
+
 def doc_index_entry_for_file(docs_dir: Path, doc_path: Path) -> dict:
     rel_path = doc_path.relative_to(docs_dir).as_posix()
     modified = date.fromtimestamp(doc_path.stat().st_mtime).isoformat()
@@ -1032,13 +1045,14 @@ def do_write_log(args: argparse.Namespace) -> dict:
     }
 
 
-def _bump_lifetime_stats(scoped_root: Path, deltas: dict) -> None:
-    """Atomic increment of <namespace>/STATS.json counters.
+def _bump_lifetime_stats(scoped_root: Path, deltas: dict, sets: dict | None = None) -> None:
+    """Atomic update of <namespace>/STATS.json.
 
     Same contract as the hook-side bump_stats; lives here so write-* CLI
     commands can update counts independently of any hook context.
+    ``deltas`` are added to existing values; ``sets`` overwrite them.
     """
-    if not deltas:
+    if not deltas and not sets:
         return
     path = scoped_root / "STATS.json"
     try:
@@ -1050,12 +1064,14 @@ def _bump_lifetime_stats(scoped_root: Path, deltas: dict) -> None:
         except (OSError, json.JSONDecodeError):
             current = {}
         lifetime = current.setdefault("lifetime", {})
-        for key, delta in deltas.items():
+        for key, delta in (deltas or {}).items():
             try:
                 d = int(delta)
             except (TypeError, ValueError):
                 continue
             lifetime[key] = int(lifetime.get(key, 0) or 0) + d
+        for key, value in (sets or {}).items():
+            lifetime[key] = value
         current["last_event_ts"] = datetime.now().astimezone().isoformat(timespec="seconds")
         atomic_write_text(path, json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     except Exception:
@@ -1149,15 +1165,30 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     primary_root, primary_namespace = load_primary_for_write(args)
     scoped_root = namespace_root(primary_root, primary_namespace)
     doc_name = validate_doc_name(args.doc)
-    parse_iso_date(args.modified, "--modified")
+
+    text = args.text
+    if text is None:
+        if getattr(args, "text_stdin", False):
+            text = sys.stdin.read()
+        else:
+            sys.stderr.write("upsert-doc requires --text or --text-stdin\n")
+            sys.exit(2)
+
+    # Fallback fields: title -> first H1 -> slug-derived; doc_type -> "wiki";
+    # modified -> today. Keep behaviour identical when explicit values pass.
+    title = args.title or extract_h1_from_text(text) or doc_name.replace("-", " ").replace("_", " ").strip().title() or doc_name
+    doc_type = args.doc_type or "wiki"
+    modified = args.modified or date.today().isoformat()
+    parse_iso_date(modified, "--modified")
+
     doc_path = scoped_root / "docs" / f"{doc_name}.md"
     index_path = scoped_root / "docs" / "index.json"
     rel_path = f"{doc_name}.md"
     entry = {
         "path": rel_path,
-        "title": args.title,
-        "type": args.doc_type,
-        "modified": args.modified,
+        "title": title,
+        "type": doc_type,
+        "modified": modified,
         "projects": args.project or [],
         "tags": args.doc_tag or [],
     }
@@ -1170,7 +1201,7 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     with exclusive_file_lock(scoped_root / "docs" / ".docs.lock"):
         index = load_doc_index(index_path)
         index = doc_index_with_entry(index, entry)
-        atomic_write_text(doc_path, args.text)
+        atomic_write_text(doc_path, text)
         write_doc_index(index_path, index)
     return {
         "changed": True,
@@ -1178,6 +1209,9 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
         "index_path": str(index_path),
         "sha256": sha256_file(doc_path),
         "index_sha256": sha256_file(index_path),
+        "title": title,
+        "doc_type": doc_type,
+        "modified": modified,
     }
 
 
@@ -1829,6 +1863,10 @@ def do_status(args: argparse.Namespace) -> dict:
             "stop_blocks": blocks,
             "stop_throttled_passthrough": passthrough,
             "precompact_blocks": precompact,
+            "cumulative_human_turns": _g("cumulative_human_turns"),
+            "last_distill_check_ts": lifetime.get("last_distill_check_ts"),
+            "last_distill_inject_ts": lifetime.get("last_distill_inject_ts"),
+            "last_promote_ts": lifetime.get("last_promote_ts"),
         },
         "ratios": {
             "anatomy_hit_rate": hit_rate,
@@ -2796,15 +2834,23 @@ def cmd_write_preference(sub: argparse._SubParsersAction) -> None:
 
 def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("upsert-doc", help="Write one configured namespace docs/*.md file and update <namespace>/docs/index.json")
-    p.add_argument("--config", type=str, required=True)
-    p.add_argument("--doc", type=str, required=True)
-    p.add_argument("--title", type=str, required=True)
-    p.add_argument("--doc-type", type=str, required=True)
-    p.add_argument("--modified", type=str, required=True)
+    p.add_argument("--config", type=str, default=None,
+                   help="Config path. Falls back to USING_MEMORY_CONFIG env or ~/.skills/using-memory/config.yaml.")
+    p.add_argument("--doc", type=str, required=True,
+                   help="Doc slug (filename without .md). Required.")
+    p.add_argument("--title", type=str, default=None,
+                   help="Optional. Defaults to first H1 in --text, then slug-derived title.")
+    p.add_argument("--doc-type", type=str, default=None,
+                   help="Optional. Defaults to 'wiki'. Common values: wiki, lesson, troubleshooting, decision-record, runbook, SOP, project.")
+    p.add_argument("--modified", type=str, default=None,
+                   help="Optional ISO date (YYYY-MM-DD). Defaults to today.")
     p.add_argument("--project", action="append", default=None)
     p.add_argument("--doc-tag", action="append", default=None)
     p.add_argument("--summary", type=str, default=None)
-    p.add_argument("--text", type=str, required=True)
+    p.add_argument("--text", type=str, default=None,
+                   help="Doc body. Required unless --text-stdin is set.")
+    p.add_argument("--text-stdin", action="store_true",
+                   help="Read --text body from stdin instead of inline.")
     p.add_argument("--json", action="store_true")
 
 
@@ -2976,6 +3022,10 @@ def _format_status(result: dict) -> str:
         f"  Stop hard-blocks (detail save) : {lt.get('stop_blocks', 0)}",
         f"  Stop throttled passthroughs    : {lt.get('stop_throttled_passthrough', 0)}",
         f"  PreCompact emergency saves     : {lt.get('precompact_blocks', 0)}",
+        f"  cumulative human turns         : {lt.get('cumulative_human_turns', 0)}",
+        f"  last distill check ts          : {lt.get('last_distill_check_ts') or 'never'}",
+        f"  last distill inject ts         : {lt.get('last_distill_inject_ts') or 'never'}",
+        f"  last promote ts                : {lt.get('last_promote_ts') or 'never'}",
         "",
         "Diagnostic ratios",
         "-----------------",

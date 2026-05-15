@@ -373,14 +373,16 @@ def _stats_path() -> Path | None:
     return None
 
 
-def bump_stats(deltas: dict[str, Any]) -> None:
-    """Atomically add ``deltas`` into <namespace>/STATS.json.
+def bump_stats(deltas: dict[str, Any], sets: dict[str, Any] | None = None) -> None:
+    """Atomically update <namespace>/STATS.json.
 
-    Each key in ``deltas`` is an integer counter; missing keys initialise to
-    0. Updates ``last_event_ts`` to wall-clock. Best-effort: any I/O or
-    parsing failure is swallowed so hook stability isn't tied to stats.
+    ``deltas`` keys are integer counters (added to existing value).
+    ``sets`` keys are absolute values (overwrite existing value) — used for
+    timestamps and similar non-counter state.
+    Updates ``last_event_ts`` to wall-clock. Best-effort: any I/O or parsing
+    failure is swallowed so hook stability isn't tied to stats.
     """
-    if not deltas:
+    if not deltas and not sets:
         return
     path = _stats_path()
     if not path:
@@ -394,12 +396,14 @@ def bump_stats(deltas: dict[str, Any]) -> None:
         except (OSError, json.JSONDecodeError):
             current = {}
         lifetime = current.setdefault("lifetime", {})
-        for key, delta in deltas.items():
+        for key, delta in (deltas or {}).items():
             try:
                 delta_int = int(delta)
             except (TypeError, ValueError):
                 continue
             lifetime[key] = int(lifetime.get(key, 0) or 0) + delta_int
+        for key, value in (sets or {}).items():
+            lifetime[key] = value
         current["last_event_ts"] = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(
@@ -649,6 +653,14 @@ def run(host: str) -> int:
         last_message = assistant_text(payload)
         transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
         current_turns = count_human_turns(transcript_path)
+
+        # Accumulate cross-session human-turn count for distill triggers.
+        # Idempotent: only the increment since last seen is added, so multiple
+        # Stop fires within one human turn cannot double-count.
+        last_seen_turns = int(state.get("last_seen_turns") or 0)
+        if current_turns > last_seen_turns:
+            bump_stats({"cumulative_human_turns": current_turns - last_seen_turns})
+            state["last_seen_turns"] = current_turns
 
         # If the model just wrote memory in this final response, record the
         # checkpoint and pass through.
