@@ -387,6 +387,97 @@ def append_markdown_entry(path: Path, entry: str) -> Path:
 
 _ANATOMY_REF_RE = re.compile(r"\[\[anatomy:([a-z0-9][a-z0-9._-]{0,63})/([^\]]+)\]\]")
 
+# Log backlink syntax: [[log:YYYY-MM-DD#L<n>]] where n is 1-based jsonl line number.
+# Used by docs to cite the source log entries they were distilled from. The
+# distillation pipeline relies on this to filter out log entries that have
+# already been promoted into a doc.
+_LOG_REF_RE = re.compile(r"\[\[log:(\d{4}-\d{2}-\d{2})#L(\d+)\]\]")
+LOG_BACKLINK_HEADING = "## Related log entries"
+
+
+def format_log_backlink(date_str: str, line_no: int) -> str:
+    """Return the canonical [[log:YYYY-MM-DD#L<n>]] link string."""
+    if not _LOG_REF_RE.fullmatch(f"[[log:{date_str}#L{line_no}]]"):
+        raise ValueError(f"invalid log backlink: date={date_str!r} line={line_no!r}")
+    return f"[[log:{date_str}#L{line_no}]]"
+
+
+def parse_log_backlink(raw: str) -> tuple[str, int] | None:
+    """Parse a single ``[[log:YYYY-MM-DD#L<n>]]`` token. None if invalid."""
+    m = _LOG_REF_RE.fullmatch(raw.strip())
+    if not m:
+        return None
+    return m.group(1), int(m.group(2))
+
+
+def extract_log_backlinks_from_text(text: str) -> set[tuple[str, int]]:
+    """Return all ``(date, line_no)`` tuples cited via [[log:...]] in ``text``."""
+    if not text:
+        return set()
+    return {(m.group(1), int(m.group(2))) for m in _LOG_REF_RE.finditer(text)}
+
+
+def merge_log_backlinks_section(existing_text: str, new_links: list[str]) -> str:
+    """Return ``existing_text`` with a ``## Related log entries`` section that
+    includes ``new_links`` merged with any links already present, deduped and
+    sorted by (date, line_no). The section is appended at the end of the doc;
+    if it already exists, the existing section is replaced in place.
+
+    ``new_links`` items must be canonical ``[[log:YYYY-MM-DD#L<n>]]`` strings.
+    Invalid entries are dropped silently — caller is expected to use
+    :func:`format_log_backlink` to construct them.
+    """
+    valid_new: set[tuple[str, int]] = set()
+    for link in new_links or []:
+        parsed = parse_log_backlink(link)
+        if parsed is not None:
+            valid_new.add(parsed)
+
+    body = existing_text or ""
+    heading_idx = body.find(LOG_BACKLINK_HEADING)
+    if heading_idx == -1:
+        prefix = body
+        existing_links: set[tuple[str, int]] = set()
+    else:
+        prefix = body[:heading_idx].rstrip() + "\n"
+        existing_links = extract_log_backlinks_from_text(body[heading_idx:])
+
+    if not valid_new and not existing_links:
+        return body  # nothing to add and no existing section: leave alone
+
+    merged = sorted(existing_links | valid_new)
+    section_lines = [LOG_BACKLINK_HEADING, ""]
+    section_lines.extend(f"- {format_log_backlink(d, n)}" for d, n in merged)
+    section = "\n".join(section_lines) + "\n"
+
+    if not prefix.endswith("\n"):
+        prefix += "\n"
+    if prefix and not prefix.endswith("\n\n"):
+        prefix += "\n"
+    return prefix + section
+
+
+def collect_promoted_log_refs(scoped_root: Path) -> set[tuple[str, int]]:
+    """Walk ``<namespace>/docs/*.md`` and return every ``(date, line_no)``
+    cited via ``[[log:YYYY-MM-DD#L<n>]]``. The distillation pipeline uses
+    this set to skip log entries that have already been promoted into a doc.
+
+    Backlinks may live anywhere in the doc body (not only inside the
+    Related-log-entries section), so we scan the whole markdown.
+    """
+    docs_dir = scoped_root / "docs"
+    refs: set[tuple[str, int]] = set()
+    if not docs_dir.is_dir():
+        return refs
+    for path in docs_dir.glob("*.md"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        refs |= extract_log_backlinks_from_text(text)
+    return refs
+
+
 
 def _anatomy_link_snapshots_for_entry(scoped_root: Path, text: str) -> list[dict]:
     """Parse `[[anatomy:slug/path]]` refs from a log entry's text and return
@@ -1198,11 +1289,38 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     if error:
         sys.stderr.write(f"invalid doc metadata: {error}\n")
         sys.exit(2)
+
+    # Validate --link-log values up front (before the lock) so a bad input
+    # surfaces a clean error instead of a partial write. Empty list = no
+    # backlink section is added or rewritten beyond what's already in text.
+    link_log = list(args.link_log or [])
+    for link in link_log:
+        if parse_log_backlink(link) is None:
+            sys.stderr.write(f"invalid --link-log value (expected [[log:YYYY-MM-DD#L<n>]]): {link!r}\n")
+            sys.exit(2)
+
     with exclusive_file_lock(scoped_root / "docs" / ".docs.lock"):
+        # Preserve any [[log:...]] backlinks already in the existing doc by
+        # merging them with --link-log. New text body is treated as
+        # authoritative; we only touch the Related-log-entries section.
+        existing_links: set[tuple[str, int]] = set()
+        if doc_path.exists():
+            try:
+                old_body = doc_path.read_text(encoding="utf-8")
+                existing_links = extract_log_backlinks_from_text(old_body)
+            except OSError:
+                existing_links = set()
+
+        if link_log or existing_links:
+            preserved = [format_log_backlink(d, n) for d, n in sorted(existing_links)]
+            text = merge_log_backlinks_section(text, link_log + preserved)
+
         index = load_doc_index(index_path)
         index = doc_index_with_entry(index, entry)
         atomic_write_text(doc_path, text)
         write_doc_index(index_path, index)
+
+    final_links = extract_log_backlinks_from_text(text)
     return {
         "changed": True,
         "path": str(doc_path),
@@ -1212,6 +1330,7 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
         "title": title,
         "doc_type": doc_type,
         "modified": modified,
+        "log_backlinks": sorted(f"{d}#L{n}" for d, n in final_links),
     }
 
 
@@ -2264,9 +2383,22 @@ def do_search(args: argparse.Namespace) -> dict:
 
 
 def do_maintain(args: argparse.Namespace) -> dict:
-    """Run maintenance checks and repair missing docs index entries."""
+    """Run maintenance checks and repair missing docs index entries.
+
+    With ``--distill`` only, skip the audit and return the bucket analysis.
+    With ``--promote TOPIC[/FAMILY]``, synthesize a promote prompt for one
+    bucket and return it as structured data (also printed on stdout by main).
+    """
     primary_root, primary_namespace = load_primary_for_write(args)
     scoped_root = namespace_root(primary_root, primary_namespace)
+
+    # Distill / promote are read-only fast paths; they skip the audit so
+    # SessionStart / Stop hooks can call them frequently without paying the
+    # full anatomy-walk cost.
+    if getattr(args, "promote", None):
+        return do_promote(scoped_root, args)
+    if getattr(args, "distill", False):
+        return do_distill(scoped_root, args)
     log_dir = scoped_root / "log"
     stale = []
     corrupt = []
@@ -2410,6 +2542,390 @@ def _maintain_anatomy(scoped_root: Path) -> dict:
                         "reason": "slug not registered" if not doc else "file not in anatomy snapshot",
                     })
     return report
+
+
+# ============================================================================
+# Distillation: log -> doc bucket analysis
+# ============================================================================
+#
+# distill: read-only bucket analysis. Groups unpromoted log entries by
+#   (topic, tag-family) and reports candidates that have accumulated enough
+#   material (>= min-entries, >= min-days) to be worth synthesizing into a
+#   doc. Updates last_distill_check_ts on STATS.json.
+#
+# promote: read-only synthesis of a prompt for one bucket. Returns
+#   structured markdown that a session-side LLM (typically a subagent)
+#   reads to decide whether to call upsert-doc. Never writes docs itself.
+#
+# Both stages are deliberately separated by two decision gates: distill
+# proposes, the main session decides whether to delegate, the subagent
+# decides whether to land. See SKILL.md "Distillation Pipeline".
+
+# Tag families collapse the 26 log tags into 4 doc-shaped buckets. Tags
+# not listed here (progress, state, output, note, context, ...) are skipped
+# on purpose — they are noise-prone or already covered by other tags.
+_TAG_FAMILIES: dict[str, str] = {
+    "lesson": "lesson", "pattern": "lesson", "insight": "lesson",
+    "fix": "troubleshooting", "debug": "troubleshooting", "error": "troubleshooting",
+    "decision": "decision", "analysis": "decision", "consideration": "decision",
+    "operation": "runbook", "build": "runbook", "deploy": "runbook",
+    "commit": "runbook", "release": "runbook", "verification": "runbook",
+    "fact": "lesson",
+}
+
+
+def _read_log_entries_with_lineno(log_dir: Path) -> list[dict]:
+    """Walk log/*.jsonl and return parsed entries with `_path` and `_lineno`.
+
+    Corrupt lines and missing files are skipped silently — distill is a
+    read-only side-channel, it should never block on bad data.
+    """
+    out: list[dict] = []
+    if not log_dir.is_dir():
+        return out
+    for path in sorted(log_dir.glob("*.jsonl")):
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for lineno, raw in enumerate(lines, 1):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            entry["_path"] = str(path)
+            entry["_lineno"] = lineno
+            out.append(entry)
+    return out
+
+
+def _bucket_score(entries: list[dict]) -> float:
+    """Score a candidate bucket. Higher = more promotion-worthy.
+
+    Components:
+      - unique-files count (signal of breadth)
+      - lesson/decision-family tag ratio (signal of distilled content)
+      - average confidence (caller-provided)
+    Confidence and ratio are normalized so a 5-entry bucket with all lessons
+    at confidence 8 scores roughly the same as a 10-entry runbook bucket.
+    """
+    if not entries:
+        return 0.0
+    files: set[str] = set()
+    confidence_sum = 0.0
+    confidence_count = 0
+    high_value_count = 0
+    for e in entries:
+        for f in e.get("files") or []:
+            if isinstance(f, str) and f.strip():
+                files.add(f.strip())
+        c = e.get("confidence")
+        if isinstance(c, (int, float)) and 1 <= c <= 10:
+            confidence_sum += float(c)
+            confidence_count += 1
+        if e.get("tag") in {"lesson", "pattern", "insight", "decision", "analysis"}:
+            high_value_count += 1
+    avg_conf = (confidence_sum / confidence_count) if confidence_count else 5.0
+    high_value_ratio = high_value_count / len(entries)
+    return round(len(files) * 1.0 + high_value_ratio * 5.0 + avg_conf * 0.5, 2)
+
+
+def _suggest_doc_type(family: str) -> str:
+    return {
+        "lesson": "lesson",
+        "troubleshooting": "troubleshooting",
+        "decision": "decision-record",
+        "runbook": "runbook",
+    }.get(family, "wiki")
+
+
+def _suggest_slug(topic: str, family: str) -> str:
+    """Return a deterministic, valid doc slug for a bucket. The caller is
+    free to pick a different one when calling upsert-doc."""
+    base = f"{topic}-{family}"
+    cleaned = re.sub(r"[^a-z0-9._-]+", "-", base.lower()).strip("-")
+    return cleaned or "rollup"
+
+
+def _build_distill_buckets(
+    entries: list[dict],
+    promoted_refs: set[tuple[str, int]],
+    min_entries: int,
+    min_days: int,
+) -> list[dict]:
+    """Group entries by (topic, family), filter, score, and sort.
+
+    Returns a list of bucket dicts with: topic, family, count, day_span,
+    score, suggested_doc_type, suggested_slug, suggested_project, entries
+    (each with date, lineno, tag, confidence, files, text_preview).
+    """
+    buckets: dict[tuple[str, str], list[dict]] = {}
+    for e in entries:
+        topic = e.get("topic")
+        tag = e.get("tag")
+        # Older entries pre-date auto-routing and have no topic field. Try
+        # the same regex inference write-log would have used on creation,
+        # so historical data isn't permanently invisible to distill.
+        if not isinstance(topic, str) or not topic:
+            topic = _infer_topic_from_text(e.get("text") or "", tag or "")
+        family = _TAG_FAMILIES.get(tag or "")
+        if not topic or not family:
+            continue
+        date_str = e.get("date")
+        try:
+            line_no = int(e.get("_lineno") or 0)
+        except (TypeError, ValueError):
+            line_no = 0
+        if isinstance(date_str, str) and line_no and (date_str, line_no) in promoted_refs:
+            continue
+        buckets.setdefault((topic, family), []).append(e)
+
+    out: list[dict] = []
+    for (topic, family), bucket in buckets.items():
+        if len(bucket) < min_entries:
+            continue
+        # Compute day span: distinct YYYY-MM-DD count is more meaningful than
+        # max-min for sparse activity (5 entries on the same day shouldn't pass
+        # min_days=3).
+        dates = sorted({e.get("date") for e in bucket if isinstance(e.get("date"), str)})
+        if len(dates) < min_days:
+            continue
+        score = _bucket_score(bucket)
+        bucket_sorted = sorted(bucket, key=lambda e: (e.get("date") or "", e.get("_lineno") or 0))
+
+        # Pick the most common project as the suggested doc project, if any.
+        project_counts: dict[str, int] = {}
+        for e in bucket_sorted:
+            p = e.get("project")
+            if isinstance(p, str) and p:
+                project_counts[p] = project_counts.get(p, 0) + 1
+        suggested_project = max(project_counts.items(), key=lambda kv: kv[1])[0] if project_counts else None
+
+        out.append({
+            "topic": topic,
+            "family": family,
+            "count": len(bucket_sorted),
+            "day_span": len(dates),
+            "score": score,
+            "suggested_doc_type": _suggest_doc_type(family),
+            "suggested_slug": _suggest_slug(topic, family),
+            "suggested_project": suggested_project,
+            "entries": [
+                {
+                    "date": e.get("date"),
+                    "lineno": e.get("_lineno"),
+                    "tag": e.get("tag"),
+                    "confidence": e.get("confidence"),
+                    "files": e.get("files") or [],
+                    "text_preview": (e.get("text") or "").strip().splitlines()[0][:120] if e.get("text") else "",
+                }
+                for e in bucket_sorted
+            ],
+        })
+
+    # Sort: highest score first, then largest count, then topic alpha.
+    out.sort(key=lambda b: (-b["score"], -b["count"], b["topic"]))
+    return out
+
+
+def do_distill(scoped_root: Path, args: argparse.Namespace) -> dict:
+    """Read-only bucket analysis. Updates last_distill_check_ts."""
+    log_dir = scoped_root / "log"
+    entries = _read_log_entries_with_lineno(log_dir)
+    promoted = collect_promoted_log_refs(scoped_root)
+    min_entries = max(1, int(getattr(args, "min_entries", 3) or 3))
+    min_days = max(1, int(getattr(args, "min_days", 3) or 3))
+    buckets = _build_distill_buckets(entries, promoted, min_entries, min_days)
+
+    now_ts = datetime.now().astimezone().isoformat(timespec="seconds")
+    _bump_lifetime_stats(scoped_root, {}, sets={"last_distill_check_ts": now_ts})
+
+    return {
+        "mode": "distill",
+        "checked_at": now_ts,
+        "total_log_entries": len(entries),
+        "promoted_log_entries": len(promoted),
+        "min_entries": min_entries,
+        "min_days": min_days,
+        "buckets": buckets,
+    }
+
+
+def do_promote(scoped_root: Path, args: argparse.Namespace) -> dict:
+    """Synthesize a promote prompt for one distill bucket.
+
+    Output is structured markdown suitable for a subagent to read, decide,
+    and (if it judges the material worth landing) call upsert-doc with
+    --link-log refs to all source entries. This function never writes docs.
+
+    The ``--promote`` argument is ``TOPIC[/FAMILY]``. Bare ``TOPIC`` picks
+    the highest-scoring family with that topic. ``FAMILY`` must be one of
+    {lesson, troubleshooting, decision, runbook}.
+    """
+    raw = (args.promote or "").strip()
+    if not raw:
+        return {"mode": "promote", "error": "empty topic"}
+    if "/" in raw:
+        topic, family = raw.split("/", 1)
+        topic = topic.strip()
+        family = family.strip()
+    else:
+        topic = raw
+        family = ""
+
+    log_dir = scoped_root / "log"
+    entries = _read_log_entries_with_lineno(log_dir)
+    promoted = collect_promoted_log_refs(scoped_root)
+    min_entries = max(1, int(getattr(args, "min_entries", 3) or 3))
+    min_days = max(1, int(getattr(args, "min_days", 3) or 3))
+    buckets = _build_distill_buckets(entries, promoted, min_entries, min_days)
+
+    matching = [b for b in buckets if b["topic"] == topic and (not family or b["family"] == family)]
+    if not matching:
+        # Be helpful: list known topics so a typo is easy to spot.
+        seen_topics = sorted({b["topic"] for b in buckets})
+        return {
+            "mode": "promote",
+            "error": f"no candidate bucket for topic={topic!r}"
+                     + (f" family={family!r}" if family else ""),
+            "available_topics": seen_topics,
+        }
+    bucket = matching[0]  # already score-sorted; take the highest
+
+    prompt = _render_promote_prompt(scoped_root, bucket)
+    payload_size = len(prompt.encode("utf-8"))
+
+    return {
+        "mode": "promote",
+        "topic": bucket["topic"],
+        "family": bucket["family"],
+        "count": bucket["count"],
+        "day_span": bucket["day_span"],
+        "score": bucket["score"],
+        "suggested_doc_type": bucket["suggested_doc_type"],
+        "suggested_slug": bucket["suggested_slug"],
+        "suggested_project": bucket["suggested_project"],
+        "link_log_refs": [format_log_backlink(e["date"], e["lineno"]) for e in bucket["entries"]],
+        "prompt": prompt,
+        "prompt_bytes": payload_size,
+    }
+
+
+def _render_promote_prompt(scoped_root: Path, bucket: dict) -> str:
+    """Build the structured markdown prompt the subagent will read.
+
+    The prompt embeds full ``text`` bodies of every bucket entry (loaded
+    fresh from disk so it isn't truncated like the distill text_preview),
+    a header with bucket stats, suggested frontmatter for upsert-doc, and
+    a closing instructions block telling the subagent what to do.
+    """
+    log_dir = scoped_root / "log"
+    # Re-read full text bodies for the entries (distill only keeps a 120-char
+    # preview to keep the bucket-summary cheap).
+    by_path: dict[str, list[int]] = {}
+    for e in bucket["entries"]:
+        # We stored only date+lineno; reconstruct path from date.
+        path = log_dir / f"{e['date']}.jsonl"
+        by_path.setdefault(str(path), []).append(e["lineno"])
+    full_entries: list[dict] = []
+    for path_str, linenos in by_path.items():
+        try:
+            lines = Path(path_str).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for ln in linenos:
+            if 1 <= ln <= len(lines):
+                try:
+                    parsed = json.loads(lines[ln - 1])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    parsed["_lineno"] = ln
+                    full_entries.append(parsed)
+    full_entries.sort(key=lambda e: (e.get("date") or "", e.get("_lineno") or 0))
+
+    size_bytes = sum(len((e.get("text") or "").encode("utf-8")) for e in full_entries)
+    subagent_hint = (
+        "💡 SUBAGENT-RECOMMENDED: this prompt is "
+        f"~{max(1, size_bytes // 1024)} KB. To keep the main session lean, delegate "
+        "via Agent(subagent_type=\"general-purpose\"): the subagent reads this prompt, "
+        "decides whether the material is worth landing, and on yes calls "
+        "upsert-doc with --link-log refs to every source entry."
+    )
+
+    lines: list[str] = []
+    lines.append(f"# Distillation prompt: {bucket['topic']} / {bucket['family']}")
+    lines.append("")
+    lines.append(subagent_hint)
+    lines.append("")
+    lines.append("## Bucket")
+    lines.append(f"- topic: `{bucket['topic']}`")
+    lines.append(f"- family: `{bucket['family']}`")
+    lines.append(f"- entries: {bucket['count']} across {bucket['day_span']} day(s)")
+    lines.append(f"- score: {bucket['score']}")
+    lines.append("")
+    lines.append("## Suggested upsert-doc parameters")
+    lines.append(f"- `--doc {bucket['suggested_slug']}`")
+    lines.append(f"- `--doc-type {bucket['suggested_doc_type']}`")
+    if bucket.get("suggested_project"):
+        lines.append(f"- `--project {bucket['suggested_project']}`")
+    lines.append("- `--link-log` (one per source entry; full list at the bottom of this prompt)")
+    lines.append("")
+    lines.append("## Source log entries (full text)")
+    lines.append("")
+    for e in full_entries:
+        ts = e.get("ts") or e.get("date") or ""
+        tag = e.get("tag") or ""
+        lvl = e.get("level") or ""
+        files = ", ".join(e.get("files") or []) or "—"
+        ref = format_log_backlink(e.get("date"), int(e["_lineno"]))
+        lines.append(f"### {ref}  ·  {ts}  ·  tag={tag}  ·  level={lvl}")
+        lines.append(f"_files_: {files}")
+        lines.append("")
+        lines.append((e.get("text") or "").rstrip())
+        lines.append("")
+    lines.append("## All --link-log refs (copy verbatim into upsert-doc)")
+    lines.append("")
+    for e in full_entries:
+        lines.append(f"- `--link-log '{format_log_backlink(e.get('date'), int(e['_lineno']))}'`")
+    lines.append("")
+    lines.append("## Instructions for the subagent")
+    lines.append("")
+    lines.append(
+        "1. Read the source entries above end-to-end. They are all real operations "
+        "from this project; do not fabricate or speculate beyond what the text says."
+    )
+    lines.append(
+        "2. Decide whether they cohere into a single useful doc. If the bucket is "
+        "actually 3+ unrelated topics that share a label, return a one-line summary "
+        "explaining the mismatch and DO NOT call upsert-doc."
+    )
+    lines.append(
+        "3. If they do cohere, synthesize ONE markdown body. Match the doc-type: "
+        "`lesson` -> What we learned + When it applies; `troubleshooting` -> "
+        "Symptom / Root cause / Fix; `decision-record` -> Context / Options / "
+        "Decision / Consequences; `runbook` -> Prereqs / Steps / Verification."
+    )
+    lines.append(
+        "4. Cite each source entry inline using its `[[log:YYYY-MM-DD#L<n>]]` ref."
+    )
+    lines.append(
+        "5. Call `memory_tool.py upsert-doc --doc <slug> --text-stdin "
+        "--doc-type <type> [--project <slug>] --link-log <ref> ...` with one "
+        "`--link-log` per source entry. Pipe the synthesized body via stdin."
+    )
+    lines.append(
+        "6. Return ONLY the final doc slug + one sentence summarizing what was "
+        "written. The main session does not need to see the body."
+    )
+    return "\n".join(lines)
 
 
 def _collect_stats(config: dict | None) -> dict:
@@ -2725,6 +3241,19 @@ def cmd_search(sub: argparse._SubParsersAction) -> None:
 def cmd_maintain(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("maintain", help="Run maintenance checks and repair missing docs index entries")
     p.add_argument("--config", type=str, default=None)
+    p.add_argument("--distill", action="store_true",
+                   help="Skip audit; run distillation bucket analysis only. "
+                        "Reports candidate (topic, tag-family) buckets that have accumulated "
+                        "enough unpromoted log entries to be worth synthesizing into a doc.")
+    p.add_argument("--promote", type=str, default=None, metavar="TOPIC",
+                   help="Synthesize a promote prompt for one distill bucket. "
+                        "Format: TOPIC[/FAMILY] (e.g. 'hooks/lesson'). Bare TOPIC picks "
+                        "the highest-scoring family. Output is structured markdown on stdout; "
+                        "no docs are written — let a subagent decide and call upsert-doc.")
+    p.add_argument("--min-entries", type=int, default=3,
+                   help="Minimum entries in a bucket to qualify (default 3).")
+    p.add_argument("--min-days", type=int, default=3,
+                   help="Minimum time span in days for a bucket to qualify (default 3).")
     p.add_argument("--json", action="store_true")
 
 
@@ -2851,6 +3380,9 @@ def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
                    help="Doc body. Required unless --text-stdin is set.")
     p.add_argument("--text-stdin", action="store_true",
                    help="Read --text body from stdin instead of inline.")
+    p.add_argument("--link-log", action="append", default=None,
+                   help="Repeatable. Cite a source log entry in '## Related log entries'. "
+                        "Format: '[[log:YYYY-MM-DD#L<n>]]'. Merges with existing entries; deduped.")
     p.add_argument("--json", action="store_true")
 
 
@@ -2987,10 +3519,55 @@ def main(argv=None) -> None:
         sys.exit(2)
     if args.cmd == "status" and not args.json:
         print(_format_status(result))
+    elif args.cmd == "maintain" and result.get("mode") == "distill" and not args.json:
+        print(_format_distill(result))
+    elif args.cmd == "maintain" and result.get("mode") == "promote" and not args.json:
+        if result.get("error"):
+            print(result["error"])
+            if result.get("available_topics"):
+                print("Known topics with candidate buckets: " + ", ".join(result["available_topics"]))
+        else:
+            print(result["prompt"])
     elif args.json:
         print(json.dumps(result, ensure_ascii=False))
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _format_distill(result: dict) -> str:
+    """Format the distill bucket analysis as a compact textual summary.
+
+    Designed to be cheap to inject into SessionStart additionalContext when
+    candidates exist, and informative when run interactively for debugging.
+    """
+    lines = [
+        "using-memory distill",
+        "====================",
+        f"Checked at        : {result.get('checked_at')}",
+        f"Total log entries : {result.get('total_log_entries', 0)}",
+        f"Already promoted  : {result.get('promoted_log_entries', 0)}",
+        f"Filters           : >= {result.get('min_entries')} entries, >= {result.get('min_days')} day-span",
+        "",
+    ]
+    buckets = result.get("buckets") or []
+    if not buckets:
+        lines.append("No candidate buckets. Logs are either thin, recent, or already promoted.")
+        return "\n".join(lines)
+
+    lines.append(f"Candidate buckets ({len(buckets)})")
+    lines.append("-" * 18)
+    for b in buckets:
+        proj = f" project={b['suggested_project']}" if b.get("suggested_project") else ""
+        lines.append(
+            f"  topic={b['topic']:<16} family={b['family']:<15} "
+            f"entries={b['count']:>3} days={b['day_span']:>2} score={b['score']:>5}"
+            f"  -> doc-type={b['suggested_doc_type']} slug={b['suggested_slug']}{proj}"
+        )
+    lines.append("")
+    lines.append("Promote a bucket via subagent (general-purpose):")
+    lines.append("  memory_tool.py maintain --promote <topic>[/<family>]  # synthesize prompt")
+    lines.append("  -> subagent reads, decides, calls upsert-doc with --link-log refs")
+    return "\n".join(lines)
 
 
 def _format_status(result: dict) -> str:

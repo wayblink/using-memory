@@ -160,7 +160,9 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 
 - `load`: read memory snapshot. Key selectors: `--config`, `--date`, `--json`, `--log-from` + `--log-to`, `--log-days`, `--log-query`, `--doc` / `--doc-type` / `--doc-tag` / `--project` / `--topic` / `--doc-query`, `--anatomy` / `--cwd PATH` / `--anatomy-max-tokens N`. Returns `log_entries` as a parsed JSON list from the primary repo's configured namespace log. With `--anatomy`, also returns an `anatomy` block matched against cwd.
 - `search <query>`: full-text search across `<namespace>/docs/*.md`, `<namespace>/MEMORY.md`, and the configured namespace log. Docs and memory cover primary plus reference roots; log covers the primary root's configured namespace only. Flags: `--config`, `--log-days N`, `--no-docs`, `--no-memory`, `--no-log`, `--project` / `--topic` (repeatable; same axis is OR, different axes are AND; **scope reduces to log-only when either is set**), `--json`. Hits whose text contains `[[anatomy:slug/rel]]` references include an `anatomy_links` field with the resolved snapshot description.
-- `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, repair missing `<namespace>/docs/index.json` entries, and audit anatomy projects (per-project `stale_files` / `new_files` drift, plus `broken_log_refs` for `[[anatomy:...]]` citations whose targets no longer exist). Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
+- `maintain`: default mode scans the configured namespace log for stale `files` references and corrupt JSON lines, repairs missing `<namespace>/docs/index.json` entries, and audits anatomy projects (per-project `stale_files` / `new_files` drift, plus `broken_log_refs` for `[[anatomy:...]]` citations whose targets no longer exist). Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
+  - `maintain --distill`: read-only bucket analysis for the log-to-doc distillation pipeline. Groups unpromoted log entries by `(topic, tag-family)`, filters by `--min-entries` (default 3) and `--min-days` (default 3), scores, and returns candidate buckets ready for synthesis into a doc. Updates `last_distill_check_ts` only — never writes log or docs. See "Distillation Pipeline" below.
+  - `maintain --promote TOPIC[/FAMILY]`: read-only synthesis of one bucket. Re-reads the full source-entry bodies, attaches the suggested `--doc / --doc-type / --project` and full `--link-log` ref list, and prints a structured prompt suitable for a subagent to read, decide, and (on yes) call `upsert-doc`. Never writes docs itself.
 - `stats`: aggregate tag counts across the configured namespace log and `<namespace>/MEMORY.md`. Flags: `--config`, `--json`.
 - `status`: lifetime dashboard. Reads `<namespace>/STATS.json` (real event counters incremented by hooks and write-* commands — never estimated) plus the anatomy index, prints session counts / anatomy attaches / log writes / hook blocks / hook passthroughs plus two diagnostic ratios (`anatomy_hit_rate`, `stop_block_ratio`). Flags: `--config`, `--json` (raw dict instead of dashboard).
 - `export`: format a Markdown summary; stdout by default or `--dest FILE` to append. Flags: `--config`, `--dest`, `--json`.
@@ -172,7 +174,7 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 - `write-log`: append one primary JSONL entry. Required: `--config`, `--date`, `--tag`, `--text`. Optional: `--level detail|summary`, `--confidence 1-10`, `--source TEXT`, `--files path1 --files path2`, `--project SLUG`, `--topic SLUG`, `--cwd PATH` (override auto-routing context). When `--project` / `--topic` are omitted, they are auto-routed: project from cwd → registered anatomy slug, falling back to first matching `--files`; topic from text keywords (with `commit` / `deploy` / `release` / `build` / `test` tags short-circuiting to themselves). Allowed tags: `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context`.
 - `write-memory`: append one curated `<namespace>/MEMORY.md` entry. Required: `--config`, `--date`, `--tag`, `--text`; `write-memory` accepts only `fact`, `decision`, and `lesson`.
 - `write-preference`: append one stable `<namespace>/PREFERENCES.md` entry. Required: `--config`, `--text`.
-- `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--doc`, plus `--text` OR `--text-stdin`. Optional with auto-fallback: `--config` (env / default yaml), `--title` (first H1 in text → slug-derived), `--doc-type` (defaults to `wiki`; common: `wiki`, `lesson`, `troubleshooting`, `decision-record`, `runbook`, `SOP`, `project`), `--modified` (defaults to today). Optional metadata: `--project`, `--doc-tag`, `--summary`.
+- `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--doc`, plus `--text` OR `--text-stdin`. Optional with auto-fallback: `--config` (env / default yaml), `--title` (first H1 in text → slug-derived), `--doc-type` (defaults to `wiki`; common: `wiki`, `lesson`, `troubleshooting`, `decision-record`, `runbook`, `SOP`, `project`), `--modified` (defaults to today). Optional metadata: `--project`, `--doc-tag`, `--summary`. Optional backlinks: `--link-log '[[log:YYYY-MM-DD#L<n>]]'` (repeatable; appends/merges a `## Related log entries` section, deduped). The distillation pipeline emits one `--link-log` per source entry so promoted log entries can be filtered out on the next distill pass.
 - `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Cheap: writes a pointer into `_index.json` only and does **not** scan files. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent. The snapshot fills lazily via PostToolUse `anatomy-upsert-file` — only run `anatomy-scan` when you explicitly want a full project map.
 - `anatomy-scan <slug|root>`: full re-scan of a registered project. Opt-in heavy operation: walks every indexable file under the root and writes `<slug>.json` / `<slug>.md`. Preserves `desc_source=user` entries (refreshes their tokens/mtime/kind, does not overwrite their desc). Avoid running it on projects with large vendored / thirdparty trees — those bloat the snapshot to tens of MB.
 - `anatomy-set <slug|root> <relpath> --desc TEXT`: manually set or refine one file's description. Marks `desc_source=user` so future scans don't overwrite it.
@@ -209,6 +211,83 @@ The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `
 
 For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed). Note that `new_files` after a registration-only setup will list every indexable file under the root — that is expected; do not interpret it as drift, and do not run `anatomy-scan` just to silence it.
 
+## Distillation Pipeline
+
+A three-stage, two-gate pipeline turns repeated log buckets into curated docs. The pipeline is the only path that writes new docs from log activity, and every stage stays read-only until the very last call. The two gates ensure that no rule, hook, or subprocess can land a doc on its own — at least two LLM-in-the-loop decisions stand between a candidate bucket and a `docs/*.md` file.
+
+### Stages
+
+```
+log/*.jsonl  --[1] distill-->  candidate buckets  --[2] promote-->  prompt  --[3] upsert-doc-->  docs/*.md
+                                       ^                                ^                          ^
+                                  hook injects                   subagent reads                 only writer
+                                                                  & decides
+```
+
+1. **distill** (`maintain --distill`): read-only bucket analysis. Groups log entries by `(topic, tag-family)`, filters by `--min-entries` and `--min-days`, scores, and returns candidates. Updates `last_distill_check_ts` only.
+2. **promote** (`maintain --promote TOPIC[/FAMILY]`): read-only synthesis prompt. Re-reads source entries in full, attaches suggested upsert-doc parameters, and emits structured markdown for a subagent. Never writes.
+3. **upsert-doc** (`upsert-doc --doc <slug> --text-stdin --link-log <ref> ...`): the **only** stage that touches `docs/`. Writes the synthesized body, updates `index.json`, and merges `[[log:YYYY-MM-DD#L<n>]]` backlinks into a `## Related log entries` section.
+
+### Two decision gates
+
+- **Gate A — should this bucket be promoted?** The main-session model reads the candidate list (injected by the SessionStart / Stop hook) and decides whether to delegate. The cost of saying "not now" is one hook-injected reminder per ~100 turns; the cost of saying "yes" is spawning a subagent. The cheap default is to skip when the current task is unrelated.
+- **Gate B — does the synthesized doc deserve to land?** The subagent reads the full prompt (5–30 KB of source text), decides whether the bucket actually coheres, and on yes calls `upsert-doc`. On no it returns a one-line summary explaining the mismatch and writes nothing. This catches buckets that look related by topic but turn out to be three different things sharing a label.
+
+`docs/` cannot be written without passing both gates. The hook never calls `upsert-doc` directly; it can only inject candidates.
+
+### Tag families
+
+`distill` collapses the 26 log tags into 4 doc-shaped families. Tags not listed are skipped on purpose (noise-prone or already covered):
+
+| Family | Tags | Suggested doc-type |
+|---|---|---|
+| `lesson` | `lesson`, `pattern`, `insight`, `fact` | `lesson` |
+| `troubleshooting` | `fix`, `debug`, `error` | `troubleshooting` |
+| `decision` | `decision`, `analysis`, `consideration` | `decision-record` |
+| `runbook` | `operation`, `build`, `deploy`, `commit`, `release`, `verification` | `runbook` |
+
+When an entry lacks a `topic` field (older logs pre-date auto-routing), distill applies the same regex inference `write-log` would have used at creation time, so historical data isn't permanently invisible.
+
+### Backlinks: `[[log:YYYY-MM-DD#L<n>]]`
+
+Every doc body emitted by promote / synthesized by a subagent should cite its source log entries with `[[log:YYYY-MM-DD#L<n>]]`. The `<n>` is the 1-based line number inside the JSONL file. `upsert-doc --link-log` accepts these refs (repeatable) and merges them into a `## Related log entries` section. The merge is dedup-safe; calling upsert-doc again on the same doc with overlapping refs leaves a clean union.
+
+The distillation filter uses backlinks as the source of truth for "already promoted." A log entry with at least one `[[log:date#L<n>]]` reference in any doc is excluded from future buckets — so the same lesson cannot be promoted twice unless the user explicitly removes the backlink.
+
+### Hook trigger
+
+Both SessionStart and Stop / SubagentStop hooks call `fetch_distillation_candidates()`, which:
+
+- Reads `cumulative_human_turns` (Stop hook accumulates real human-turn deltas across sessions, idempotent) and `last_distill_inject_ts` from STATS.json.
+- Triggers when **either** `cumulative_human_turns - last_distill_inject_turn >= 100` **or** `now - last_distill_inject_ts >= 1 day`.
+- Runs `maintain --distill --json` (read-only, milliseconds), and on candidates injects a compact summary into `additionalContext` (SessionStart) or appends it to the block reason (Stop).
+- Updates `last_distill_inject_ts` and `last_distill_inject_turn` whether or not buckets were found, so an empty state doesn't make every hook re-run the subprocess.
+
+The check is cheap (no docs, no log mutations) and runs every relevant hook; only the **inject** is throttled. This keeps SessionStart fast while ensuring long sessions still get a periodic nudge.
+
+### Subagent delegation
+
+A typical promote prompt is 5–30 KB. To keep the main session lean, **delegate via `Agent(subagent_type="general-purpose")`**:
+
+```
+Agent({
+  description: "Promote hooks/lesson bucket to doc",
+  subagent_type: "general-purpose",
+  prompt: """Run `memory_tool.py maintain --promote hooks/lesson`. Read the source
+            entries, decide whether the material coheres (return only a one-line
+            summary if not). On yes, synthesize one doc body matching the
+            doc-type shape and call `upsert-doc --doc <slug> --text-stdin
+            --doc-type <type> --link-log <ref> ...`. Return only the final
+            slug + a one-sentence summary."""
+})
+```
+
+The subagent's isolated context window absorbs the source-entry payload; the main session sees only the final outcome.
+
+### Tuning
+
+Defaults are conservative: `--min-entries 3`, `--min-days 3`. Lower them to surface earlier candidates (`maintain --distill --min-entries 2 --min-days 1`); raise them to filter aggressively. The hook trigger uses `DISTILL_TURN_INTERVAL = 100` and `DISTILL_DAY_INTERVAL_SEC = 86400` in `memory_hook_common.py` — adjust those constants if a project's tempo demands more or less frequent injects.
+
 ## Health Dashboard (`status`)
 
 `<namespace>/STATS.json` is an event-driven counter file maintained by the hooks and the write-* commands. It contains real counts — no estimates, no synthetic "savings" numbers — for:
@@ -217,7 +296,7 @@ For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces
 - `log_entries_user` (write-log invocations whose `--source` is not `auto`), `log_entries_auto` (silent hook-driven summary appends)
 - `stop_blocks`, `stop_throttled_passthrough`, `precompact_blocks`
 - `cumulative_human_turns` (Stop hook accumulates real human-turn deltas across sessions; powers distillation triggers)
-- `last_distill_check_ts`, `last_distill_inject_ts`, `last_promote_ts` (timestamps used by the distillation pipeline; see Distillation Pipeline below once enabled)
+- `last_distill_check_ts`, `last_distill_inject_ts`, `last_distill_inject_turn`, `last_promote_ts` (timestamps and turn checkpoints used by the distillation pipeline; see Distillation Pipeline above)
 
 `memory_tool.py status` prints these along with two diagnostic ratios:
 
@@ -232,10 +311,10 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 
 | Event | Action |
 |---|---|
-| **SessionStart** | Inject memory-protocol reminder + anatomy snapshot for cwd (or hint when cwd is in unregistered git repo). |
+| **SessionStart** | Inject memory-protocol reminder + anatomy snapshot for cwd (or hint when cwd is in unregistered git repo) + distillation candidates when due (see Distillation Pipeline). |
 | **UserPromptSubmit** | Set per-turn flag `prompt_mentions_memory` based on memory keyword regex; emit reminder when set. Does NOT reset session-lifetime counters. |
 | **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For PostToolUse with a write/edit-style tool, additionally call `anatomy-upsert-file` on each touched path (best-effort, 8s timeout, silent on failure). |
-| **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final assistant message itself contains a memory write, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL (filtering out `tool_result` lists and synthetic `<system-reminder>` / `<command-message>` / `Stop hook feedback:` content). When `prompt_mentions_memory` OR `delta = current_turns - last_save_turn ≥ 8` AND `not memory_written`, BLOCK with the standard write-gate reason. Otherwise pass through and (best-effort) append a `level=summary tag=progress source=auto` log entry capped at one per human turn and 200 per session. |
+| **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final assistant message itself contains a memory write, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL (filtering out `tool_result` lists and synthetic `<system-reminder>` / `<command-message>` / `Stop hook feedback:` content), and accumulate the delta into `cumulative_human_turns` (idempotent). When `prompt_mentions_memory` OR `delta = current_turns - last_save_turn ≥ 8` AND `not memory_written`, BLOCK with the standard write-gate reason — and append distillation candidates to that reason when due. Otherwise pass through and (best-effort) append a `level=summary tag=progress source=auto` log entry capped at one per human turn and 200 per session. |
 | **PreCompact** | Unconditional BLOCK with a structured reason: dump current task / unfinished subgoals / key identifiers / open risks before the context window shrinks. `stop_hook_active` / `precompact_hook_active` short-circuit to `{}` to prevent loops. |
 
 The throttle threshold is `STOP_DETAIL_TURN_INTERVAL = 8` (per-turn level=summary appends are silent; once-per-eight detail blocks force a structured write).
@@ -277,7 +356,7 @@ Never write:
 
 - `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, repair missing `<namespace>/docs/index.json` entries, and audit anatomy (`stale_files` / `new_files` per project + `broken_log_refs` for dead `[[anatomy:...]]` citations).
 - `search` / `stats` / `export` are available at any time for quick overview without modifying anything.
-- Distill useful patterns from log entries into curated long-term files during light maintenance moments.
+- Distill useful patterns from log entries into curated long-term files during light maintenance moments. The automated path is `maintain --distill` -> `maintain --promote <topic>` -> subagent-driven `upsert-doc`; see "Distillation Pipeline" above for the two decision gates and trigger conditions.
 - Keep wording agent-agnostic so this skill can be used by both Codex and Claude Code without edits.
 
 ## References

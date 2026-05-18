@@ -23,6 +23,17 @@ STOP_DETAIL_TURN_INTERVAL = 8
 # the turn counter advancing.
 SUMMARY_APPEND_SESSION_CAP = 200
 
+# Distillation trigger thresholds.
+#   - DISTILL_TURN_INTERVAL: inject candidate bucket list when cumulative human
+#     turns advance by at least this many since the last inject.
+#   - DISTILL_DAY_INTERVAL_SEC: ...or when at least this much wall-clock has
+#     passed since the last inject (1 day).
+# A single check satisfying either threshold triggers an inject. Both counters
+# update only on a successful inject — the read-only check itself happens on
+# every relevant hook and never advances the throttle.
+DISTILL_TURN_INTERVAL = 100
+DISTILL_DAY_INTERVAL_SEC = 24 * 60 * 60
+
 
 MEMORY_WRITE_RE = re.compile(
     r"(memory_tool\.py\s+(write-log|write-memory|write-preference|upsert-doc)|\bwrite-log\b|\bwrite-memory\b|\bwrite-preference\b|\bupsert-doc\b)",
@@ -148,7 +159,7 @@ def memory_protocol_reminder() -> str:
     )
 
 
-def stop_gate_reason(events: list[str], last_message: str) -> str:
+def stop_gate_reason(events: list[str], last_message: str, distill_md: str | None = None) -> str:
     """Block reason for the Stop gate.
 
     Kept short on purpose. The model already has the full operation history
@@ -156,6 +167,10 @@ def stop_gate_reason(events: list[str], last_message: str) -> str:
     payloads through this reason is wasted tokens and noisy stderr for the
     user. We surface just enough signal (event count + tool kinds) for the
     model to know what to record.
+
+    When ``distill_md`` is provided, the distillation-candidate summary is
+    appended below the write-log instruction so a single block can carry
+    both signals.
     """
     count = len(events)
     if count:
@@ -172,15 +187,19 @@ def stop_gate_reason(events: list[str], last_message: str) -> str:
             if len(kinds) >= 5:
                 break
         kinds_label = ", ".join(kinds) if kinds else "operation"
-        return (
+        base = (
             f"Before stopping, run scripts/memory_tool.py write-log to record this turn: "
             f"{count} important event(s) [{kinds_label}]. Include affected files, result, "
             f"identifiers (commit/PR/deploy), verification, and unresolved risks."
         )
-    return (
-        "Before stopping, run scripts/memory_tool.py write-log to record this turn's "
-        "concrete operations, result, identifiers, verification, and unresolved risks."
-    )
+    else:
+        base = (
+            "Before stopping, run scripts/memory_tool.py write-log to record this turn's "
+            "concrete operations, result, identifiers, verification, and unresolved risks."
+        )
+    if distill_md:
+        return base + "\n\n" + distill_md
+    return base
 
 
 def precompact_gate_reason() -> str:
@@ -548,6 +567,143 @@ def fetch_session_start_anatomy(payload: dict[str, Any]) -> tuple[str | None, di
         return None, deltas
 
 
+def fetch_distillation_candidates() -> tuple[str | None, dict[str, int]]:
+    """Best-effort: call `memory_tool.py maintain --distill --json` and
+    return (markdown summary, stats_deltas) when the trigger condition is met.
+
+    The trigger is OR-style: at least DISTILL_TURN_INTERVAL cumulative human
+    turns since last inject, OR at least DISTILL_DAY_INTERVAL_SEC of wall
+    clock since last inject. distill itself is read-only and runs every
+    relevant hook; only the inject (and its STATS update) is throttled.
+
+    Returns (None, {}) when either: no candidates exist, the trigger isn't
+    due, or any subprocess error occurs.
+    """
+    try:
+        stats_path = _stats_path()
+        if not stats_path:
+            return None, {}
+        try:
+            stats = json.loads(stats_path.read_text(encoding="utf-8")) if stats_path.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            stats = {}
+        lifetime = stats.get("lifetime", {}) if isinstance(stats, dict) else {}
+        try:
+            cum_turns = int(lifetime.get("cumulative_human_turns") or 0)
+        except (TypeError, ValueError):
+            cum_turns = 0
+        try:
+            last_inject_turn = int(lifetime.get("last_distill_inject_turn") or 0)
+        except (TypeError, ValueError):
+            last_inject_turn = 0
+        last_inject_ts = lifetime.get("last_distill_inject_ts")
+
+        turn_due = (cum_turns - last_inject_turn) >= DISTILL_TURN_INTERVAL
+        time_due = False
+        if isinstance(last_inject_ts, str):
+            try:
+                last_dt = _dt.datetime.fromisoformat(last_inject_ts)
+                age = (_dt.datetime.now().astimezone() - last_dt).total_seconds()
+                time_due = age >= DISTILL_DAY_INTERVAL_SEC
+            except ValueError:
+                time_due = True  # garbage value -> retrigger to refresh
+        else:
+            time_due = True  # never injected before
+
+        if not (turn_due or time_due):
+            return None, {}
+
+        config = _resolve_memory_config()
+        if not config:
+            return None, {}
+        cmd = [
+            sys.executable or "python3",
+            _memory_tool_path(),
+            "maintain",
+            "--config", config,
+            "--distill",
+            "--json",
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=20, text=True)
+        if result.returncode != 0:
+            return None, {}
+        try:
+            data = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return None, {}
+        buckets = data.get("buckets") if isinstance(data, dict) else None
+        if not buckets:
+            # Update inject_ts even when there are no buckets, so an empty
+            # state doesn't make every hook fire the subprocess. This is a
+            # cheap rate-limiter on the read-only distill itself.
+            inject_ts = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+            return None, {
+                "_set_last_distill_inject_ts": inject_ts,
+                "_set_last_distill_inject_turn": cum_turns,
+            }
+
+        # Build a compact markdown summary. Keep it short — we don't want to
+        # blow the SessionStart additionalContext budget.
+        lines = ["## Memory distillation candidates"]
+        lines.append("")
+        lines.append(
+            f"{len(buckets)} log bucket(s) have accumulated enough material "
+            "to be worth synthesizing into docs. Promotion is your call — "
+            "the main session need not act on this now."
+        )
+        lines.append("")
+        for b in buckets[:6]:  # cap to top 6 so injection stays small
+            proj = f", project={b['suggested_project']}" if b.get("suggested_project") else ""
+            lines.append(
+                f"- **{b['topic']}/{b['family']}** — {b['count']} entries across "
+                f"{b['day_span']} day(s), score {b['score']} "
+                f"(suggested doc-type={b['suggested_doc_type']}, slug={b['suggested_slug']}{proj})"
+            )
+        if len(buckets) > 6:
+            lines.append(f"- ... and {len(buckets) - 6} more (run `maintain --distill` to see all)")
+        lines.append("")
+        lines.append(
+            "To promote a bucket, delegate to a subagent "
+            "(`Agent(subagent_type=\"general-purpose\")`) with the prompt:"
+        )
+        lines.append("")
+        lines.append(
+            "> Run `memory_tool.py maintain --promote <topic>[/<family>]`. "
+            "Read the source entries, decide whether the material coheres, "
+            "and on yes call `upsert-doc --doc <slug> --text-stdin "
+            "--doc-type <type> --link-log <ref> ...`. Return only the final "
+            "slug + a one-sentence summary."
+        )
+
+        inject_ts = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        deltas = {
+            "_set_last_distill_inject_ts": inject_ts,
+            "_set_last_distill_inject_turn": cum_turns,
+        }
+        return "\n".join(lines), deltas
+    except Exception:
+        return None, {}
+
+
+def _apply_distill_inject_stats(deltas: dict[str, Any]) -> dict[str, Any]:
+    """Split the magic `_set_*` keys (absolute writes) out of ``deltas`` and
+    apply them via bump_stats.sets. Returns the residue (counter deltas)
+    untouched so the caller can pass it to bump_stats normally.
+    """
+    sets: dict[str, Any] = {}
+    rest: dict[str, Any] = {}
+    for k, v in (deltas or {}).items():
+        if k == "_set_last_distill_inject_ts":
+            sets["last_distill_inject_ts"] = v
+        elif k == "_set_last_distill_inject_turn":
+            sets["last_distill_inject_turn"] = v
+        else:
+            rest[k] = v
+    if sets:
+        bump_stats({}, sets=sets)
+    return rest
+
+
 def silent_summary_write(payload: dict[str, Any], state: dict[str, Any], last_message: str) -> bool:
     """Best-effort: write a level=summary log entry capturing this turn's events.
 
@@ -608,11 +764,17 @@ def run(host: str) -> int:
         save_state(payload, host, state)
         reminder = memory_protocol_reminder()
         anatomy_md, anatomy_deltas = fetch_session_start_anatomy(payload)
+        distill_md, distill_deltas = fetch_distillation_candidates()
+        sections = [reminder]
         if anatomy_md:
-            context_text = f"{reminder}\n\n---\n\n{anatomy_md}"
-        else:
-            context_text = reminder
+            sections.append(anatomy_md)
+        if distill_md:
+            sections.append(distill_md)
+        context_text = "\n\n---\n\n".join(sections)
         bump_stats({"sessions": 1, **anatomy_deltas})
+        # distill_deltas carries either nothing, or the magic _set_* keys
+        # signalling we just injected (or just confirmed-no-buckets).
+        _apply_distill_inject_stats(distill_deltas)
         print(json.dumps(additional_context(event, context_text), ensure_ascii=False))
         return 0
 
@@ -690,7 +852,17 @@ def run(host: str) -> int:
         if should_gate:
             save_state(payload, host, state)
             bump_stats({"stop_blocks": 1})
-            print(json.dumps({"decision": "block", "reason": stop_gate_reason(events, last_message)}, ensure_ascii=False))
+            # Piggyback distill candidates onto the block reason when due.
+            # This is the long-session escape hatch: SessionStart caught the
+            # candidate at startup, but if the user keeps talking for hours
+            # the model needs a periodic nudge. Throttled by the same OR
+            # rule (turns OR time) so it can't spam.
+            distill_md, distill_deltas = fetch_distillation_candidates()
+            _apply_distill_inject_stats(distill_deltas)
+            print(json.dumps(
+                {"decision": "block", "reason": stop_gate_reason(events, last_message, distill_md)},
+                ensure_ascii=False,
+            ))
             return 0
 
         # Quiet path: silently append a level=summary log for substantial work
