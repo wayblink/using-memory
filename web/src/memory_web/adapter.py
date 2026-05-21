@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
+from datetime import date
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
 
 _MEMORY_TOOL: ModuleType | None = None
+
+
+class MemoryToolError(RuntimeError):
+    """Raised when memory_tool's do_* function would have sys.exit()'d.
+
+    The original stderr message is preserved as the exception message so
+    routes can surface it back to the user.
+    """
 
 
 def _skill_root() -> Path:
@@ -118,6 +129,60 @@ class MemoryAdapter:
 
     def anatomy_show(self, slug: str) -> dict:
         return self._mt.do_anatomy_show(self._ns(slug=slug, json=True))
+
+    # --- Write operations ---------------------------------------------------
+    #
+    # memory_tool.do_* functions call sys.exit(2) on validation failures and
+    # write the error message to stderr. We capture both so HTTP routes can
+    # surface a 400 with the original message instead of crashing the worker.
+
+    def _call_capturing_exits(self, fn, args: SimpleNamespace) -> dict:
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(buf):
+                return fn(args)
+        except SystemExit as exc:
+            msg = buf.getvalue().strip() or f"memory_tool exited with code {exc.code}"
+            raise MemoryToolError(msg) from None
+
+    _MEMORY_TAGS = ("fact", "decision", "lesson")
+
+    def write_memory(self, *, when: str | None, tag: str, text: str) -> dict:
+        when_str = when or date.today().isoformat()
+        ns = self._ns(date=when_str, tag=tag, text=text, json=True)
+        return self._call_capturing_exits(self._mt.do_write_memory, ns)
+
+    def write_preference(self, *, text: str) -> dict:
+        ns = self._ns(text=text, json=True)
+        return self._call_capturing_exits(self._mt.do_write_preference, ns)
+
+    def upsert_doc(
+        self,
+        *,
+        doc: str,
+        text: str,
+        title: str | None = None,
+        doc_type: str | None = None,
+        modified: str | None = None,
+        projects: list[str] | None = None,
+        doc_tags: list[str] | None = None,
+        summary: str | None = None,
+        link_logs: list[str] | None = None,
+    ) -> dict:
+        ns = self._ns(
+            doc=doc,
+            text=text,
+            text_stdin=False,
+            title=title,
+            doc_type=doc_type,
+            modified=modified,
+            project=projects or None,
+            doc_tag=doc_tags or None,
+            summary=summary,
+            link_log=link_logs or None,
+            json=True,
+        )
+        return self._call_capturing_exits(self._mt.do_upsert_doc, ns)
 
     # --- structural helpers used by routes for richer rendering -------------
 

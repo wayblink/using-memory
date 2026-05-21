@@ -374,3 +374,123 @@ mark {
 
 .small { font-size: 12.5px; color: var(--text-muted); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Cards (used by inline forms on memory/preferences pages) */
+.card {
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+}
+.card-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+  margin: 0 0 10px;
+}
+
+/* Forms */
+.entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.entry-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+.entry-form label.full { flex: 1 1 100%; }
+.entry-form input,
+.entry-form select,
+.entry-form textarea {
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  width: 100%;
+}
+.entry-form input[readonly] { background: var(--bg-soft); color: var(--text-soft); }
+.entry-form textarea {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 100px;
+}
+.entry-form button {
+  background: var(--text);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  font: inherit;
+  font-weight: 500;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.entry-form button.secondary {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+
+/* Editor tabs */
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin-top: 6px;
+}
+.editor-tabs .tab {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.editor-tabs .tab:hover { background: var(--bg-soft); }
+.editor-tabs .tab.active {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+  font-weight: 500;
+}
+.preview-pane {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  background: var(--bg);
+  min-height: 200px;
+}
+
+/* Action buttons in headers */
+.page-actions {
+  margin-left: auto;
+}
+.btn {
+  display: inline-block;
+  background: var(--text);
+  color: white;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius);
+}
+.btn:hover { text-decoration: none; opacity: 0.9; }
+.btn.secondary {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}

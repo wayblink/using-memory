@@ -6,9 +6,37 @@
   <div class="sub">Curated stable facts, confirmed decisions, durable lessons</div>
 </header>
 
+{% if error %}
+  <div class="warning">{{ error }}</div>
+{% endif %}
+
+<section class="card">
+  <h2 class="card-title">Append entry</h2>
+  <form class="entry-form" method="post" action="/memory/append">
+    <div class="row">
+      <label>Tag
+        <select name="tag" required>
+          {% for t in memory_tags %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Date
+        <input type="date" name="when" value="{{ today }}">
+      </label>
+    </div>
+    <label class="full">Text
+      <textarea name="text" rows="4" required placeholder="One stable fact / confirmed decision / durable lesson."></textarea>
+    </label>
+    <div class="row">
+      <button type="submit">Append</button>
+      <span class="small">Only <code>fact</code>, <code>decision</code>, <code>lesson</code> are allowed here.</span>
+    </div>
+  </form>
+</section>
+
 {% if missing %}
-  <div class="empty">MEMORY.md is empty or missing. Write one with <code>memory_tool.py write-memory</code>.</div>
+  <div class="empty" style="margin-top:24px;">MEMORY.md is empty. Use the form above to write your first entry.</div>
 {% else %}
+  <h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); margin:28px 0 12px;">Current content</h2>
   <div class="markdown" id="md-body"></div>
   <script id="md-source" type="text/markdown">{{ content }}</script>
 {% endif %}

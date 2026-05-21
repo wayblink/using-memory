@@ -32,6 +32,9 @@
   {% if entry.get('tags') %}<span>tags:{{ entry.tags|join(', ') }}</span>{% endif %}
   <span class="small">{{ rel }}</span>
   <a href="/docs/{{ slug }}?raw=1" class="small" style="margin-left:auto;">view source</a>
+  {% if ext == 'md' %}
+    <a href="/docs/{{ slug }}?edit=1" class="btn" style="margin-left:8px;">Edit</a>
+  {% endif %}
 </div>
 
 {% if ext == 'md' %}

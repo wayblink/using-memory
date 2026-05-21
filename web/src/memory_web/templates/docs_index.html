@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Docs · using-memory{% endblock %}
 {% block content %}
-<header class="page">
-  <h1>Docs</h1>
-  <div class="sub">
-    {{ total }} file{{ '' if total == 1 else 's' }} in <code>docs/</code>
-    {% if unregistered %} · {{ unregistered }} not in <code>index.json</code>{% endif %}
+<header class="page" style="display:flex; align-items:flex-end; gap:16px;">
+  <div>
+    <h1 style="margin:0 0 4px;">Docs</h1>
+    <div class="sub">
+      {{ total }} file{{ '' if total == 1 else 's' }} in <code>docs/</code>
+      {% if unregistered %} · {{ unregistered }} not in <code>index.json</code>{% endif %}
+    </div>
   </div>
+  <a href="/docs/new" class="btn page-actions">New doc</a>
 </header>
 
 {% if items %}

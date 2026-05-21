@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ "New doc" if mode == "new" else "Edit " ~ slug }} · using-memory{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>{{ "New document" if mode == "new" else "Edit · " ~ slug }}</h1>
+  <div class="sub">
+    {% if mode == "edit" %}
+      <a href="/docs/{{ slug }}">← back to doc</a>
+    {% else %}
+      <a href="/docs">← all docs</a>
+    {% endif %}
+  </div>
+</header>
+
+{% if error %}
+  <div class="warning">{{ error }}</div>
+{% endif %}
+
+<form class="entry-form" method="post" action="/docs/save" id="doc-form">
+  <div class="row">
+    <label>Slug
+      <input type="text" name="slug" value="{{ slug }}" required pattern="[A-Za-z0-9_\-./]+" {% if mode == "edit" %}readonly{% endif %} placeholder="my-doc-name">
+    </label>
+    <label>Type
+      <select name="doc_type">
+        {% for t in doc_types %}<option value="{{ t }}" {% if doc_type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Modified (optional)
+      <input type="date" name="modified" value="{{ modified }}">
+    </label>
+  </div>
+
+  <label class="full">Title (optional · falls back to first H1, then slug)
+    <input type="text" name="title" value="{{ title }}">
+  </label>
+
+  <div class="row">
+    <label>Projects (comma-separated)
+      <input type="text" name="projects" value="{{ projects }}">
+    </label>
+    <label>Tags (comma-separated)
+      <input type="text" name="tags" value="{{ tags }}">
+    </label>
+  </div>
+
+  <label class="full">Summary (optional)
+    <input type="text" name="summary" value="{{ summary }}">
+  </label>
+
+  <div class="editor-tabs">
+    <button type="button" id="tab-write" class="tab active">Write</button>
+    <button type="button" id="tab-preview" class="tab">Preview</button>
+    <span class="small" style="margin-left:auto;">Markdown · GFM</span>
+  </div>
+
+  <div id="pane-write">
+    <textarea name="body" id="body-input" rows="22" required spellcheck="false" placeholder="# {{ slug or 'Title' }}&#10;&#10;Body...">{{ body }}</textarea>
+  </div>
+  <div id="pane-preview" class="markdown preview-pane" style="display:none;"></div>
+
+  <div class="row" style="margin-top:14px;">
+    <button type="submit">{{ "Create" if mode == "new" else "Save" }}</button>
+    {% if mode == "edit" %}
+      <a href="/docs/{{ slug }}" class="row" style="align-self:center;"><button type="button" class="secondary">Cancel</button></a>
+    {% else %}
+      <a href="/docs" class="row" style="align-self:center;"><button type="button" class="secondary">Cancel</button></a>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+(function() {
+  const tabWrite = document.getElementById('tab-write');
+  const tabPreview = document.getElementById('tab-preview');
+  const paneWrite = document.getElementById('pane-write');
+  const panePreview = document.getElementById('pane-preview');
+  const body = document.getElementById('body-input');
+  marked.setOptions({ gfm: true, breaks: false });
+  function showWrite() {
+    tabWrite.classList.add('active'); tabPreview.classList.remove('active');
+    paneWrite.style.display = ''; panePreview.style.display = 'none';
+  }
+  function showPreview() {
+    tabPreview.classList.add('active'); tabWrite.classList.remove('active');
+    panePreview.innerHTML = marked.parse(body.value || '');
+    paneWrite.style.display = 'none'; panePreview.style.display = '';
+  }
+  tabWrite.addEventListener('click', showWrite);
+  tabPreview.addEventListener('click', showPreview);
+})();
+</script>
+{% endblock %}

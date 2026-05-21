@@ -1,8 +1,8 @@
 # memory-web
 
-Local web browser for the [using-memory](..) skill. Read-only v0.1 — browse
-log entries, docs (markdown + HTML), `MEMORY.md`, `PREFERENCES.md`, anatomy
-snapshots, and run full-text search across them.
+Local web browser + lightweight editor for the [using-memory](..) skill.
+v0.4 — browse and edit log entries, docs (markdown + HTML), `MEMORY.md`,
+`PREFERENCES.md`, anatomy snapshots, and run full-text search across them.
 
 ## Install
 
@@ -15,8 +15,9 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Dependencies pulled in: `fastapi`, `uvicorn`, `jinja2`, `PyYAML`. No npm /
-build step — the markdown renderer (`marked`) is loaded from a CDN at runtime.
+Dependencies pulled in: `fastapi`, `uvicorn`, `jinja2`, `python-multipart`,
+`PyYAML`. No npm / build step — the markdown renderer (`marked`) is loaded
+from a CDN at runtime.
 
 ## Run
 
@@ -40,10 +41,15 @@ configured primary repo + namespace.
 | `/logs` | JSONL log entries with date / tag / level / source / project / topic filters |
 | `/search?q=…` | Full-text across docs, `MEMORY.md`, and the configured log window |
 | `/docs` | Every `.md` and `.html` file under `<ns>/docs/`, grouped by type |
+| `/docs/new` | Empty editor for a new `.md` doc |
 | `/docs/<slug>` | Single document rendered (see below) |
+| `/docs/<slug>?edit=1` | Editor for an existing `.md` doc |
 | `/docs/<slug>?raw=1` | Source text (`text/markdown` for `.md`, `text/plain` for `.html`) |
-| `/memory` | `MEMORY.md` rendered |
-| `/preferences` | `PREFERENCES.md` rendered |
+| `POST /docs/save` | Upsert one doc via `memory_tool.upsert-doc` |
+| `/memory` | `MEMORY.md` rendered, plus an Append-entry form (`fact` / `decision` / `lesson`) |
+| `POST /memory/append` | Append via `memory_tool.write-memory` |
+| `/preferences` | `PREFERENCES.md` rendered, plus an Append-preference form |
+| `POST /preferences/append` | Append via `memory_tool.write-preference` |
 | `/anatomy` | Registered anatomy projects |
 | `/anatomy/<slug>` | File-level snapshot for one project |
 
@@ -87,12 +93,30 @@ Implementation notes:
 - Markdown / HTML viewing both go through the same `/docs/<slug>` route;
   the template branches on file extension.
 
-## v0.1 scope
+## Editing
 
-Read-only across all dimensions. Editing (`write-memory`,
-`write-preference`, `upsert-doc`) is planned for v0.4. Manual triggers for
-`maintain` / `distill` / `promote` are planned for v0.5. See SKILL.md for
-the broader using-memory roadmap.
+v0.4 wraps three `memory_tool.py` write commands behind small forms:
+
+- `write-memory` → MEMORY.md append form. Tag is constrained to
+  `fact` / `decision` / `lesson` (the only values `memory_tool` accepts).
+- `write-preference` → PREFERENCES.md append form.
+- `upsert-doc` → full doc editor (new / edit). Title / type / projects /
+  tags / summary / body are all wired. The body is a textarea with a
+  Write / Preview toggle that renders via the same `marked.js` pipeline.
+
+All three flow through the adapter, so STATS counters and `docs/index.json`
+stay consistent with the CLI. Validation failures (e.g. wrong tag,
+disallowed slug) are captured from `memory_tool`'s stderr and surfaced as a
+warning instead of crashing the worker.
+
+HTML docs stay read-only — `memory_tool.upsert-doc` is markdown-only by
+design.
+
+## v0.4 scope
+
+Browse + light editing. Manual triggers for `maintain` / `distill` /
+`promote` are planned for v0.5. See SKILL.md for the broader using-memory
+roadmap.
 
 ## Stopping the server
 
