@@ -20,13 +20,60 @@ DOC_TYPES = (
 
 
 @router.get("/docs", response_class=HTMLResponse, name="docs_index")
-def docs_index(request: Request) -> HTMLResponse:
+def docs_index(
+    request: Request,
+    type: str | None = None,
+    format: str | None = None,
+    project: str | None = None,
+    tag: str | None = None,
+    q: str | None = None,
+    indexed: str | None = None,
+) -> HTMLResponse:
     adapter = request.app.state.adapter
     templates = request.app.state.templates
 
     items = adapter.list_docs()
+
+    # Build available-value lists from the full doc set (before filtering)
+    # so dropdowns reflect what exists on disk, not what survived a filter.
+    available_types = sorted({(i.get("type") or "wiki") for i in items})
+    available_projects = sorted({p for i in items for p in (i.get("projects") or [])})
+    available_tags = sorted({t for i in items for t in (i.get("tags") or [])})
+
+    # Normalize empty form values.
+    type = (type or "").strip() or None
+    format = (format or "").strip() or None
+    project = (project or "").strip() or None
+    tag = (tag or "").strip() or None
+    q = (q or "").strip() or None
+    indexed_flag = (indexed or "").strip() or None  # "yes" | "no" | None
+
+    filtered = items
+    if type:
+        filtered = [i for i in filtered if (i.get("type") or "wiki") == type]
+    if format:
+        filtered = [i for i in filtered if i.get("ext") == format]
+    if project:
+        filtered = [i for i in filtered if project in (i.get("projects") or [])]
+    if tag:
+        filtered = [i for i in filtered if tag in (i.get("tags") or [])]
+    if indexed_flag == "yes":
+        filtered = [i for i in filtered if i.get("in_index")]
+    elif indexed_flag == "no":
+        filtered = [i for i in filtered if not i.get("in_index")]
+    if q:
+        needle = q.lower()
+        def _hay(i: dict) -> str:
+            return " ".join(filter(None, [
+                i.get("title") or "",
+                i.get("slug") or "",
+                i.get("rel") or "",
+                i.get("summary") or "",
+            ])).lower()
+        filtered = [i for i in filtered if needle in _hay(i)]
+
     by_type: dict[str, list[dict]] = {}
-    for item in items:
+    for item in filtered:
         by_type.setdefault(item.get("type") or "wiki", []).append(item)
     for k in by_type:
         by_type[k].sort(key=lambda e: (e.get("title") or e.get("rel") or "").lower())
@@ -36,10 +83,22 @@ def docs_index(request: Request) -> HTMLResponse:
         "docs_index.html",
         {
             "page": "docs",
-            "items": items,
+            "items": filtered,
             "by_type": dict(sorted(by_type.items())),
-            "total": len(items),
-            "unregistered": sum(1 for i in items if not i.get("in_index")),
+            "total": len(filtered),
+            "grand_total": len(items),
+            "unregistered": sum(1 for i in filtered if not i.get("in_index")),
+            "available_types": available_types,
+            "available_projects": available_projects,
+            "available_tags": available_tags,
+            "selected": {
+                "type": type or "",
+                "format": format or "",
+                "project": project or "",
+                "tag": tag or "",
+                "q": q or "",
+                "indexed": indexed_flag or "",
+            },
         },
     )
 

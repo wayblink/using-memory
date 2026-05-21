@@ -28,15 +28,11 @@ def anatomy_show(request: Request, slug: str) -> HTMLResponse:
     adapter = request.app.state.adapter
     templates = request.app.state.templates
 
-    try:
-        data = adapter.anatomy_show(slug)
-    except SystemExit:
-        # memory_tool.do_anatomy_show may sys.exit on unknown slug; defensive.
-        raise HTTPException(status_code=404, detail=f"anatomy not found: {slug}")
+    data = adapter.anatomy_show(slug)
     if not data:
         raise HTTPException(status_code=404, detail=f"anatomy not found: {slug}")
 
-    files = (data.get("files") or {}) if isinstance(data, dict) else {}
+    files = data.get("files") or {}
     file_rows = []
     if isinstance(files, dict):
         for rel, info in sorted(files.items()):

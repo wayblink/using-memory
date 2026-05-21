@@ -1,37 +1,44 @@
 {% extends "base.html" %}
-{% block title %}Search · using-memory{% endblock %}
+{% block title %}{{ t('search.title') }} · {{ t('brand') }}{% endblock %}
 {% block content %}
 <header class="page">
-  <h1>Search</h1>
-  <div class="sub">Full-text across docs, MEMORY.md, and the configured log window</div>
+  <h1>{{ t('search.title') }}</h1>
+  <div class="sub">{{ t('search.sub') }}</div>
 </header>
 
-<form class="filters" method="get" action="/search">
-  <label style="flex: 2 1 320px;">Query
-    <input type="text" name="q" value="{{ q }}" placeholder="search term" autofocus>
+<form class="filters search-filters" method="get" action="/search">
+  <label class="search-q-field">{{ t('search.form.q') }}
+    <input type="text" name="q" value="{{ q }}" placeholder="{{ t('search.form.q.placeholder') }}" autofocus class="search-input">
   </label>
-  <label>Log days
-    <input type="number" name="log_days" min="1" max="365" value="{{ log_days }}">
-  </label>
-  <label>Scope
-    <select name="scope" multiple size="3" style="min-width:120px;">
-      <option value="docs" {% if 'docs' in scope %}selected{% endif %}>docs</option>
-      <option value="memory" {% if 'memory' in scope %}selected{% endif %}>memory</option>
-      <option value="log" {% if 'log' in scope %}selected{% endif %}>log</option>
+  <label class="search-select-field">{{ t('search.form.scope') }}
+    <select name="scope">
+      <option value="all" {% if scope_value == 'all' %}selected{% endif %}>{{ t('search.form.scope_value.all') }}</option>
+      <option value="docs" {% if scope_value == 'docs' %}selected{% endif %}>{{ t('search.form.scope_value.docs') }}</option>
+      <option value="memory" {% if scope_value == 'memory' %}selected{% endif %}>{{ t('search.form.scope_value.memory') }}</option>
+      <option value="log" {% if scope_value == 'log' %}selected{% endif %}>{{ t('search.form.scope_value.log') }}</option>
     </select>
   </label>
-  <button type="submit">Search</button>
+  <label class="search-select-field">{{ t('search.form.time_range') }}
+    <select name="log_days">
+      <option value="7" {% if log_days == 7 %}selected{% endif %}>{{ t('search.form.time_range.7d') }}</option>
+      <option value="30" {% if log_days == 30 %}selected{% endif %}>{{ t('search.form.time_range.30d') }}</option>
+      <option value="90" {% if log_days == 90 %}selected{% endif %}>{{ t('search.form.time_range.90d') }}</option>
+      <option value="180" {% if log_days == 180 %}selected{% endif %}>{{ t('search.form.time_range.180d') }}</option>
+      <option value="365" {% if log_days == 365 %}selected{% endif %}>{{ t('search.form.time_range.365d') }}</option>
+    </select>
+  </label>
+  <button type="submit" class="search-submit">{{ t('search.form.submit') }}</button>
 </form>
 
 {% if q %}
   {% if results %}
-    {% set doc_hits = grouped.get('doc', []) %}
+    {% set doc_hits = grouped.get('docs', []) %}
     {% set memory_hits = grouped.get('memory', []) %}
     {% set log_hits = grouped.get('log', []) %}
-    <p class="small">{{ total }} hit{{ '' if total == 1 else 's' }} · {{ doc_hits|length }} docs · {{ memory_hits|length }} memory · {{ log_hits|length }} log</p>
+    <p class="small results-summary">{{ t('search.results.summary', total=total, s='' if total == 1 else 's', d=doc_hits|length, m=memory_hits|length, l=log_hits|length) }}</p>
 
     {% if doc_hits %}
-      <h2 style="margin-top:24px;">Docs</h2>
+      <h2 class="results-section"><span class="chip-dot dot-docs"></span>{{ t('search.section.docs') }} <span class="results-count">{{ doc_hits|length }}</span></h2>
       {% for h in doc_hits %}
         <div class="search-result-block">
           <h3>{{ h.get('title') or h.get('path') }}</h3>
@@ -44,7 +51,7 @@
     {% endif %}
 
     {% if memory_hits %}
-      <h2 style="margin-top:24px;">MEMORY.md</h2>
+      <h2 class="results-section"><span class="chip-dot dot-memory"></span>{{ t('search.section.memory') }} <span class="results-count">{{ memory_hits|length }}</span></h2>
       {% for h in memory_hits %}
         <div class="search-result-block">
           <div class="small">{{ h.get('path') }}{% if h.get('line') %} · line {{ h.line }}{% endif %}</div>
@@ -56,7 +63,7 @@
     {% endif %}
 
     {% if log_hits %}
-      <h2 style="margin-top:24px;">Log</h2>
+      <h2 class="results-section"><span class="chip-dot dot-log"></span>{{ t('search.section.log') }} <span class="results-count">{{ log_hits|length }}</span></h2>
       {% for h in log_hits %}
         <div class="search-result-block">
           <div class="small">
@@ -79,10 +86,13 @@
     {% endif %}
 
     {% if not (doc_hits or memory_hits or log_hits) %}
-      <div class="empty">No hits.</div>
+      <div class="empty">{{ t('search.empty') }}</div>
     {% endif %}
   {% endif %}
 {% else %}
-  <div class="empty">Enter a query above to search across docs, memory, and the log.</div>
+  <div class="empty search-empty">
+    <div>{{ t('search.placeholder') }}</div>
+    <div class="small" style="margin-top:10px;">{{ t('search.placeholder.suggest') }}</div>
+  </div>
 {% endif %}
 {% endblock %}

@@ -24,6 +24,20 @@ def logs(
     adapter = request.app.state.adapter
     templates = request.app.state.templates
 
+    # Empty form fields submit as "" — treat those as "no filter" so the
+    # form's "all" option behaves as expected. (Without this, ?tag= would
+    # set tag=[""] and filter every entry out, which is what users hit
+    # when they cleared a filter via the form.)
+    def _clean_list(values: list[str] | None) -> list[str]:
+        return [v for v in (values or []) if v]
+
+    tag = _clean_list(tag)
+    project = _clean_list(project)
+    topic = _clean_list(topic)
+    level = (level or "").strip() or None
+    source = (source or "").strip() or None
+    q = (q or "").strip() or None
+
     # Default window: last 7 days when nothing else is set.
     if not (log_from or log_to or days):
         days = 7
@@ -33,8 +47,8 @@ def logs(
         log_to=log_to,
         log_days=days,
         log_query=q,
-        projects=project,
-        topics=topic,
+        projects=project or None,
+        topics=topic or None,
     )
     entries = list(snapshot.get("log_entries", []))
 
@@ -66,11 +80,11 @@ def logs(
                 "to": log_to,
                 "days": days,
                 "q": q or "",
-                "tags": tag or [],
+                "tags": tag,
                 "level": level or "",
                 "source": source or "",
-                "projects": project or [],
-                "topics": topic or [],
+                "projects": project,
+                "topics": topic,
             },
             "available_tags": available_tags,
             "available_topics": available_topics,

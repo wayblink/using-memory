@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Dashboard · using-memory{% endblock %}
+{% block title %}{{ t('dashboard.title') }} · {{ t('brand') }}{% endblock %}
 {% block content %}
 <header class="page">
-  <h1>Dashboard</h1>
-  <div class="sub">Lifetime stats and project overview · last event {{ last_event_ts or '(never)' }}</div>
+  <h1>{{ t('dashboard.title') }}</h1>
+  <div class="sub">{{ t('dashboard.sub', ts=last_event_ts or t('dashboard.never')) }}</div>
 </header>
 
 {% if warnings %}
@@ -12,78 +12,78 @@
   {% endfor %}
 {% endif %}
 
-<h2 class="section-label">Lifetime counters</h2>
+<h2 class="section-label">{{ t('dashboard.lifetime_counters') }}</h2>
 <section class="stat-grid">
   <div class="stat">
-    <div class="label">Sessions</div>
+    <div class="label">{{ t('dashboard.card.sessions') }}</div>
     <div class="value">{{ lifetime.get('sessions', 0) }}</div>
-    <div class="hint">SessionStart hook invocations</div>
+    <div class="hint">{{ t('dashboard.card.sessions.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">Cumulative turns</div>
+    <div class="label">{{ t('dashboard.card.cumulative_turns') }}</div>
     <div class="value">{{ lifetime.get('cumulative_human_turns', 0) }}</div>
-    <div class="hint">across all sessions</div>
+    <div class="hint">{{ t('dashboard.card.cumulative_turns.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">Log entries total</div>
+    <div class="label">{{ t('dashboard.card.log_total') }}</div>
     <div class="value">{{ log_total }}</div>
-    <div class="hint">all JSONL entries on disk</div>
+    <div class="hint">{{ t('dashboard.card.log_total.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">MEMORY.md entries</div>
+    <div class="label">{{ t('dashboard.card.memory_total') }}</div>
     <div class="value">{{ memory_total }}</div>
-    <div class="hint">curated facts/decisions/lessons</div>
+    <div class="hint">{{ t('dashboard.card.memory_total.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">Log entries (user)</div>
+    <div class="label">{{ t('dashboard.card.log_user') }}</div>
     <div class="value">{{ lifetime.get('log_entries_user', 0) }}</div>
-    <div class="hint">explicit write-log calls</div>
+    <div class="hint">{{ t('dashboard.card.log_user.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">Log entries (auto)</div>
+    <div class="label">{{ t('dashboard.card.log_auto') }}</div>
     <div class="value">{{ lifetime.get('log_entries_auto', 0) }}</div>
-    <div class="hint">silent Stop-hook summaries</div>
+    <div class="hint">{{ t('dashboard.card.log_auto.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">Anatomy projects</div>
+    <div class="label">{{ t('dashboard.card.anatomy_projects') }}</div>
     <div class="value">{{ anatomy_count }}</div>
-    <div class="hint">registered roots</div>
+    <div class="hint">{{ t('dashboard.card.anatomy_projects.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">Anatomy attached</div>
+    <div class="label">{{ t('dashboard.card.anatomy_attached') }}</div>
     <div class="value">{{ lifetime.get('anatomy_attached_count', 0) }}</div>
-    <div class="hint">hit rate {{ '%.0f' % ((ratios.get('anatomy_hit_rate') or 0) * 100) }}%</div>
+    <div class="hint">{{ t('dashboard.card.anatomy_attached.hint', pct='%.0f' % ((ratios.get('anatomy_hit_rate') or 0) * 100)) }}</div>
   </div>
   <div class="stat">
-    <div class="label">Anatomy upserts</div>
+    <div class="label">{{ t('dashboard.card.anatomy_upserts') }}</div>
     <div class="value">{{ lifetime.get('anatomy_upserts', 0) }}</div>
-    <div class="hint">PostToolUse incrementals</div>
+    <div class="hint">{{ t('dashboard.card.anatomy_upserts.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">Stop blocks</div>
+    <div class="label">{{ t('dashboard.card.stop_blocks') }}</div>
     <div class="value">{{ lifetime.get('stop_blocks', 0) }}</div>
-    <div class="hint">block ratio {{ '%.0f' % ((ratios.get('stop_block_ratio') or 0) * 100) }}%</div>
+    <div class="hint">{{ t('dashboard.card.stop_blocks.hint', pct='%.0f' % ((ratios.get('stop_block_ratio') or 0) * 100)) }}</div>
   </div>
   <div class="stat">
-    <div class="label">Stop passthroughs</div>
+    <div class="label">{{ t('dashboard.card.stop_passthroughs') }}</div>
     <div class="value">{{ lifetime.get('stop_throttled_passthrough', 0) }}</div>
-    <div class="hint">silent summary appended</div>
+    <div class="hint">{{ t('dashboard.card.stop_passthroughs.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">PreCompact saves</div>
+    <div class="label">{{ t('dashboard.card.precompact') }}</div>
     <div class="value">{{ lifetime.get('precompact_blocks', 0) }}</div>
-    <div class="hint">emergency context dumps</div>
+    <div class="hint">{{ t('dashboard.card.precompact.hint') }}</div>
   </div>
 </section>
 
 <div class="two-col">
   <section>
-    <h2 class="section-label">Log tags · {{ log_total }} entries</h2>
+    <h2 class="section-label">{{ t('dashboard.log_tags', n=log_total) }}</h2>
     {% if log_tags %}
       <div class="bar-list">
         {% for row in log_tags %}
           {% set pct = (row.count * 100 / log_max) if log_max else 0 %}
-          <a class="bar-row" href="/logs?days=180&amp;tag={{ row.tag }}" title="Filter logs by tag={{ row.tag }}">
+          <a class="bar-row" href="/logs?days=180&amp;tag={{ row.tag }}" title="filter logs by tag={{ row.tag }}">
             <span class="bar-label">{{ row.tag }}</span>
             <span class="bar-track"><span class="bar-fill" style="width: {{ '%.1f' % pct }}%;"></span></span>
             <span class="bar-count">{{ row.count }}</span>
@@ -91,12 +91,12 @@
         {% endfor %}
       </div>
     {% else %}
-      <div class="empty">No log entries yet.</div>
+      <div class="empty">{{ t('dashboard.empty.log') }}</div>
     {% endif %}
   </section>
 
   <section>
-    <h2 class="section-label">MEMORY.md tags · {{ memory_total }} entries</h2>
+    <h2 class="section-label">{{ t('dashboard.memory_tags', n=memory_total) }}</h2>
     {% if memory_tags %}
       <div class="bar-list">
         {% for row in memory_tags %}
@@ -109,12 +109,12 @@
         {% endfor %}
       </div>
     {% else %}
-      <div class="empty">No MEMORY.md entries yet.</div>
+      <div class="empty">{{ t('dashboard.empty.memory') }}</div>
     {% endif %}
   </section>
 </div>
 
-<h2 class="section-label" style="margin-top:28px;">Anatomy projects · {{ anatomy_count }}</h2>
+<h2 class="section-label" style="margin-top:28px;">{{ t('dashboard.anatomy_projects', n=anatomy_count) }}</h2>
 {% if anatomy_projects %}
 <ul class="docs-list">
   {% for p in anatomy_projects %}
@@ -125,6 +125,6 @@
   {% endfor %}
 </ul>
 {% else %}
-<div class="empty">No anatomy projects registered.</div>
+<div class="empty">{{ t('dashboard.empty.anatomy') }}</div>
 {% endif %}
 {% endblock %}

@@ -1,16 +1,66 @@
 {% extends "base.html" %}
-{% block title %}Docs · using-memory{% endblock %}
+{% block title %}{{ t('docs.title') }} · {{ t('brand') }}{% endblock %}
 {% block content %}
 <header class="page" style="display:flex; align-items:flex-end; gap:16px;">
   <div>
-    <h1 style="margin:0 0 4px;">Docs</h1>
+    <h1 style="margin:0 0 4px;">{{ t('docs.title') }}</h1>
     <div class="sub">
-      {{ total }} file{{ '' if total == 1 else 's' }} in <code>docs/</code>
-      {% if unregistered %} · {{ unregistered }} not in <code>index.json</code>{% endif %}
+      {% if total == grand_total %}
+        {{ t('docs.sub', n=total, s='' if total == 1 else 's') }}
+      {% else %}
+        {{ t('docs.sub.filtered', n=total, total=grand_total, s='' if total == 1 else 's') }}
+      {% endif %}
+      {% if unregistered %}{{ t('docs.sub.unindexed', n=unregistered) }}{% endif %}
     </div>
   </div>
-  <a href="/docs/new" class="btn page-actions">New doc</a>
+  <a href="/docs/new" class="btn page-actions">{{ t('docs.new') }}</a>
 </header>
+
+<form class="filters" method="get" action="/docs">
+  <label>{{ t('docs.filter.type') }}
+    <select name="type">
+      <option value="">{{ t('common.all') }}</option>
+      {% for ty in available_types %}
+        <option value="{{ ty }}" {% if selected['type'] == ty %}selected{% endif %}>{{ ty }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>{{ t('docs.filter.format') }}
+    <select name="format">
+      <option value="">{{ t('common.all') }}</option>
+      <option value="md" {% if selected['format'] == 'md' %}selected{% endif %}>md</option>
+      <option value="html" {% if selected['format'] == 'html' %}selected{% endif %}>html</option>
+    </select>
+  </label>
+  <label>{{ t('docs.filter.project') }}
+    <select name="project">
+      <option value="">{{ t('common.all') }}</option>
+      {% for p in available_projects %}
+        <option value="{{ p }}" {% if selected['project'] == p %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>{{ t('docs.filter.tag') }}
+    <select name="tag">
+      <option value="">{{ t('common.all') }}</option>
+      {% for tg in available_tags %}
+        <option value="{{ tg }}" {% if selected['tag'] == tg %}selected{% endif %}>{{ tg }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>{{ t('docs.filter.indexed') }}
+    <select name="indexed">
+      <option value="">{{ t('common.all') }}</option>
+      <option value="yes" {% if selected['indexed'] == 'yes' %}selected{% endif %}>{{ t('docs.filter.indexed.yes') }}</option>
+      <option value="no" {% if selected['indexed'] == 'no' %}selected{% endif %}>{{ t('docs.filter.indexed.no') }}</option>
+    </select>
+  </label>
+  <label style="flex:2 1 220px;">{{ t('docs.filter.q') }}
+    <input type="text" name="q" value="{{ selected['q'] }}" placeholder="{{ t('docs.filter.q.placeholder') }}">
+  </label>
+  <button type="submit">{{ t('common.apply') }}</button>
+  <a class="row" href="/docs" style="align-self:end;"><button type="button" class="secondary">{{ t('common.reset') }}</button></a>
+</form>
 
 {% if items %}
   {% for type, group in by_type.items() %}
@@ -22,14 +72,14 @@
             <div class="title">
               <a href="/docs/{{ it.slug }}">{{ it.title }}</a>
               <span class="tag tag-ext-{{ it.ext }}" style="margin-left:8px;">{{ it.ext }}</span>
-              {% if not it.in_index %}<span class="tag" style="margin-left:4px;" title="present on disk but not registered in docs/index.json">unindexed</span>{% endif %}
+              {% if not it.in_index %}<span class="tag" style="margin-left:4px;" title="{{ t('docs.unindexed_badge') }}">{{ t('docs.unindexed_badge') }}</span>{% endif %}
             </div>
             <div class="meta">
               {{ it.rel }}
-              {% if it.modified %} · modified {{ it.modified }}{% endif %}
-              {% if it.projects %} · project:{{ it.projects|join(', ') }}{% endif %}
-              {% if it.tags %} · tags:{{ it.tags|join(', ') }}{% endif %}
-              · {{ it.size }} bytes
+              {% if it.modified %} · {{ t('docs.meta.modified') }} {{ it.modified }}{% endif %}
+              {% if it.projects %} · {{ t('docs.meta.project') }}:{{ it.projects|join(', ') }}{% endif %}
+              {% if it.tags %} · {{ t('docs.meta.tags') }}:{{ it.tags|join(', ') }}{% endif %}
+              · {{ it.size }} {{ t('docs.meta.bytes') }}
             </div>
             {% if it.summary %}<div class="meta" style="margin-top:4px; color: var(--text-soft);">{{ it.summary }}</div>{% endif %}
           </li>
@@ -37,7 +87,9 @@
       </ul>
     </section>
   {% endfor %}
+{% elif grand_total > 0 %}
+  <div class="empty">{{ t('docs.empty.filtered') }}</div>
 {% else %}
-  <div class="empty">No docs in <code>docs/</code>. Write one with <code>memory_tool.py upsert-doc</code> or drop an <code>.html</code> file in there.</div>
+  <div class="empty">{{ t('docs.empty') }}</div>
 {% endif %}
 {% endblock %}

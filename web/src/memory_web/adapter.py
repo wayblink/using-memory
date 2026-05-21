@@ -127,8 +127,24 @@ class MemoryAdapter:
     def anatomy_list(self) -> dict:
         return self._mt.do_anatomy_list(self._ns(json=True))
 
-    def anatomy_show(self, slug: str) -> dict:
-        return self._mt.do_anatomy_show(self._ns(slug=slug, json=True))
+    def anatomy_show(self, slug: str) -> dict | None:
+        """Return the structured anatomy JSON for one project.
+
+        memory_tool.do_anatomy_show returns the rendered markdown text only
+        (slug / md_path / content), which is fine for SessionStart attach but
+        useless for the web UI's file table. We read the .json source of
+        truth directly so routes can render rows with desc / kind / tokens.
+        """
+        root = self.primary_root()
+        if root is None:
+            return None
+        json_path = root / "anatomy" / f"{slug}.json"
+        if not json_path.exists():
+            return None
+        try:
+            return json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
 
     # --- Write operations ---------------------------------------------------
     #

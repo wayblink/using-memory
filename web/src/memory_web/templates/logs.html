@@ -1,65 +1,65 @@
 {% extends "base.html" %}
-{% block title %}Logs · using-memory{% endblock %}
+{% block title %}{{ t('logs.title') }} · {{ t('brand') }}{% endblock %}
 {% block content %}
 <header class="page">
-  <h1>Logs</h1>
-  <div class="sub">{{ total }} entries · sorted newest first</div>
+  <h1>{{ t('logs.title') }}</h1>
+  <div class="sub">{{ t('logs.sub', n=total) }}</div>
 </header>
 
 <form class="filters" method="get" action="/logs">
-  <label>From
+  <label>{{ t('logs.form.from') }}
     <input type="date" name="from" value="{{ selected['from'] or '' }}">
   </label>
-  <label>To
+  <label>{{ t('logs.form.to') }}
     <input type="date" name="to" value="{{ selected['to'] or '' }}">
   </label>
-  <label>Days
+  <label>{{ t('logs.form.days') }}
     <input type="number" name="days" min="1" max="365" value="{{ selected['days'] or '' }}" placeholder="7">
   </label>
-  <label>Text contains
-    <input type="text" name="q" value="{{ selected['q'] }}" placeholder="substring">
+  <label>{{ t('logs.form.q') }}
+    <input type="text" name="q" value="{{ selected['q'] }}" placeholder="{{ t('logs.form.q.placeholder') }}">
   </label>
-  <label>Tag
+  <label>{{ t('logs.form.tag') }}
     <select name="tag">
-      <option value="">all</option>
-      {% for t in available_tags %}
-        <option value="{{ t }}" {% if t in selected['tags'] %}selected{% endif %}>{{ t }}</option>
+      <option value="">{{ t('common.all') }}</option>
+      {% for tg in available_tags %}
+        <option value="{{ tg }}" {% if tg in selected['tags'] %}selected{% endif %}>{{ tg }}</option>
       {% endfor %}
     </select>
   </label>
-  <label>Level
+  <label>{{ t('logs.form.level') }}
     <select name="level">
-      <option value="">all</option>
+      <option value="">{{ t('common.all') }}</option>
       <option value="detail" {% if selected['level'] == 'detail' %}selected{% endif %}>detail</option>
       <option value="summary" {% if selected['level'] == 'summary' %}selected{% endif %}>summary</option>
     </select>
   </label>
-  <label>Source
+  <label>{{ t('logs.form.source') }}
     <select name="source">
-      <option value="">all</option>
+      <option value="">{{ t('common.all') }}</option>
       <option value="user" {% if selected['source'] == 'user' %}selected{% endif %}>user</option>
       <option value="auto" {% if selected['source'] == 'auto' %}selected{% endif %}>auto</option>
       <option value="observed" {% if selected['source'] == 'observed' %}selected{% endif %}>observed</option>
     </select>
   </label>
-  <label>Project
+  <label>{{ t('logs.form.project') }}
     <select name="project">
-      <option value="">all</option>
+      <option value="">{{ t('common.all') }}</option>
       {% for p in available_projects %}
         <option value="{{ p }}" {% if p in selected['projects'] %}selected{% endif %}>{{ p }}</option>
       {% endfor %}
     </select>
   </label>
-  <label>Topic
+  <label>{{ t('logs.form.topic') }}
     <select name="topic">
-      <option value="">all</option>
-      {% for t in available_topics %}
-        <option value="{{ t }}" {% if t in selected['topics'] %}selected{% endif %}>{{ t }}</option>
+      <option value="">{{ t('common.all') }}</option>
+      {% for tp in available_topics %}
+        <option value="{{ tp }}" {% if tp in selected['topics'] %}selected{% endif %}>{{ tp }}</option>
       {% endfor %}
     </select>
   </label>
-  <button type="submit">Apply</button>
-  <a class="row" href="/logs" style="align-self:end;"><button type="button" class="secondary">Reset</button></a>
+  <button type="submit">{{ t('common.apply') }}</button>
+  <a class="row" href="/logs" style="align-self:end;"><button type="button" class="secondary">{{ t('common.reset') }}</button></a>
 </form>
 
 {% if entries %}
@@ -74,7 +74,7 @@
           {% if e.topic %}<span class="tag">topic:{{ e.topic }}</span>{% endif %}
           <span style="margin-left:auto; font-family: var(--mono); font-size: 12px;">{{ e.ts or e.date }}</span>
         </div>
-        <div class="body">{{ e.text }}</div>
+        <div class="body markdown log-body">{{ e.text }}</div>
         {% if e.files %}
           <div class="files">{{ e.files|join(' · ') }}</div>
         {% endif %}
@@ -82,6 +82,21 @@
     {% endfor %}
   </div>
 {% else %}
-  <div class="empty">No log entries match these filters.</div>
+  <div class="empty">{{ t('logs.empty') }}</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if entries %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+(function() {
+  marked.setOptions({ gfm: true, breaks: false });
+  document.querySelectorAll('.entry .log-body').forEach(function(el) {
+    var src = el.textContent;
+    el.innerHTML = marked.parse(src);
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}
