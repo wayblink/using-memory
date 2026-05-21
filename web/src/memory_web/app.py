@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -15,17 +15,48 @@ from .routes import anatomy, dashboard, docs, logs, memory, preferences, search
 
 
 _PKG_DIR = Path(__file__).resolve().parent
+
+
+def _read_skill_version() -> str:
+    """Read the using-memory skill version from <repo>/version.txt.
+
+    The web package lives at <repo>/web/src/memory_web/, so the repo root is
+    `_PKG_DIR.parents[3]`. Falls back to ``unknown`` if the file is missing
+    or unreadable (e.g. memory-web installed standalone via pip).
+    """
+    candidates = [
+        _PKG_DIR.parents[3] / "version.txt",
+        Path("~/.skills/using-memory/version.txt").expanduser(),
+        Path("~/.claude/skills/using-memory/version.txt").expanduser(),
+        Path("~/.codex/skills/using-memory/version.txt").expanduser(),
+    ]
+    for path in candidates:
+        try:
+            if path.exists():
+                v = path.read_text(encoding="utf-8").strip()
+                if v:
+                    return v
+        except OSError:
+            continue
+    return "unknown"
+
+
+SKILL_VERSION = _read_skill_version()
+
+
 TEMPLATES = Jinja2Templates(
     directory=str(_PKG_DIR / "templates"),
     context_processors=[lang_context],
 )
+# Make the skill version available to every template without per-route boilerplate.
+TEMPLATES.env.globals["skill_version"] = SKILL_VERSION
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
     # docs_url / redoc_url / openapi_url disabled so we own /docs ourselves.
     app = FastAPI(
         title="using-memory web",
-        version="0.4.0",
+        version=SKILL_VERSION,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -34,6 +65,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     app.state.adapter = adapter
     app.state.templates = TEMPLATES
+    app.state.skill_version = SKILL_VERSION
 
     @app.middleware("http")
     async def attach_lang(request: Request, call_next):
@@ -62,6 +94,14 @@ def create_app(config_path: str | None = None) -> FastAPI:
             samesite="lax",
         )
         return resp
+
+    # Serve the SVG favicon at /favicon.ico (browsers request that path even
+    # when <link rel="icon"> points elsewhere). Returns the same SVG file.
+    _favicon = _PKG_DIR / "static" / "favicon.svg"
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return FileResponse(_favicon, media_type="image/svg+xml")
 
     app.mount(
         "/static",

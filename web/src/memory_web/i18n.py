@@ -31,7 +31,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.memory": "Memory",
         "nav.preferences": "Preferences",
         "nav.anatomy": "Anatomy",
-        "version_tag": "v0.4 · browse + edit",
+        "version_tag": "browse + edit",
         # Common
         "common.apply": "Apply",
         "common.reset": "Reset",
@@ -208,7 +208,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.memory": "记忆",
         "nav.preferences": "偏好",
         "nav.anatomy": "项目快照",
-        "version_tag": "v0.4 · 浏览 + 编辑",
+        "version_tag": "浏览 + 编辑",
         # Common
         "common.apply": "应用",
         "common.reset": "重置",

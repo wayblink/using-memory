@@ -292,21 +292,27 @@ class MemoryAdapter:
         if not docs_dir.exists():
             return None
 
-        # Strip an explicit extension from the slug if the URL included one.
+        # If the URL carried an explicit extension, look up that file only —
+        # otherwise an HTML doc with a same-named .md sibling would silently
+        # resolve to the .md. When no extension is given, fall back to the
+        # historic resolution order (md → html → htm) so legacy slug-only
+        # links (search hits, /docs/save redirect, edit links) still work.
+        explicit_ext: str | None = None
         bare = slug
         for ext in self._DOC_EXTS:
             if slug.lower().endswith(ext):
+                explicit_ext = ext
                 bare = slug[: -len(ext)]
                 break
 
-        # Path-traversal guard. The slug is a relative path; reject anything
-        # that escapes docs_dir or contains '..' / leading '/'.
         if bare.startswith("/") or ".." in Path(bare).parts:
             return None
 
+        exts_to_try: tuple[str, ...] = (explicit_ext,) if explicit_ext else self._DOC_EXTS
+
         candidate: Path | None = None
         ext_used: str | None = None
-        for ext in self._DOC_EXTS:
+        for ext in exts_to_try:
             p = (docs_dir / f"{bare}{ext}").resolve()
             try:
                 p.relative_to(docs_dir.resolve())

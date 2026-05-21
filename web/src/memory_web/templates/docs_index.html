@@ -70,7 +70,7 @@
         {% for it in group %}
           <li>
             <div class="title">
-              <a href="/docs/{{ it.slug }}">{{ it.title }}</a>
+              <a href="/docs/{{ it.rel }}">{{ it.title }}</a>
               <span class="tag tag-ext-{{ it.ext }}" style="margin-left:8px;">{{ it.ext }}</span>
               {% if not it.in_index %}<span class="tag" style="margin-left:4px;" title="{{ t('docs.unindexed_badge') }}">{{ t('docs.unindexed_badge') }}</span>{% endif %}
             </div>
