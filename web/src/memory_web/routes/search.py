@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import PurePath
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 
@@ -12,6 +15,26 @@ _SCOPE_TO_FLAGS = {
     "memory": (True, False, True),      # only memory
     "log": (True, True, False),         # only log
 }
+
+
+def _doc_link(path: str) -> str:
+    # Index hits use a relative path like "foo.md"; some sources include the
+    # docs/ prefix or absolute path.
+    if "/docs/" in path:
+        path = path.split("/docs/", 1)[1]
+    slug = path.removesuffix(".md").lstrip("/")
+    return f"/docs/{slug}" if slug else "/docs"
+
+
+def _log_link(path: str, q: str | None) -> tuple[str, str]:
+    """Return (href, human_label) for a log hit. Falls back to /logs root."""
+    name = PurePath(path).stem  # 2026-05-08
+    if len(name) == 10 and name[4] == "-" and name[7] == "-":
+        params = {"from": name, "to": name}
+        if q:
+            params["q"] = q
+        return f"/logs?{urlencode(params)}", name
+    return "/logs", path
 
 
 @router.get("/search", response_class=HTMLResponse, name="search")
@@ -43,6 +66,21 @@ def search(
         source_map = {"docs": "docs", "MEMORY.md": "memory", "log": "log"}
         for hit in results.get("hits", []) or []:
             bucket = source_map.get(hit.get("source") or "", "log")
+            # Add navigation metadata so the template can render clickable cards.
+            path = hit.get("path") or ""
+            if bucket == "docs":
+                hit["link"] = _doc_link(path)
+                hit["where"] = PurePath(path).name
+            elif bucket == "memory":
+                hit["link"] = "/memory"
+                hit["where"] = "MEMORY.md"
+                if hit.get("line"):
+                    hit["where"] += f" · line {hit['line']}"
+            else:  # log
+                hit["link"], date_label = _log_link(path, q)
+                hit["where"] = date_label
+                if hit.get("line"):
+                    hit["where"] += f" · line {hit['line']}"
             grouped.setdefault(bucket, []).append(hit)
         total = results.get("total", sum(len(v) for v in grouped.values()))
 

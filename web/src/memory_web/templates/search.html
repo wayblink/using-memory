@@ -40,48 +40,53 @@
     {% if doc_hits %}
       <h2 class="results-section"><span class="chip-dot dot-docs"></span>{{ t('search.section.docs') }} <span class="results-count">{{ doc_hits|length }}</span></h2>
       {% for h in doc_hits %}
-        <div class="search-result-block">
-          <h3>{{ h.get('title') or h.get('path') }}</h3>
-          <div class="small">{{ h.get('path') }}{% if h.get('line') %} · line {{ h.line }}{% endif %}</div>
-          {% if h.get('snippet') %}
-            <pre class="search-snippet">{{ h.snippet }}</pre>
-          {% endif %}
-        </div>
+        <a class="search-result-link" href="{{ h.link }}">
+          <article class="search-result-block">
+            <h3>{{ h.get('title') or h.where }} <span class="arrow">→</span></h3>
+            <div class="small">{{ h.where }}{% if h.get('score') %} · score {{ h.score }}{% endif %}</div>
+            {% if h.get('snippet') %}
+              <pre class="search-snippet">{{ h.snippet }}</pre>
+            {% endif %}
+          </article>
+        </a>
       {% endfor %}
     {% endif %}
 
     {% if memory_hits %}
       <h2 class="results-section"><span class="chip-dot dot-memory"></span>{{ t('search.section.memory') }} <span class="results-count">{{ memory_hits|length }}</span></h2>
       {% for h in memory_hits %}
-        <div class="search-result-block">
-          <div class="small">{{ h.get('path') }}{% if h.get('line') %} · line {{ h.line }}{% endif %}</div>
-          {% if h.get('snippet') %}
-            <pre class="search-snippet">{{ h.snippet }}</pre>
-          {% endif %}
-        </div>
+        <a class="search-result-link" href="{{ h.link }}">
+          <article class="search-result-block">
+            <div class="small result-where">{{ h.where }}<span class="arrow">→</span></div>
+            {% if h.get('snippet') %}
+              <pre class="search-snippet">{{ h.snippet }}</pre>
+            {% endif %}
+          </article>
+        </a>
       {% endfor %}
     {% endif %}
 
     {% if log_hits %}
       <h2 class="results-section"><span class="chip-dot dot-log"></span>{{ t('search.section.log') }} <span class="results-count">{{ log_hits|length }}</span></h2>
       {% for h in log_hits %}
-        <div class="search-result-block">
-          <div class="small">
-            {{ h.get('path') }}{% if h.get('line') %} · line {{ h.line }}{% endif %}
-            {% if h.score %} · score {{ h.score }}{% endif %}
-          </div>
-          {% if h.get('snippet') %}
-            <pre class="search-snippet">{{ h.snippet }}</pre>
-          {% endif %}
-          {% if h.get('anatomy_links') %}
-            <div class="small" style="margin-top:6px;">
-              <strong>anatomy:</strong>
-              {% for link in h.anatomy_links %}
-                <span class="tag" title="{{ link.desc }}">{{ link.slug }}/{{ link.rel }}</span>
-              {% endfor %}
+        <a class="search-result-link" href="{{ h.link }}">
+          <article class="search-result-block">
+            <div class="small result-where">
+              {{ h.where }}{% if h.get('score') %} · score {{ h.score }}{% endif %}<span class="arrow">→</span>
             </div>
-          {% endif %}
-        </div>
+            {% if h.get('snippet') %}
+              <pre class="search-snippet">{{ h.snippet }}</pre>
+            {% endif %}
+            {% if h.get('anatomy_links') %}
+              <div class="small" style="margin-top:6px;">
+                <strong>anatomy:</strong>
+                {% for link in h.anatomy_links %}
+                  <span class="tag" title="{{ link.desc }}">{{ link.slug }}/{{ link.rel }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </article>
+        </a>
       {% endfor %}
     {% endif %}
 
