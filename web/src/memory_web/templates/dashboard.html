@@ -76,6 +76,39 @@
   </div>
 </section>
 
+<h2 class="section-label">{{ t('dashboard.savings.title') }}</h2>
+<section class="savings-card">
+  <div class="savings-total">
+    <span class="savings-total-label">{{ t('dashboard.savings.total') }}</span>
+    <span class="savings-total-value">~ {{ '{:,}'.format(savings_total) }}</span>
+    <span class="savings-total-unit">tokens</span>
+  </div>
+  <p class="savings-disclaimer small">{{ t('dashboard.savings.disclaimer') }}</p>
+  <div class="savings-rows">
+    <div class="savings-row">
+      <div class="savings-row-head">
+        <span class="savings-row-label">{{ t('dashboard.savings.anatomy') }}</span>
+        <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.anatomy) }}</span>
+      </div>
+      <div class="small savings-row-hint">{{ t('dashboard.savings.anatomy.hint') }}</div>
+    </div>
+    <div class="savings-row">
+      <div class="savings-row-head">
+        <span class="savings-row-label">{{ t('dashboard.savings.auto_summary') }}</span>
+        <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.auto_summary) }}</span>
+      </div>
+      <div class="small savings-row-hint">{{ t('dashboard.savings.auto_summary.hint', n=lifetime.get('log_entries_auto', 0), factor=savings_factors.auto_summary) }}</div>
+    </div>
+    <div class="savings-row">
+      <div class="savings-row-head">
+        <span class="savings-row-label">{{ t('dashboard.savings.stop_block') }}</span>
+        <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.stop_block) }}</span>
+      </div>
+      <div class="small savings-row-hint">{{ t('dashboard.savings.stop_block.hint', n=lifetime.get('stop_blocks', 0), factor=savings_factors.stop_block) }}</div>
+    </div>
+  </div>
+</section>
+
 <div class="two-col">
   <section>
     <h2 class="section-label">{{ t('dashboard.log_tags', n=log_total) }}</h2>
