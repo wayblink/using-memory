@@ -178,7 +178,7 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 - `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Cheap: writes a pointer into `_index.json` only and does **not** scan files. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent. The snapshot fills lazily via PostToolUse `anatomy-upsert-file` — only run `anatomy-scan` when you explicitly want a full project map.
 - `anatomy-scan <slug|root>`: full re-scan of a registered project. Opt-in heavy operation: walks every indexable file under the root and writes `<slug>.json` / `<slug>.md`. Preserves `desc_source=user` entries (refreshes their tokens/mtime/kind, does not overwrite their desc). Avoid running it on projects with large vendored / thirdparty trees — those bloat the snapshot to tens of MB.
 - `anatomy-set <slug|root> <relpath> --desc TEXT`: manually set or refine one file's description. Marks `desc_source=user` so future scans don't overwrite it.
-- `anatomy-upsert-file <abs-path>`: refresh or remove the anatomy entry for one file. Used by the PostToolUse hook for incremental maintenance; safe to call manually too. Silently no-ops on files outside every registered project.
+- `anatomy-upsert-file <abs-path>`: refresh or remove the anatomy entry for one file. Used by the PostToolUse hook for incremental maintenance; safe to call manually too. Silently no-ops on files outside every registered project. Add `--auto-register` to also register the enclosing repo root when the file lives inside an eligible-but-unregistered project (`.git` + project marker); the hook always passes this flag.
 
 ## Anatomy
 
@@ -190,20 +190,24 @@ Use it to answer "what does this project contain?" without paying for a full re-
 
 Anatomy is built **lazily by default**. The intended lifecycle is:
 
-1. `anatomy-register <root>` — cheap. Writes a single pointer into `_index.json` so SessionStart auto-attach and `[[anatomy:...]]` log refs can find the project. **No file scan happens here**, and no `<slug>.json` is created yet.
-2. The PostToolUse hook calls `anatomy-upsert-file` on every `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` against a registered project root. The snapshot grows to reflect the files you actually touched.
+1. **Registration** — either via `anatomy-register <root>` manually, or **automatically** on the first PostToolUse Write/Edit inside an eligible project (`.git` ancestor + at least one project marker file like `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `CMakeLists.txt`, `setup.py`, `pom.xml`, `build.gradle[.kts]`, `Gemfile`, `composer.json`, `Makefile`, `Pipfile`, `requirements.txt`). Either path writes a single pointer into `_index.json`. No file scan happens here.
+2. The PostToolUse hook calls `anatomy-upsert-file --auto-register` on every `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create`. The snapshot grows to reflect the files you actually touched. On the first such edit in an eligible-but-unregistered project, the hook registers the repo root inline and proceeds with the upsert in the same call.
 3. `anatomy-set <slug> <relpath> --desc "..."` to pin a short description on load-bearing files (trust boundaries, build entrypoints, config schemas). These are preserved through future scans.
 4. `anatomy-scan <slug>` only when you explicitly want a project-wide map — e.g., onboarding a new repo, prepping a refactor, or producing an audit. **Skip this for projects with large vendored / build / thirdparty trees** (`ep/`, `vendor/`, generated `dist/` siblings, etc.) — they bloat the snapshot to tens of MB and slow every subsequent `upsert-file`.
 
-Treat `anatomy-scan` as an opt-in heavy operation, not part of registration. A registered-but-unscanned project still works: `load --anatomy` returns the registered root without files, the SessionStart hook still injects the standard reminder, and PostToolUse upserts start populating files on the first edit.
+Treat `anatomy-scan` as an opt-in heavy operation, not part of registration. A registered-but-unscanned project still works: `load --anatomy` returns the registered root without files, the SessionStart hook still injects the standard reminder, and PostToolUse upserts start populating files on the first edit (an empty snapshot shell is created inline when needed).
 
-### Registration is explicit (no auto-detect)
+### Registration is automatic when safe, explicit otherwise
 
-`memory_tool.py anatomy-register <root> [--slug NAME]` is required before a project shows up in `load --anatomy` matches. cwd-only auto-detection is intentionally NOT supported — random `cd` into `~/Downloads` should not silently create snapshots, and slug collisions are surfaced at registration time so they cannot drift.
+Auto-registration fires only when the file being touched lives inside a `.git` repo **and** some directory between the file and the `.git` ancestor contains a recognized project marker file. This gate keeps random directories (`~/Downloads`, scratch dirs, plain text notes under `~/notes`) out of the index — they have no marker and so never auto-register. Monorepos are handled by registering the `.git` directory (repo root) as a single slug, not the marker's parent; a marker found inside `services/api/` still registers the whole repo.
+
+Slug derivation: the base slug is the repo root's basename. If that slug is already registered to a **different** root, the auto-registration path tries up to two levels of path-segment disambiguation (`parent-base`, then `grandparent-parent-base`). If all three candidates collide, auto-registration is skipped and the SessionStart hint surfaces the conflict so the user can pick a unique slug with explicit `--slug`. Idempotent: the same root re-encountered later returns the existing slug without rewriting the index.
+
+`anatomy-register` remains available for projects without a marker, for projects you want to opt into ahead of any write, and for picking a custom slug.
 
 ### SessionStart auto-attach
 
-The Claude Code / Codex hook calls `load --anatomy --cwd <session cwd>` on every SessionStart. When cwd is inside a registered project, the rendered anatomy markdown (capped at ~2000 tokens, falling back to a top-level directory summary above the cap) is appended to the SessionStart additionalContext. When cwd is in an unregistered git repo, the hook injects a single hint line nudging the user to run `anatomy-register`. When cwd is anywhere else, only the standard memory-protocol reminder is sent.
+The Claude Code / Codex hook calls `load --anatomy --cwd <session cwd>` on every SessionStart. When cwd is inside a registered project, the rendered anatomy markdown (capped at ~2000 tokens, falling back to a top-level directory summary above the cap) is appended to the SessionStart additionalContext. When cwd is in an unregistered git repo that has a project marker, the hook injects a multi-line actionable hint: detected repo root, suggested slug (auto-disambiguated against existing entries), and a paste-ready `anatomy-register` command. When cwd is in a git repo without any project marker, the hook injects a softer note explaining no marker was found and pointing at manual registration. When cwd is anywhere else, only the standard memory-protocol reminder is sent.
 
 ### Incremental maintenance
 
@@ -292,7 +296,7 @@ Defaults are conservative: `--min-entries 3`, `--min-days 3`. Lower them to surf
 
 `<namespace>/STATS.json` is an event-driven counter file maintained by the hooks and the write-* commands. It contains real counts — no estimates, no synthetic "savings" numbers — for:
 
-- `sessions`, `anatomy_attached_count`, `anatomy_truncated_count`, `anatomy_hint_emitted`, `anatomy_attached_tokens_est` (rendered chars / 3.75), `anatomy_upserts`
+- `sessions`, `anatomy_attached_count`, `anatomy_truncated_count`, `anatomy_hint_emitted`, `anatomy_attached_tokens_est` (rendered chars / 3.75), `anatomy_upserts`, `anatomy_auto_registered`
 - `log_entries_user` (write-log invocations whose `--source` is not `auto`), `log_entries_auto` (silent hook-driven summary appends)
 - `stop_blocks`, `stop_throttled_passthrough`, `precompact_blocks`
 - `cumulative_human_turns` (Stop hook accumulates real human-turn deltas across sessions; powers distillation triggers)
@@ -313,7 +317,7 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 |---|---|
 | **SessionStart** | Inject memory-protocol reminder + anatomy snapshot for cwd (or hint when cwd is in unregistered git repo) + distillation candidates when due (see Distillation Pipeline). |
 | **UserPromptSubmit** | Set per-turn flag `prompt_mentions_memory` based on memory keyword regex; emit reminder when set. Does NOT reset session-lifetime counters. |
-| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For PostToolUse with a write/edit-style tool, additionally call `anatomy-upsert-file` on each touched path (best-effort, 8s timeout, silent on failure). |
+| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For PostToolUse with a write/edit-style tool, additionally call `anatomy-upsert-file --auto-register` on each touched path (best-effort, 8s timeout, silent on failure). When the file is inside an eligible-but-unregistered project (`.git` + project marker), the subprocess auto-registers the repo root inline before upserting. |
 | **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final assistant message itself contains a memory write, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL (filtering out `tool_result` lists and synthetic `<system-reminder>` / `<command-message>` / `Stop hook feedback:` content), and accumulate the delta into `cumulative_human_turns` (idempotent). When `prompt_mentions_memory` OR `delta = current_turns - last_save_turn ≥ 8` AND `not memory_written`, BLOCK with the standard write-gate reason — and append distillation candidates to that reason when due. Otherwise pass through and (best-effort) append a `level=summary tag=progress source=auto` log entry capped at one per human turn and 200 per session. |
 | **PreCompact** | Unconditional BLOCK with a structured reason: dump current task / unfinished subgoals / key identifiers / open risks before the context window shrinks. `stop_hook_active` / `precompact_hook_active` short-circuit to `{}` to prevent loops. |
 

@@ -1937,6 +1937,7 @@ def do_status(args: argparse.Namespace) -> dict:
     hints = _g("anatomy_hint_emitted")
     attached_tokens = _g("anatomy_attached_tokens_est")
     upserts = _g("anatomy_upserts")
+    auto_registered = _g("anatomy_auto_registered")
     log_auto = _g("log_entries_auto")
     log_user = _g("log_entries_user")
     blocks = _g("stop_blocks")
@@ -1977,6 +1978,7 @@ def do_status(args: argparse.Namespace) -> dict:
             "anatomy_hint_emitted": hints,
             "anatomy_attached_tokens_est": attached_tokens,
             "anatomy_upserts": upserts,
+            "anatomy_auto_registered": auto_registered,
             "log_entries_auto": log_auto,
             "log_entries_user": log_user,
             "stop_blocks": blocks,
@@ -2104,6 +2106,172 @@ def _cwd_is_git_repo(cwd: Path) -> bool:
     return False
 
 
+# Files whose presence on disk indicates "this is a real software project."
+# Used to gate anatomy auto-registration; bare directories (e.g. ~/Downloads)
+# never satisfy this and so never auto-register.
+_ANATOMY_PROJECT_MARKERS: tuple[str, ...] = (
+    "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "CMakeLists.txt",
+    "setup.py", "setup.cfg", "pom.xml", "build.gradle", "build.gradle.kts",
+    "Gemfile", "composer.json", "Makefile", "Pipfile", "requirements.txt",
+)
+
+
+def _find_repo_root_with_marker(start: Path) -> Path | None:
+    """Walk up from ``start`` looking for a .git ancestor whose subtree (from
+    start up to and including the .git directory) contains at least one project
+    marker.
+
+    Returns the .git ancestor path on match (the repo root), or None.
+
+    The walk records every candidate dir from ``start`` upward, then walks the
+    same chain looking for the first ``.git`` ancestor; eligibility passes when
+    ANY dir between ``start`` and that ancestor (inclusive) contains a marker.
+    This handles monorepos (marker in a subpackage, .git at repo root) while
+    still registering the repo root as a single anatomy slug.
+    """
+    try:
+        p = start.expanduser().resolve()
+    except OSError:
+        return None
+    if p.is_file():
+        p = p.parent
+    chain = [p, *p.parents]
+    repo_root: Path | None = None
+    for candidate in chain:
+        if (candidate / ".git").exists():
+            repo_root = candidate
+            break
+    if repo_root is None:
+        return None
+    for candidate in chain:
+        for marker in _ANATOMY_PROJECT_MARKERS:
+            if (candidate / marker).exists():
+                return repo_root
+        if candidate == repo_root:
+            break
+    return None
+
+
+def _anatomy_resolve_unique_slug(scoped_root: Path, project_root: Path, index: dict) -> str | None:
+    """Return a slug for ``project_root`` that does not collide with an
+    existing index entry pointing at a different root.
+
+    Strategy: start with the project root's basename slug. If taken by a
+    different root, prepend up to two parent-dir segments (so /a/api collides
+    with /b/api → b-api; further collision → b-yard-api). Returns None when
+    three levels of disambiguation all fail.
+    """
+    try:
+        resolved_root = project_root.expanduser().resolve()
+    except OSError:
+        return None
+
+    def _taken_by_other(candidate: str) -> bool:
+        info = index.get(candidate)
+        if not isinstance(info, dict):
+            return False
+        raw = info.get("root")
+        if not raw:
+            return False
+        try:
+            other = Path(raw).expanduser().resolve()
+        except OSError:
+            return False
+        return other != resolved_root
+
+    base = _anatomy_default_slug(resolved_root)
+    candidates: list[str] = [base]
+    parents = list(resolved_root.parents)
+    if parents:
+        candidates.append(_anatomy_default_slug(Path(parents[0].name + "-" + resolved_root.name)))
+    if len(parents) >= 2:
+        candidates.append(_anatomy_default_slug(Path(
+            parents[1].name + "-" + parents[0].name + "-" + resolved_root.name
+        )))
+    seen: set[str] = set()
+    for slug in candidates:
+        if slug in seen:
+            continue
+        seen.add(slug)
+        if not _taken_by_other(slug):
+            return slug
+    return None
+
+
+def _anatomy_auto_register_if_eligible(
+    scoped_root: Path,
+    anchor: Path,
+) -> tuple[str | None, Path | None]:
+    """If ``anchor`` lives inside an eligible-but-unregistered project, register
+    the repo root in the anatomy index and return (slug, repo_root).
+
+    Eligibility = .git ancestor exists AND some dir between anchor and that
+    ancestor contains a marker file. Idempotent: re-running on an already
+    registered root returns the existing slug without rewriting the index.
+    Returns (None, None) when ineligible or when all three slug-disambiguation
+    candidates collide with other roots.
+    """
+    repo_root = _find_repo_root_with_marker(anchor)
+    if repo_root is None:
+        return None, None
+    index = _anatomy_load_index(scoped_root)
+    # Idempotent fast-path: same root already registered? return that slug.
+    try:
+        resolved = repo_root.expanduser().resolve()
+    except OSError:
+        return None, None
+    for slug, info in index.items():
+        if not isinstance(info, dict):
+            continue
+        raw = info.get("root")
+        if not raw:
+            continue
+        try:
+            other = Path(raw).expanduser().resolve()
+        except OSError:
+            continue
+        if other == resolved:
+            return slug, resolved
+    slug = _anatomy_resolve_unique_slug(scoped_root, resolved, index)
+    if slug is None:
+        return None, None
+    index[slug] = {
+        "root": str(resolved),
+        "registered_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "auto": True,
+    }
+    _anatomy_save_index(scoped_root, index)
+    return slug, resolved
+
+
+def _anatomy_suggest_for_hint(scoped_root: Path, cwd: Path) -> dict | None:
+    """Return a suggestion dict for the SessionStart hint when cwd is inside an
+    eligible-but-unregistered project. Read-only: never writes the index.
+
+    Result keys: root (str), suggested_slug (str), base_slug (str),
+    conflict (bool). conflict=True means the base_slug derived from the
+    project root's basename was taken; suggested_slug carries the
+    path-segment-disambiguated alternative. Returns None when cwd is not
+    inside an eligible repo (no .git or no marker).
+    """
+    repo_root = _find_repo_root_with_marker(cwd)
+    if repo_root is None:
+        return None
+    try:
+        resolved = repo_root.expanduser().resolve()
+    except OSError:
+        return None
+    index = _anatomy_load_index(scoped_root)
+    base = _anatomy_default_slug(resolved)
+    suggested = _anatomy_resolve_unique_slug(scoped_root, resolved, index)
+    return {
+        "root": str(resolved),
+        "base_slug": base,
+        "suggested_slug": suggested,
+        "conflict": suggested is not None and suggested != base,
+    }
+
+
 def _anatomy_persist_with_totals(scoped_root: Path, slug: str, doc: dict) -> None:
     """Recompute totals + bump scanned_at, then persist JSON + MD atomically."""
     files = doc.get("files", {}) or {}
@@ -2118,13 +2286,21 @@ def _anatomy_persist_with_totals(scoped_root: Path, slug: str, doc: dict) -> Non
 def _anatomy_upsert_file(scoped_root: Path, slug: str, project_root: Path, file_path: Path, rel: str) -> str:
     """Refresh or remove the anatomy entry for one file.
 
-    Returns one of: "updated", "removed", "skipped" (filtered/should-skip),
-    "no-doc" (project never scanned yet). On disk both <slug>.json and
-    <slug>.md are re-written atomically when something changed.
+    Returns one of: "updated", "removed", "skipped" (filtered/should-skip).
+    On disk both <slug>.json and <slug>.md are re-written atomically when
+    something changed. When the project has never been scanned, an empty
+    snapshot shell is initialized inline so incremental upserts work right
+    after `anatomy-register` without requiring a separate full scan.
     """
     doc = _anatomy_load_doc(scoped_root, slug)
     if not doc:
-        return "no-doc"
+        doc = {
+            "project": slug,
+            "root": str(project_root),
+            "scanned_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "totals": {"files": 0, "tokens_est": 0},
+            "files": {},
+        }
     files = doc.setdefault("files", {})
 
     # Resolve to match project_root which has already been resolved by the
@@ -2159,6 +2335,12 @@ def do_anatomy_upsert_file(args: argparse.Namespace) -> dict:
     scoped_root = namespace_root(primary_root, primary_namespace)
     file_path = Path(args.file).expanduser()
     slug, project_root, rel = _anatomy_match_file(scoped_root, file_path)
+    auto_registered = False
+    if (not slug or not project_root or rel is None) and getattr(args, "auto_register", False):
+        new_slug, new_root = _anatomy_auto_register_if_eligible(scoped_root, file_path)
+        if new_slug and new_root:
+            slug, project_root, rel = _anatomy_match_file(scoped_root, file_path)
+            auto_registered = True
     if not slug or not project_root or rel is None:
         return {
             "changed": False,
@@ -2167,13 +2349,17 @@ def do_anatomy_upsert_file(args: argparse.Namespace) -> dict:
             "reason": "no registered project contains this file",
         }
     action = _anatomy_upsert_file(scoped_root, slug, project_root, file_path, rel)
-    return {
+    result = {
         "changed": action in {"updated", "removed"},
         "matched": True,
         "slug": slug,
         "rel": rel,
         "action": action,
     }
+    if auto_registered:
+        result["auto_registered"] = True
+        result["root"] = str(project_root)
+    return result
 
 
 def _anatomy_attach_for_load(scoped_root: Path, cwd: Path, max_tokens: int) -> dict:
@@ -2204,10 +2390,40 @@ def _anatomy_attach_for_load(scoped_root: Path, cwd: Path, max_tokens: int) -> d
             "content": content,
         }
     result: dict = {"matched": False}
-    if _cwd_is_git_repo(cwd):
+    suggestion = _anatomy_suggest_for_hint(scoped_root, cwd)
+    if suggestion:
+        root_str = suggestion["root"]
+        slug_use = suggestion["suggested_slug"]
+        base = suggestion["base_slug"]
+        conflict = suggestion["conflict"]
+        lines = [
+            "cwd is inside an unregistered project.",
+            f"- Root: {root_str}",
+        ]
+        if slug_use:
+            if conflict:
+                lines.append(f"- Base slug `{base}` already registered to a different root.")
+                lines.append(f"- Suggested unique slug: `{slug_use}`")
+                lines.append(
+                    f"- Command: memory_tool.py anatomy-register {root_str} --slug {slug_use}"
+                )
+            else:
+                lines.append(f"- Suggested slug: `{slug_use}`")
+                lines.append(f"- Command: memory_tool.py anatomy-register {root_str}")
+        else:
+            lines.append(f"- Base slug `{base}` and path-disambiguated alternatives are all taken.")
+            lines.append(
+                f"- Command: memory_tool.py anatomy-register {root_str} --slug <pick-a-unique-name>"
+            )
+        lines.append(
+            "  (PostToolUse hooks will also auto-register on the next Write/Edit inside this repo.)"
+        )
+        result["hint"] = "\n".join(lines)
+    elif _cwd_is_git_repo(cwd):
         result["hint"] = (
-            "cwd is inside a git repo but not a registered anatomy project. "
-            "Run `memory_tool.py anatomy-register <root>` to enable project-aware load."
+            "cwd is inside a git repo but no project marker found "
+            "(pyproject.toml, package.json, Cargo.toml, go.mod, etc.). "
+            "Run `memory_tool.py anatomy-register <root>` manually to opt in."
         )
     return result
 
@@ -3444,6 +3660,11 @@ def cmd_anatomy_upsert_file(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("--config", type=str, default=None)
     p.add_argument("file", type=str, help="Absolute path to the file that changed")
+    p.add_argument(
+        "--auto-register",
+        action="store_true",
+        help="When the file is not inside any registered project, auto-register the enclosing git repo if it contains a project marker (pyproject.toml, package.json, Cargo.toml, go.mod, ...). Used by the PostToolUse hook to grow the anatomy index on real edits.",
+    )
     p.add_argument("--json", action="store_true")
 
 
@@ -3594,6 +3815,7 @@ def _format_status(result: dict) -> str:
         f"  anatomy hint emitted           : {lt.get('anatomy_hint_emitted', 0)}  (cwd in unregistered git repo)",
         f"  anatomy tokens injected (est)  : {lt.get('anatomy_attached_tokens_est', 0)}",
         f"  anatomy file upserts (hooks)   : {lt.get('anatomy_upserts', 0)}",
+        f"  anatomy auto-registered        : {lt.get('anatomy_auto_registered', 0)}  (PostToolUse first-edit registrations)",
         f"  log entries written by user/AI : {lt.get('log_entries_user', 0)}",
         f"  log entries silent-appended    : {lt.get('log_entries_auto', 0)}",
         f"  Stop hard-blocks (detail save) : {lt.get('stop_blocks', 0)}",

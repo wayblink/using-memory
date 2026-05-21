@@ -483,6 +483,7 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
         if not config:
             return
         upserts = 0
+        auto_registered = 0
         for raw in paths:
             try:
                 cmd = [
@@ -491,6 +492,7 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
                     "anatomy-upsert-file",
                     "--config", config,
                     raw,
+                    "--auto-register",
                     "--json",
                 ]
                 result = subprocess.run(cmd, capture_output=True, timeout=8, text=True)
@@ -499,12 +501,19 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
                         data = json.loads(result.stdout or "{}")
                         if data.get("changed"):
                             upserts += 1
+                        if data.get("auto_registered"):
+                            auto_registered += 1
                     except json.JSONDecodeError:
                         pass
             except Exception:
                 continue
+        deltas: dict[str, int] = {}
         if upserts:
-            bump_stats({"anatomy_upserts": upserts})
+            deltas["anatomy_upserts"] = upserts
+        if auto_registered:
+            deltas["anatomy_auto_registered"] = auto_registered
+        if deltas:
+            bump_stats(deltas)
     except Exception:
         return
 
