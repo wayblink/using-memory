@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · using-memory{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>Dashboard</h1>
+  <div class="sub">Lifetime stats and project overview · last event {{ last_event_ts or '(never)' }}</div>
+</header>
+
+{% if warnings %}
+  {% for w in warnings %}
+    <div class="warning">{{ w }}</div>
+  {% endfor %}
+{% endif %}
+
+<section class="stat-grid">
+  <div class="stat">
+    <div class="label">Sessions</div>
+    <div class="value">{{ lifetime.get('sessions', 0) }}</div>
+    <div class="hint">SessionStart hook invocations</div>
+  </div>
+  <div class="stat">
+    <div class="label">Log entries (user)</div>
+    <div class="value">{{ lifetime.get('log_entries_user', 0) }}</div>
+    <div class="hint">explicit write-log calls</div>
+  </div>
+  <div class="stat">
+    <div class="label">Log entries (auto)</div>
+    <div class="value">{{ lifetime.get('log_entries_auto', 0) }}</div>
+    <div class="hint">silent Stop-hook summaries</div>
+  </div>
+  <div class="stat">
+    <div class="label">Anatomy projects</div>
+    <div class="value">{{ anatomy_count }}</div>
+    <div class="hint">registered roots</div>
+  </div>
+  <div class="stat">
+    <div class="label">Anatomy attached</div>
+    <div class="value">{{ lifetime.get('anatomy_attached_count', 0) }}</div>
+    <div class="hint">hit rate {{ '%.0f' % ((ratios.get('anatomy_hit_rate') or 0) * 100) }}%</div>
+  </div>
+  <div class="stat">
+    <div class="label">Anatomy upserts</div>
+    <div class="value">{{ lifetime.get('anatomy_upserts', 0) }}</div>
+    <div class="hint">PostToolUse incrementals</div>
+  </div>
+  <div class="stat">
+    <div class="label">Stop blocks</div>
+    <div class="value">{{ lifetime.get('stop_blocks', 0) }}</div>
+    <div class="hint">block ratio {{ '%.0f' % ((ratios.get('stop_block_ratio') or 0) * 100) }}%</div>
+  </div>
+  <div class="stat">
+    <div class="label">Stop passthroughs</div>
+    <div class="value">{{ lifetime.get('stop_throttled_passthrough', 0) }}</div>
+    <div class="hint">silent summary appended</div>
+  </div>
+  <div class="stat">
+    <div class="label">Cumulative turns</div>
+    <div class="value">{{ lifetime.get('cumulative_human_turns', 0) }}</div>
+    <div class="hint">across all sessions</div>
+  </div>
+</section>
+
+<h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); margin:24px 0 12px;">Tags in stats</h2>
+{% set tag_counts = stats.get('log_tag_counts') or {} %}
+{% if tag_counts %}
+<div class="row" style="gap:6px;">
+  {% for t, n in tag_counts.items() %}
+    <span class="tag">{{ t }} · {{ n }}</span>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">No tag counts yet.</div>
+{% endif %}
+
+<h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); margin:28px 0 12px;">Anatomy projects</h2>
+{% if anatomy_projects %}
+<ul class="docs-list">
+  {% for p in anatomy_projects %}
+    <li>
+      <div class="title"><a href="/anatomy/{{ p.slug }}">{{ p.slug }}</a></div>
+      <div class="meta">{{ p.root }} · {{ p.files }} files · {{ p.tokens_est }} tokens · scanned {{ p.scanned_at or '(not scanned)' }}</div>
+    </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty">No anatomy projects registered.</div>
+{% endif %}
+{% endblock %}

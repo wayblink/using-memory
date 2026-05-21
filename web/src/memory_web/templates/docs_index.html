@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Docs · using-memory{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>Docs</h1>
+  <div class="sub">
+    {{ total }} file{{ '' if total == 1 else 's' }} in <code>docs/</code>
+    {% if unregistered %} · {{ unregistered }} not in <code>index.json</code>{% endif %}
+  </div>
+</header>
+
+{% if items %}
+  {% for type, group in by_type.items() %}
+    <section class="docs-section">
+      <h2>{{ type }} · {{ group|length }}</h2>
+      <ul class="docs-list">
+        {% for it in group %}
+          <li>
+            <div class="title">
+              <a href="/docs/{{ it.slug }}">{{ it.title }}</a>
+              <span class="tag tag-ext-{{ it.ext }}" style="margin-left:8px;">{{ it.ext }}</span>
+              {% if not it.in_index %}<span class="tag" style="margin-left:4px;" title="present on disk but not registered in docs/index.json">unindexed</span>{% endif %}
+            </div>
+            <div class="meta">
+              {{ it.rel }}
+              {% if it.modified %} · modified {{ it.modified }}{% endif %}
+              {% if it.projects %} · project:{{ it.projects|join(', ') }}{% endif %}
+              {% if it.tags %} · tags:{{ it.tags|join(', ') }}{% endif %}
+              · {{ it.size }} bytes
+            </div>
+            {% if it.summary %}<div class="meta" style="margin-top:4px; color: var(--text-soft);">{{ it.summary }}</div>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endfor %}
+{% else %}
+  <div class="empty">No docs in <code>docs/</code>. Write one with <code>memory_tool.py upsert-doc</code> or drop an <code>.html</code> file in there.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Anatomy · using-memory{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>Anatomy</h1>
+  <div class="sub">{{ count }} registered project{{ '' if count == 1 else 's' }}</div>
+</header>
+
+{% if projects %}
+<ul class="docs-list">
+  {% for p in projects %}
+    <li>
+      <div class="title"><a href="/anatomy/{{ p.slug }}">{{ p.slug }}</a></div>
+      <div class="meta">{{ p.root }} · {{ p.files }} files · {{ p.tokens_est }} tokens · scanned {{ p.scanned_at or '(not scanned)' }}</div>
+    </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty">No anatomy projects registered. Register one with <code>memory_tool.py anatomy-register &lt;root&gt;</code>.</div>
+{% endif %}
+{% endblock %}

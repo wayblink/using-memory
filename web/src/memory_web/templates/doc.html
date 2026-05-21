@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ entry.get('title') or slug }} · docs{% endblock %}
+{% block head_extra %}
+  {% if ext == 'html' %}
+  <style>
+    /* The HTML doc renders in an isolated iframe whose height we sync
+       to its scrollHeight, so the surrounding page scrolls naturally. */
+    iframe.html-doc {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: white;
+      min-height: 400px;
+    }
+  </style>
+  {% endif %}
+{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>{{ entry.get('title') or slug }}</h1>
+  <div class="sub">
+    <a href="/docs">← all docs</a>
+  </div>
+</header>
+
+<div class="doc-meta row">
+  <span class="tag tag-ext-{{ ext }}">{{ ext }}</span>
+  {% if entry.get('type') %}<span class="tag">{{ entry.type }}</span>{% endif %}
+  {% if not in_index %}<span class="tag" title="not in docs/index.json">unindexed</span>{% endif %}
+  {% if entry.get('modified') %}<span>modified {{ entry.modified }}</span>{% endif %}
+  {% if entry.get('projects') %}<span>project:{{ entry.projects|join(', ') }}</span>{% endif %}
+  {% if entry.get('tags') %}<span>tags:{{ entry.tags|join(', ') }}</span>{% endif %}
+  <span class="small">{{ rel }}</span>
+  <a href="/docs/{{ slug }}?raw=1" class="small" style="margin-left:auto;">view source</a>
+</div>
+
+{% if ext == 'md' %}
+  <div class="markdown" id="doc-body"></div>
+  <script id="doc-source" type="text/markdown">{{ content }}</script>
+{% else %}
+  <iframe id="doc-frame" class="html-doc" sandbox="allow-same-origin" srcdoc="{{ content|e }}"></iframe>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if ext == 'md' %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+(function() {
+  const src = document.getElementById('doc-source').textContent;
+  marked.setOptions({ gfm: true, breaks: false });
+  document.getElementById('doc-body').innerHTML = marked.parse(src);
+})();
+</script>
+{% else %}
+<script>
+// Resize the iframe to fit its content so the host page scrolls.
+(function() {
+  const f = document.getElementById('doc-frame');
+  function resize() {
+    try {
+      const doc = f.contentDocument;
+      if (!doc) return;
+      const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
+      f.style.height = (h + 24) + 'px';
+    } catch (e) { /* cross-origin shouldn't happen for srcdoc */ }
+  }
+  f.addEventListener('load', () => {
+    resize();
+    // Re-check after images / fonts load.
+    setTimeout(resize, 200);
+    setTimeout(resize, 800);
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}using-memory{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <h1>using-memory</h1>
+    <nav>
+      <a href="/" class="{% if page == 'dashboard' %}active{% endif %}"><span class="icon">▦</span> Dashboard</a>
+      <a href="/logs" class="{% if page == 'logs' %}active{% endif %}"><span class="icon">≡</span> Logs</a>
+      <a href="/search" class="{% if page == 'search' %}active{% endif %}"><span class="icon">⌕</span> Search</a>
+      <a href="/docs" class="{% if page == 'docs' %}active{% endif %}"><span class="icon">¶</span> Docs</a>
+      <a href="/memory" class="{% if page == 'memory' %}active{% endif %}"><span class="icon">◇</span> Memory</a>
+      <a href="/preferences" class="{% if page == 'preferences' %}active{% endif %}"><span class="icon">★</span> Preferences</a>
+      <a href="/anatomy" class="{% if page == 'anatomy' %}active{% endif %}"><span class="icon">⌗</span> Anatomy</a>
+    </nav>
+    <div style="margin-top: 26px; padding: 0 8px;">
+      <div class="small">v0.1 · read-only</div>
+    </div>
+  </aside>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

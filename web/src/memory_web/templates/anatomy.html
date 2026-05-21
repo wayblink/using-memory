@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · anatomy{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>{{ slug }}</h1>
+  <div class="sub">
+    <a href="/anatomy">← all projects</a>
+  </div>
+</header>
+
+<div class="doc-meta row">
+  <span class="tag">{{ totals.get('files', 0) }} files</span>
+  <span class="tag">{{ totals.get('tokens_est', 0) }} tokens</span>
+  <span class="small">{{ root }}</span>
+  {% if scanned_at %}<span class="small">scanned {{ scanned_at }}</span>{% endif %}
+</div>
+
+{% if files %}
+  <div class="file-tree">
+    <div class="file-row" style="background: var(--bg-soft); font-weight: 600;">
+      <div>path</div>
+      <div>description</div>
+      <div>kind</div>
+      <div class="tokens">tokens</div>
+    </div>
+    {% for f in files %}
+      <div class="file-row">
+        <div class="rel">{{ f.rel }}</div>
+        <div class="desc">
+          {{ f.desc or '(no description)' }}
+          {% if f.desc_source == 'user' %}<span class="tag" style="margin-left:6px;">user</span>{% endif %}
+        </div>
+        <div class="kind">{{ f.kind }}</div>
+        <div class="tokens">{{ f.tokens_est }}</div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty">This anatomy has no file entries yet. The PostToolUse hook will populate it on the next edit, or run <code>memory_tool.py anatomy-scan {{ slug }}</code>.</div>
+{% endif %}
+{% endblock %}

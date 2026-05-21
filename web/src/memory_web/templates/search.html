@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Search · using-memory{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>Search</h1>
+  <div class="sub">Full-text across docs, MEMORY.md, and the configured log window</div>
+</header>
+
+<form class="filters" method="get" action="/search">
+  <label style="flex: 2 1 320px;">Query
+    <input type="text" name="q" value="{{ q }}" placeholder="search term" autofocus>
+  </label>
+  <label>Log days
+    <input type="number" name="log_days" min="1" max="365" value="{{ log_days }}">
+  </label>
+  <label>Scope
+    <select name="scope" multiple size="3" style="min-width:120px;">
+      <option value="docs" {% if 'docs' in scope %}selected{% endif %}>docs</option>
+      <option value="memory" {% if 'memory' in scope %}selected{% endif %}>memory</option>
+      <option value="log" {% if 'log' in scope %}selected{% endif %}>log</option>
+    </select>
+  </label>
+  <button type="submit">Search</button>
+</form>
+
+{% if q %}
+  {% if results %}
+    {% set doc_hits = grouped.get('doc', []) %}
+    {% set memory_hits = grouped.get('memory', []) %}
+    {% set log_hits = grouped.get('log', []) %}
+    <p class="small">{{ total }} hit{{ '' if total == 1 else 's' }} · {{ doc_hits|length }} docs · {{ memory_hits|length }} memory · {{ log_hits|length }} log</p>
+
+    {% if doc_hits %}
+      <h2 style="margin-top:24px;">Docs</h2>
+      {% for h in doc_hits %}
+        <div class="search-result-block">
+          <h3>{{ h.get('title') or h.get('path') }}</h3>
+          <div class="small">{{ h.get('path') }}{% if h.get('line') %} · line {{ h.line }}{% endif %}</div>
+          {% if h.get('snippet') %}
+            <pre class="search-snippet">{{ h.snippet }}</pre>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    {% if memory_hits %}
+      <h2 style="margin-top:24px;">MEMORY.md</h2>
+      {% for h in memory_hits %}
+        <div class="search-result-block">
+          <div class="small">{{ h.get('path') }}{% if h.get('line') %} · line {{ h.line }}{% endif %}</div>
+          {% if h.get('snippet') %}
+            <pre class="search-snippet">{{ h.snippet }}</pre>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    {% if log_hits %}
+      <h2 style="margin-top:24px;">Log</h2>
+      {% for h in log_hits %}
+        <div class="search-result-block">
+          <div class="small">
+            {{ h.get('path') }}{% if h.get('line') %} · line {{ h.line }}{% endif %}
+            {% if h.score %} · score {{ h.score }}{% endif %}
+          </div>
+          {% if h.get('snippet') %}
+            <pre class="search-snippet">{{ h.snippet }}</pre>
+          {% endif %}
+          {% if h.get('anatomy_links') %}
+            <div class="small" style="margin-top:6px;">
+              <strong>anatomy:</strong>
+              {% for link in h.anatomy_links %}
+                <span class="tag" title="{{ link.desc }}">{{ link.slug }}/{{ link.rel }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    {% if not (doc_hits or memory_hits or log_hits) %}
+      <div class="empty">No hits.</div>
+    {% endif %}
+  {% endif %}
+{% else %}
+  <div class="empty">Enter a query above to search across docs, memory, and the log.</div>
+{% endif %}
+{% endblock %}

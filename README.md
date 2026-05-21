@@ -451,10 +451,25 @@ Run the full test suite:
 python3 -m unittest discover -s tests -v
 ```
 
+## Web browser (optional)
+
+`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. Read-only in v0.1 — every dimension is viewable (dashboard, logs, search, docs incl. `.md` and `.html`, MEMORY, PREFERENCES, anatomy) but writes still go through `memory_tool.py`.
+
+```bash
+cd web
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+memory-web --open    # → http://127.0.0.1:8765
+```
+
+See [web/README.md](web/README.md) for pages, architecture, and the v0.4 / v0.5 roadmap (editing, manual maintain / distill / promote triggers).
+
 ## References
 
 - [SKILL.md](SKILL.md): the runtime entry point and formal model-facing instructions.
 - [references/repo-layout.md](references/repo-layout.md): memory repo structure, file responsibilities, and tag conventions.
 - [references/startup-and-write-rules.md](references/startup-and-write-rules.md): runtime load order, docs matching, write routing, and failure degradation.
 - [references/machine-setup.md](references/machine-setup.md): Codex and Claude Code installation, startup wiring, new-machine setup, and smoke tests.
+- [web/README.md](web/README.md): optional local web browser for the memory repo.
 - [examples/memory-repo/](examples/memory-repo/): sample memory repo content.

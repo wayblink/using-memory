@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Logs · using-memory{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>Logs</h1>
+  <div class="sub">{{ total }} entries · sorted newest first</div>
+</header>
+
+<form class="filters" method="get" action="/logs">
+  <label>From
+    <input type="date" name="from" value="{{ selected['from'] or '' }}">
+  </label>
+  <label>To
+    <input type="date" name="to" value="{{ selected['to'] or '' }}">
+  </label>
+  <label>Days
+    <input type="number" name="days" min="1" max="365" value="{{ selected['days'] or '' }}" placeholder="7">
+  </label>
+  <label>Text contains
+    <input type="text" name="q" value="{{ selected['q'] }}" placeholder="substring">
+  </label>
+  <label>Tag
+    <select name="tag">
+      <option value="">all</option>
+      {% for t in available_tags %}
+        <option value="{{ t }}" {% if t in selected['tags'] %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Level
+    <select name="level">
+      <option value="">all</option>
+      <option value="detail" {% if selected['level'] == 'detail' %}selected{% endif %}>detail</option>
+      <option value="summary" {% if selected['level'] == 'summary' %}selected{% endif %}>summary</option>
+    </select>
+  </label>
+  <label>Source
+    <select name="source">
+      <option value="">all</option>
+      <option value="user" {% if selected['source'] == 'user' %}selected{% endif %}>user</option>
+      <option value="auto" {% if selected['source'] == 'auto' %}selected{% endif %}>auto</option>
+      <option value="observed" {% if selected['source'] == 'observed' %}selected{% endif %}>observed</option>
+    </select>
+  </label>
+  <label>Project
+    <select name="project">
+      <option value="">all</option>
+      {% for p in available_projects %}
+        <option value="{{ p }}" {% if p in selected['projects'] %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Topic
+    <select name="topic">
+      <option value="">all</option>
+      {% for t in available_topics %}
+        <option value="{{ t }}" {% if t in selected['topics'] %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Apply</button>
+  <a class="row" href="/logs" style="align-self:end;"><button type="button" class="secondary">Reset</button></a>
+</form>
+
+{% if entries %}
+  <div class="timeline">
+    {% for e in entries %}
+      <article class="entry">
+        <div class="head">
+          <span class="tag">{{ e.tag }}</span>
+          {% if e.level %}<span class="tag level-{{ e.level }}">{{ e.level }}</span>{% endif %}
+          {% if e.source %}<span class="tag source-{{ e.source }}">{{ e.source }}</span>{% endif %}
+          {% if e.project %}<span class="tag">project:{{ e.project }}</span>{% endif %}
+          {% if e.topic %}<span class="tag">topic:{{ e.topic }}</span>{% endif %}
+          <span style="margin-left:auto; font-family: var(--mono); font-size: 12px;">{{ e.ts or e.date }}</span>
+        </div>
+        <div class="body">{{ e.text }}</div>
+        {% if e.files %}
+          <div class="files">{{ e.files|join(' · ') }}</div>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty">No log entries match these filters.</div>
+{% endif %}
+{% endblock %}

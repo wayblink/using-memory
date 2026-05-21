@@ -31,3 +31,6 @@ htmlcov/
 
 # Build artifacts
 *.log
+
+# Playwright MCP scratch (browser snapshots, console logs)
+.playwright-mcp/

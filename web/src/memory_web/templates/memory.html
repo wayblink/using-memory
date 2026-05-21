@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}MEMORY.md · using-memory{% endblock %}
+{% block content %}
+<header class="page">
+  <h1>MEMORY.md</h1>
+  <div class="sub">Curated stable facts, confirmed decisions, durable lessons</div>
+</header>
+
+{% if missing %}
+  <div class="empty">MEMORY.md is empty or missing. Write one with <code>memory_tool.py write-memory</code>.</div>
+{% else %}
+  <div class="markdown" id="md-body"></div>
+  <script id="md-source" type="text/markdown">{{ content }}</script>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if not missing %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+(function() {
+  const src = document.getElementById('md-source').textContent;
+  marked.setOptions({ gfm: true });
+  document.getElementById('md-body').innerHTML = marked.parse(src);
+})();
+</script>
+{% endif %}
+{% endblock %}
