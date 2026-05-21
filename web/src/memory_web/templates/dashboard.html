@@ -12,11 +12,27 @@
   {% endfor %}
 {% endif %}
 
+<h2 class="section-label">Lifetime counters</h2>
 <section class="stat-grid">
   <div class="stat">
     <div class="label">Sessions</div>
     <div class="value">{{ lifetime.get('sessions', 0) }}</div>
     <div class="hint">SessionStart hook invocations</div>
+  </div>
+  <div class="stat">
+    <div class="label">Cumulative turns</div>
+    <div class="value">{{ lifetime.get('cumulative_human_turns', 0) }}</div>
+    <div class="hint">across all sessions</div>
+  </div>
+  <div class="stat">
+    <div class="label">Log entries total</div>
+    <div class="value">{{ log_total }}</div>
+    <div class="hint">all JSONL entries on disk</div>
+  </div>
+  <div class="stat">
+    <div class="label">MEMORY.md entries</div>
+    <div class="value">{{ memory_total }}</div>
+    <div class="hint">curated facts/decisions/lessons</div>
   </div>
   <div class="stat">
     <div class="label">Log entries (user)</div>
@@ -54,25 +70,51 @@
     <div class="hint">silent summary appended</div>
   </div>
   <div class="stat">
-    <div class="label">Cumulative turns</div>
-    <div class="value">{{ lifetime.get('cumulative_human_turns', 0) }}</div>
-    <div class="hint">across all sessions</div>
+    <div class="label">PreCompact saves</div>
+    <div class="value">{{ lifetime.get('precompact_blocks', 0) }}</div>
+    <div class="hint">emergency context dumps</div>
   </div>
 </section>
 
-<h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); margin:24px 0 12px;">Tags in stats</h2>
-{% set tag_counts = stats.get('log_tag_counts') or {} %}
-{% if tag_counts %}
-<div class="row" style="gap:6px;">
-  {% for t, n in tag_counts.items() %}
-    <span class="tag">{{ t }} · {{ n }}</span>
-  {% endfor %}
-</div>
-{% else %}
-<div class="empty">No tag counts yet.</div>
-{% endif %}
+<div class="two-col">
+  <section>
+    <h2 class="section-label">Log tags · {{ log_total }} entries</h2>
+    {% if log_tags %}
+      <div class="bar-list">
+        {% for row in log_tags %}
+          {% set pct = (row.count * 100 / log_max) if log_max else 0 %}
+          <a class="bar-row" href="/logs?days=180&amp;tag={{ row.tag }}" title="Filter logs by tag={{ row.tag }}">
+            <span class="bar-label">{{ row.tag }}</span>
+            <span class="bar-track"><span class="bar-fill" style="width: {{ '%.1f' % pct }}%;"></span></span>
+            <span class="bar-count">{{ row.count }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty">No log entries yet.</div>
+    {% endif %}
+  </section>
 
-<h2 style="font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); margin:28px 0 12px;">Anatomy projects</h2>
+  <section>
+    <h2 class="section-label">MEMORY.md tags · {{ memory_total }} entries</h2>
+    {% if memory_tags %}
+      <div class="bar-list">
+        {% for row in memory_tags %}
+          {% set pct = (row.count * 100 / memory_max) if memory_max else 0 %}
+          <div class="bar-row">
+            <span class="bar-label">{{ row.tag }}</span>
+            <span class="bar-track"><span class="bar-fill alt" style="width: {{ '%.1f' % pct }}%;"></span></span>
+            <span class="bar-count">{{ row.count }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty">No MEMORY.md entries yet.</div>
+    {% endif %}
+  </section>
+</div>
+
+<h2 class="section-label" style="margin-top:28px;">Anatomy projects · {{ anatomy_count }}</h2>
 {% if anatomy_projects %}
 <ul class="docs-list">
   {% for p in anatomy_projects %}
