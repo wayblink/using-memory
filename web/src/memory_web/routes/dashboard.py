@@ -33,6 +33,34 @@ def dashboard(request: Request) -> HTMLResponse:
     log_block = stats.get("log") or {}
     memory_block = stats.get("memory") or {}
 
+    # Docs counts straight from filesystem (already deduped/typed by adapter)
+    docs_items = adapter.list_docs()
+    docs_total = len(docs_items)
+    docs_indexed = sum(1 for it in docs_items if it.get("in_index"))
+    docs_unindexed = docs_total - docs_indexed
+    docs_md = sum(1 for it in docs_items if it.get("ext") == "md")
+    docs_html = sum(1 for it in docs_items if it.get("ext") == "html")
+
+    # Preferences entry count: each line beginning with "- [" counts as an
+    # entry. PREFERENCES.md is append-only with this single-format shape.
+    prefs_text = adapter.read_text_file("PREFERENCES.md") or ""
+    prefs_total = sum(1 for line in prefs_text.splitlines() if line.lstrip().startswith("- ["))
+
+    # Distillation snapshot — read-only, cheap.
+    try:
+        distill = adapter.distill_candidates()
+    except Exception:
+        distill = {}
+    distill_candidates = len(distill.get("buckets") or [])
+    last_distill_check = lifetime.get("last_distill_check_ts") or distill.get("checked_at")
+    last_promote = lifetime.get("last_promote_ts")
+
+    def _short_ts(ts: str | None) -> str | None:
+        if not ts:
+            return None
+        # Strip seconds + timezone for compactness (e.g. 2026-05-22 11:14)
+        return ts.replace("T", " ")[:16]
+
     def _sorted_by_count(by_tag: dict) -> list[dict]:
         items = [(k, v) for k, v in (by_tag or {}).items() if k]
         items.sort(key=lambda kv: (-kv[1], kv[0]))
@@ -71,6 +99,15 @@ def dashboard(request: Request) -> HTMLResponse:
             "stats": stats,
             "log_total": log_block.get("total", 0),
             "memory_total": memory_block.get("total", 0),
+            "docs_total": docs_total,
+            "docs_indexed": docs_indexed,
+            "docs_unindexed": docs_unindexed,
+            "docs_md": docs_md,
+            "docs_html": docs_html,
+            "prefs_total": prefs_total,
+            "distill_candidates": distill_candidates,
+            "last_distill_check": _short_ts(last_distill_check),
+            "last_promote": _short_ts(last_promote),
             "log_tags": log_tags,
             "memory_tags": memory_tags,
             "log_max": log_max,

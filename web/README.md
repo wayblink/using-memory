@@ -1,8 +1,9 @@
 # memory-web
 
 Local web browser + lightweight editor for the [using-memory](..) skill.
-v0.4 — browse and edit log entries, docs (markdown + HTML), `MEMORY.md`,
+Browse and edit log entries, docs (markdown + HTML), `MEMORY.md`,
 `PREFERENCES.md`, anatomy snapshots, and run full-text search across them.
+Bilingual UI (English / 中文).
 
 ## Install
 
@@ -15,9 +16,9 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Dependencies pulled in: `fastapi`, `uvicorn`, `jinja2`, `python-multipart`,
-`PyYAML`. No npm / build step — the markdown renderer (`marked`) is loaded
-from a CDN at runtime.
+Dependencies: `fastapi`, `uvicorn`, `jinja2`, `python-multipart`, `PyYAML`.
+No npm / build step — `marked.js` for markdown rendering is loaded from a
+CDN at runtime.
 
 ## Run
 
@@ -29,96 +30,150 @@ memory-web --host 0.0.0.0        # expose on LAN (no auth — use with care)
 memory-web --config /path/to/config.yaml
 ```
 
-It reads from the same `~/.skills/using-memory/config.yaml` (or
+The app reads from the same `~/.skills/using-memory/config.yaml` (or
 `USING_MEMORY_CONFIG`) that `memory_tool.py` uses, and operates on the
 configured primary repo + namespace.
+
+The version pill in the sidebar reads from `<repo>/version.txt` (the
+skill's source of truth). The probe falls back to common skill install
+paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
+`~/.codex/skills/using-memory/`), then `unknown` if nothing matches.
 
 ## Pages
 
 | Path | What |
 |---|---|
-| `/` | Dashboard — STATS.json lifetime counters + diagnostic ratios + anatomy index |
-| `/logs` | JSONL log entries with date / tag / level / source / project / topic filters |
-| `/search?q=…` | Full-text across docs, `MEMORY.md`, and the configured log window |
-| `/docs` | Every `.md` and `.html` file under `<ns>/docs/`, grouped by type |
+| `/` | Dashboard — STATS.json counters, ratios, anatomy index, **estimated tokens kept out of context** |
+| `/logs` | JSONL log entries, markdown-rendered, filters: date / days / tag / level / source / project / topic / text |
+| `/search?q=…` | Full-text across docs, `MEMORY.md`, and the log window. Each hit is a clickable card |
+| `/docs` | Every `.md` and `.html` under `<ns>/docs/`, with type / format / project / tag / indexed / title filters |
 | `/docs/new` | Empty editor for a new `.md` doc |
-| `/docs/<slug>` | Single document rendered (see below) |
-| `/docs/<slug>?edit=1` | Editor for an existing `.md` doc |
-| `/docs/<slug>?raw=1` | Source text (`text/markdown` for `.md`, `text/plain` for `.html`) |
+| `/docs/<rel>` | Single document rendered (`.md` via marked.js, `.html` in a sandboxed iframe) |
+| `/docs/<rel>?edit=1` | Editor for an existing `.md` doc (textarea + Write/Preview toggle) |
+| `/docs/<rel>?raw=1` | Source text (`text/markdown` or `text/plain`) |
 | `POST /docs/save` | Upsert one doc via `memory_tool.upsert-doc` |
-| `/memory` | `MEMORY.md` rendered, plus an Append-entry form (`fact` / `decision` / `lesson`) |
+| `/memory` | `MEMORY.md` rendered + Append-entry form (`fact` / `decision` / `lesson`) |
 | `POST /memory/append` | Append via `memory_tool.write-memory` |
-| `/preferences` | `PREFERENCES.md` rendered, plus an Append-preference form |
+| `/preferences` | `PREFERENCES.md` rendered + Append-preference form |
 | `POST /preferences/append` | Append via `memory_tool.write-preference` |
 | `/anatomy` | Registered anatomy projects |
-| `/anatomy/<slug>` | File-level snapshot for one project |
+| `/anatomy/<slug>` | File-level snapshot for one project (reads `<ns>/anatomy/<slug>.json` directly) |
+| `/lang/{en,zh}` | Set language cookie + redirect back |
+| `/favicon.ico` · `/static/favicon.svg` | SVG favicon (also referenced via `<link rel="icon">`) |
+
+### Search → source navigation
+
+Every search hit links back to its origin:
+
+- **Docs** hit → `/docs/<rel>` (rendered doc).
+- **Memory** hit → `/memory`.
+- **Log** hit → `/logs?from=YYYY-MM-DD&to=YYYY-MM-DD&q=<query>` — the
+  date is parsed from the JSONL filename stem and the original query is
+  forwarded so the log filter narrows to that day's matching entries.
 
 ### Docs rendering
 
 - `.md` → parsed client-side via `marked.js`. Code blocks are styled but
-  syntax highlighting is intentionally off in v0.1.
-- `.html` → rendered inside a `sandbox="allow-same-origin"` `<iframe>` with
-  `srcdoc`. The doc's own `<style>` stays scoped to the iframe; the host
-  page resizes the iframe to fit `scrollHeight`.
-- Files that exist on disk but aren't registered in `docs/index.json` are
-  still listed and viewable, with an `unindexed` badge.
-- Subdirectories under `docs/` are supported; the slug is the relative path
-  without extension (`docs/foo/bar.md` → `/docs/foo/bar`).
+  not syntax-highlighted.
+- `.html` → rendered inside a `sandbox="allow-same-origin"` `<iframe>`
+  with `srcdoc`. The doc's own `<style>` stays scoped to the iframe; the
+  host resizes the iframe to fit `scrollHeight`.
+- Files on disk that aren't registered in `docs/index.json` are still
+  listed and viewable, with an `unindexed` badge.
+- Subdirectories under `docs/` are supported.
 - Path-traversal guard: requests with `..` or absolute paths are rejected.
+- HTML docs are read-only — `memory_tool.upsert-doc` is markdown-only.
+
+### Logs markdown
+
+Each log entry's `text` field is rendered as GFM markdown. Headings
+inside an entry are scaled down (16/15/14 px) so cards stay compact.
+Bullets, code spans, fenced code, links all render normally.
+
+## Editing
+
+Three forms wrap the underlying `memory_tool.py` write commands. All
+flow through the adapter (no subprocess), so `STATS.json` counters,
+anatomy backlinks, and `docs/index.json` stay consistent with the CLI:
+
+- **MEMORY.md** → `write-memory`. Tag restricted to `fact` / `decision`
+  / `lesson` (the only values `memory_tool` accepts).
+- **PREFERENCES.md** → `write-preference`.
+- **docs/*.md** → `upsert-doc`. Full editor: slug, title, type,
+  projects, tags, summary, body. Body has a Write / Preview toggle.
+
+Validation failures are captured from `memory_tool`'s stderr via
+`contextlib.redirect_stderr` + `SystemExit` trap, then surfaced to the
+UI as a warning instead of crashing the worker. PRG on success;
+draft-preserving 400 with the form repopulated on failure.
+
+## Internationalization
+
+`memory_web/i18n.py` defines ~140 keys per language. Language resolves
+in order: `?lang=` query > `memory_web_lang` cookie > `Accept-Language`
+header > `en`. A `GET /lang/{code}` endpoint sets the cookie (1 year,
+SameSite=Lax) and redirects to the referer.
+
+User data (log text, doc bodies, tag names, project slugs) is **never**
+translated; only UI chrome.
+
+## Dashboard
+
+- **Lifetime counters** (12 cards): sessions, cumulative turns, log
+  entries total / user / auto, MEMORY entries, anatomy projects /
+  attached / upserts, stop blocks / passthroughs, PreCompact saves.
+- **Estimated tokens kept out of context** (rough): sums
+  `anatomy_attached_tokens_est` + `log_entries_auto × 400` + `stop_blocks × 200`.
+  Each component is shown with its input counter and heuristic factor.
+  Disclaimer makes clear the skill has no real API token visibility.
+- **Tag charts**: log tags (blue) and MEMORY.md tags (orange) sorted
+  by count, rendered as horizontal bars. Log-tag rows are clickable —
+  they jump to `/logs?days=180&tag=<tag>`.
+- **Anatomy projects** list at the bottom.
 
 ## Architecture
 
 ```
 memory_web.adapter   ── imports scripts/memory_tool.py via importlib.util
-                       and wraps do_* functions with types.SimpleNamespace
+                       and wraps do_* with types.SimpleNamespace; write
+                       paths wrapped in stderr-capture + SystemExit trap
         ▲
-memory_web.app       ── builds the FastAPI app, mounts the routers, points
-                       Jinja2 at templates/
+memory_web.i18n      ── STRINGS dict (en + zh), Translator, lang_context
+                       Jinja2 context_processor
         ▲
-memory_web.routes.*  ── one router per page (dashboard, logs, search, docs,
-                       memory, preferences, anatomy)
+memory_web.app       ── FastAPI factory; lang middleware; /lang/{code};
+                       /favicon.ico; static mount; router mounts
         ▲
-templates/*.html     ── Jinja2 (Notion-style CSS)
+memory_web.routes.*  ── one router per page (dashboard, logs, search,
+                       docs, memory, preferences, anatomy)
+        ▲
+templates/*.html     ── Jinja2, all UI strings via t('key')
 static/style.css     ── single stylesheet, no JS framework
+static/favicon.svg   ── 32×32 brand favicon (3-line journal motif)
 ```
 
 Implementation notes:
 
-- FastAPI's auto-generated `/docs` Swagger UI is disabled (`docs_url=None`)
-  so our docs browser owns that path.
-- The adapter loads `scripts/memory_tool.py` once per process via
-  `importlib.util.spec_from_file_location`, so write paths (in v0.4+) will
-  naturally maintain `STATS.json` counters, anatomy backlinks, and
-  `docs/index.json` consistency the same way the CLI does.
-- Markdown / HTML viewing both go through the same `/docs/<slug>` route;
-  the template branches on file extension.
+- FastAPI's auto-generated `/docs` Swagger UI is disabled
+  (`docs_url=None`) so our docs browser owns that path.
+- The adapter loads `scripts/memory_tool.py` once per process. Anatomy
+  detail reads `<ns>/anatomy/<slug>.json` directly because
+  `do_anatomy_show` only returns rendered markdown.
+- `do_search`'s hits use `source` values `docs` / `MEMORY.md` / `log`;
+  the route normalizes them via a `source_map` into the template's
+  `docs` / `memory` / `log` buckets.
+- Empty form selects (e.g. `?tag=`) are coerced to "no filter" — the
+  `Query(None)` default would otherwise parse them as `[""]` and filter
+  every entry out.
 
-## Editing
+## Roadmap
 
-v0.4 wraps three `memory_tool.py` write commands behind small forms:
+- v0.5 — manual triggers for `maintain` / `distill` / `promote` from
+  the web UI.
 
-- `write-memory` → MEMORY.md append form. Tag is constrained to
-  `fact` / `decision` / `lesson` (the only values `memory_tool` accepts).
-- `write-preference` → PREFERENCES.md append form.
-- `upsert-doc` → full doc editor (new / edit). Title / type / projects /
-  tags / summary / body are all wired. The body is a textarea with a
-  Write / Preview toggle that renders via the same `marked.js` pipeline.
-
-All three flow through the adapter, so STATS counters and `docs/index.json`
-stay consistent with the CLI. Validation failures (e.g. wrong tag,
-disallowed slug) are captured from `memory_tool`'s stderr and surfaced as a
-warning instead of crashing the worker.
-
-HTML docs stay read-only — `memory_tool.upsert-doc` is markdown-only by
-design.
-
-## v0.4 scope
-
-Browse + light editing. Manual triggers for `maintain` / `distill` /
-`promote` are planned for v0.5. See SKILL.md for the broader using-memory
-roadmap.
+See SKILL.md for the broader using-memory roadmap.
 
 ## Stopping the server
 
-`Ctrl+C` in the terminal. If you started it with a backgrounded shell,
+`Ctrl+C` in the terminal. If you started it backgrounded,
 `pkill -f memory-web` or `lsof -ti :8765 | xargs kill` works.

@@ -127,6 +127,21 @@ class MemoryAdapter:
     def anatomy_list(self) -> dict:
         return self._mt.do_anatomy_list(self._ns(json=True))
 
+    def distill_candidates(self, *, min_entries: int = 3, min_days: int = 3) -> dict:
+        """Read-only distillation bucket analysis.
+
+        Calls memory_tool.do_maintain with --distill, which fast-paths past
+        the heavy audit. Safe to call per-dashboard-render — no writes.
+        """
+        ns = self._ns(
+            distill=True,
+            promote=None,
+            min_entries=min_entries,
+            min_days=min_days,
+            json=True,
+        )
+        return self._mt.do_maintain(ns)
+
     def anatomy_show(self, slug: str) -> dict | None:
         """Return the structured anatomy JSON for one project.
 

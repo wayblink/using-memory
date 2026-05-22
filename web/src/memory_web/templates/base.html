@@ -17,8 +17,8 @@
     </header>
     <nav>
       <a href="/" class="{% if page == 'dashboard' %}active{% endif %}"><span class="icon">▦</span> {{ t('nav.dashboard') }}</a>
-      <a href="/logs" class="{% if page == 'logs' %}active{% endif %}"><span class="icon">≡</span> {{ t('nav.logs') }}</a>
       <a href="/search" class="{% if page == 'search' %}active{% endif %}"><span class="icon">⌕</span> {{ t('nav.search') }}</a>
+      <a href="/logs" class="{% if page == 'logs' %}active{% endif %}"><span class="icon">≡</span> {{ t('nav.logs') }}</a>
       <a href="/docs" class="{% if page == 'docs' %}active{% endif %}"><span class="icon">¶</span> {{ t('nav.docs') }}</a>
       <a href="/memory" class="{% if page == 'memory' %}active{% endif %}"><span class="icon">◇</span> {{ t('nav.memory') }}</a>
       <a href="/preferences" class="{% if page == 'preferences' %}active{% endif %}"><span class="icon">★</span> {{ t('nav.preferences') }}</a>

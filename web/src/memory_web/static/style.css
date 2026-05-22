@@ -184,11 +184,19 @@ a:hover { text-decoration: underline; }
   gap: 12px;
   margin-bottom: 28px;
 }
+/* Fixed 4-col variant for the compact lifetime + anatomy rows */
+.stat-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 900px) {
+  .stat-grid-4 { grid-template-columns: repeat(2, 1fr); }
+}
 .stat {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 14px 16px;
   background: var(--bg);
+  position: relative;
 }
 .stat .label {
   font-size: 12px;
@@ -764,6 +772,99 @@ mark {
   padding: 20px 24px;
   background: linear-gradient(135deg, #f5fbff 0%, var(--bg) 60%);
 }
+
+/* Anatomy block — visually groups the 4 anatomy stat cards (incl. the
+   savings popover card) and the registered-projects list, without a heavy
+   outer border. Internal cards use their own borders for definition. */
+.anatomy-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.anatomy-block .stat-grid {
+  margin: 0;
+}
+.anatomy-block .anatomy-projects {
+  margin: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 8px 12px;
+}
+.anatomy-block .anatomy-projects li {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 4px;
+}
+.anatomy-block .anatomy-projects li:last-child { border-bottom: none; }
+
+/* Savings card variant with ? popover */
+.stat-savings .value {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.stat-help {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+}
+.stat-help > summary {
+  list-style: none;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  background: var(--bg);
+  transition: all 0.15s ease;
+}
+.stat-help > summary::-webkit-details-marker { display: none; }
+.stat-help > summary::marker { content: ""; }
+.stat-help > summary:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.stat-help[open] > summary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.stat-popover {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  width: 340px;
+  max-width: 90vw;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  box-shadow: 0 6px 18px rgba(15, 15, 15, 0.08), 0 2px 6px rgba(15, 15, 15, 0.04);
+  z-index: 20;
+}
+.stat-popover .popover-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.stat-popover .savings-disclaimer {
+  margin: 0 0 12px;
+}
+.stat-popover .savings-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
 .savings-total {
   display: flex;
   align-items: baseline;
@@ -844,6 +945,22 @@ mark {
   border-radius: var(--radius-lg);
   padding: 10px 12px;
   background: var(--bg);
+}
+.bar-list.scrollable {
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.bar-list.scrollable::-webkit-scrollbar {
+  width: 8px;
+}
+.bar-list.scrollable::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+.bar-list.scrollable::-webkit-scrollbar-track {
+  background: transparent;
 }
 .bar-row {
   display: grid;

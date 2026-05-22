@@ -13,7 +13,30 @@
 {% endif %}
 
 <h2 class="section-label">{{ t('dashboard.lifetime_counters') }}</h2>
-<section class="stat-grid">
+<section class="stat-grid stat-grid-4">
+  {# Row 1 — what's stored #}
+  <div class="stat">
+    <div class="label">{{ t('dashboard.card.log_total') }}</div>
+    <div class="value">{{ log_total }}</div>
+    <div class="hint">{{ t('dashboard.card.log_total.hint', user=lifetime.get('log_entries_user', 0), auto=lifetime.get('log_entries_auto', 0)) }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">{{ t('dashboard.card.memory_total') }}</div>
+    <div class="value">{{ memory_total }}</div>
+    <div class="hint">{{ t('dashboard.card.memory_total.hint') }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">{{ t('dashboard.card.docs_total') }}</div>
+    <div class="value">{{ docs_total }}</div>
+    <div class="hint">{{ t('dashboard.card.docs_total.hint', idx=docs_indexed, unidx=docs_unindexed, md=docs_md, html=docs_html) }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">{{ t('dashboard.card.prefs_total') }}</div>
+    <div class="value">{{ prefs_total }}</div>
+    <div class="hint">{{ t('dashboard.card.prefs_total.hint') }}</div>
+  </div>
+
+  {# Row 2 — how it got there #}
   <div class="stat">
     <div class="label">{{ t('dashboard.card.sessions') }}</div>
     <div class="value">{{ lifetime.get('sessions', 0) }}</div>
@@ -25,87 +48,20 @@
     <div class="hint">{{ t('dashboard.card.cumulative_turns.hint') }}</div>
   </div>
   <div class="stat">
-    <div class="label">{{ t('dashboard.card.log_total') }}</div>
-    <div class="value">{{ log_total }}</div>
-    <div class="hint">{{ t('dashboard.card.log_total.hint') }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.memory_total') }}</div>
-    <div class="value">{{ memory_total }}</div>
-    <div class="hint">{{ t('dashboard.card.memory_total.hint') }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.log_user') }}</div>
-    <div class="value">{{ lifetime.get('log_entries_user', 0) }}</div>
-    <div class="hint">{{ t('dashboard.card.log_user.hint') }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.log_auto') }}</div>
-    <div class="value">{{ lifetime.get('log_entries_auto', 0) }}</div>
-    <div class="hint">{{ t('dashboard.card.log_auto.hint') }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.anatomy_projects') }}</div>
-    <div class="value">{{ anatomy_count }}</div>
-    <div class="hint">{{ t('dashboard.card.anatomy_projects.hint') }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.anatomy_attached') }}</div>
-    <div class="value">{{ lifetime.get('anatomy_attached_count', 0) }}</div>
-    <div class="hint">{{ t('dashboard.card.anatomy_attached.hint', pct='%.0f' % ((ratios.get('anatomy_hit_rate') or 0) * 100)) }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.anatomy_upserts') }}</div>
-    <div class="value">{{ lifetime.get('anatomy_upserts', 0) }}</div>
-    <div class="hint">{{ t('dashboard.card.anatomy_upserts.hint') }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.stop_blocks') }}</div>
-    <div class="value">{{ lifetime.get('stop_blocks', 0) }}</div>
-    <div class="hint">{{ t('dashboard.card.stop_blocks.hint', pct='%.0f' % ((ratios.get('stop_block_ratio') or 0) * 100)) }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.stop_passthroughs') }}</div>
-    <div class="value">{{ lifetime.get('stop_throttled_passthrough', 0) }}</div>
-    <div class="hint">{{ t('dashboard.card.stop_passthroughs.hint') }}</div>
-  </div>
-  <div class="stat">
-    <div class="label">{{ t('dashboard.card.precompact') }}</div>
-    <div class="value">{{ lifetime.get('precompact_blocks', 0) }}</div>
-    <div class="hint">{{ t('dashboard.card.precompact.hint') }}</div>
-  </div>
-</section>
-
-<h2 class="section-label">{{ t('dashboard.savings.title') }}</h2>
-<section class="savings-card">
-  <div class="savings-total">
-    <span class="savings-total-label">{{ t('dashboard.savings.total') }}</span>
-    <span class="savings-total-value">~ {{ '{:,}'.format(savings_total) }}</span>
-    <span class="savings-total-unit">tokens</span>
-  </div>
-  <p class="savings-disclaimer small">{{ t('dashboard.savings.disclaimer') }}</p>
-  <div class="savings-rows">
-    <div class="savings-row">
-      <div class="savings-row-head">
-        <span class="savings-row-label">{{ t('dashboard.savings.anatomy') }}</span>
-        <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.anatomy) }}</span>
-      </div>
-      <div class="small savings-row-hint">{{ t('dashboard.savings.anatomy.hint') }}</div>
+    <div class="label">{{ t('dashboard.card.distill') }}</div>
+    <div class="value">{{ distill_candidates }}</div>
+    <div class="hint">
+      {% if last_distill_check %}
+        {{ t('dashboard.card.distill.hint', promote=last_promote or t('dashboard.card.distill.never')) }}
+      {% else %}
+        {{ t('dashboard.card.distill.hint_unchecked') }}
+      {% endif %}
     </div>
-    <div class="savings-row">
-      <div class="savings-row-head">
-        <span class="savings-row-label">{{ t('dashboard.savings.auto_summary') }}</span>
-        <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.auto_summary) }}</span>
-      </div>
-      <div class="small savings-row-hint">{{ t('dashboard.savings.auto_summary.hint', n=lifetime.get('log_entries_auto', 0), factor=savings_factors.auto_summary) }}</div>
-    </div>
-    <div class="savings-row">
-      <div class="savings-row-head">
-        <span class="savings-row-label">{{ t('dashboard.savings.stop_block') }}</span>
-        <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.stop_block) }}</span>
-      </div>
-      <div class="small savings-row-hint">{{ t('dashboard.savings.stop_block.hint', n=lifetime.get('stop_blocks', 0), factor=savings_factors.stop_block) }}</div>
-    </div>
+  </div>
+  <div class="stat">
+    <div class="label">{{ t('dashboard.card.stop_total') }}</div>
+    <div class="value">{{ (lifetime.get('stop_blocks', 0) or 0) + (lifetime.get('stop_throttled_passthrough', 0) or 0) }}</div>
+    <div class="hint">{{ t('dashboard.card.stop_total.hint', blocks=lifetime.get('stop_blocks', 0), pass_=lifetime.get('stop_throttled_passthrough', 0), pct='%.0f' % ((ratios.get('stop_block_ratio') or 0) * 100)) }}</div>
   </div>
 </section>
 
@@ -113,7 +69,7 @@
   <section>
     <h2 class="section-label">{{ t('dashboard.log_tags', n=log_total) }}</h2>
     {% if log_tags %}
-      <div class="bar-list">
+      <div class="bar-list scrollable">
         {% for row in log_tags %}
           {% set pct = (row.count * 100 / log_max) if log_max else 0 %}
           <a class="bar-row" href="/logs?days=180&amp;tag={{ row.tag }}" title="filter logs by tag={{ row.tag }}">
@@ -131,7 +87,7 @@
   <section>
     <h2 class="section-label">{{ t('dashboard.memory_tags', n=memory_total) }}</h2>
     {% if memory_tags %}
-      <div class="bar-list">
+      <div class="bar-list scrollable">
         {% for row in memory_tags %}
           {% set pct = (row.count * 100 / memory_max) if memory_max else 0 %}
           <div class="bar-row">
@@ -147,17 +103,78 @@
   </section>
 </div>
 
-<h2 class="section-label" style="margin-top:28px;">{{ t('dashboard.anatomy_projects', n=anatomy_count) }}</h2>
-{% if anatomy_projects %}
-<ul class="docs-list">
-  {% for p in anatomy_projects %}
-    <li>
-      <div class="title"><a href="/anatomy/{{ p.slug }}">{{ p.slug }}</a></div>
-      <div class="meta">{{ p.root }} · {{ p.files }} files · {{ p.tokens_est }} tokens · scanned {{ p.scanned_at or '(not scanned)' }}</div>
-    </li>
-  {% endfor %}
-</ul>
-{% else %}
-<div class="empty">{{ t('dashboard.empty.anatomy') }}</div>
-{% endif %}
+<h2 class="section-label" style="margin-top:28px;">{{ t('dashboard.anatomy_section') }}</h2>
+<div class="anatomy-block">
+  <section class="stat-grid">
+    <div class="stat">
+      <div class="label">{{ t('dashboard.card.anatomy_projects') }}</div>
+      <div class="value">{{ anatomy_count }}</div>
+      <div class="hint">{{ t('dashboard.card.anatomy_projects.hint') }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">{{ t('dashboard.card.anatomy_attached') }}</div>
+      <div class="value">{{ lifetime.get('anatomy_attached_count', 0) }}</div>
+      <div class="hint">{{ t('dashboard.card.anatomy_attached.hint', pct='%.0f' % ((ratios.get('anatomy_hit_rate') or 0) * 100)) }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">{{ t('dashboard.card.anatomy_upserts') }}</div>
+      <div class="value">{{ lifetime.get('anatomy_upserts', 0) }}</div>
+      <div class="hint">{{ t('dashboard.card.anatomy_upserts.hint') }}</div>
+    </div>
+    <div class="stat stat-savings">
+      <details class="stat-help">
+        <summary aria-label="show breakdown" title="{{ t('dashboard.savings.title') }}">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.5"/>
+            <path d="M 6 6 C 6 4.5, 10 4.5, 10 6.5 C 10 7.7, 8 7.8, 8 9.2"/>
+            <circle cx="8" cy="11.5" r="0.4" fill="currentColor"/>
+          </svg>
+        </summary>
+        <div class="stat-popover">
+          <div class="popover-title">{{ t('dashboard.savings.title') }}</div>
+          <p class="savings-disclaimer small">{{ t('dashboard.savings.disclaimer') }}</p>
+          <div class="savings-rows">
+            <div class="savings-row">
+              <div class="savings-row-head">
+                <span class="savings-row-label">{{ t('dashboard.savings.anatomy') }}</span>
+                <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.anatomy) }}</span>
+              </div>
+              <div class="small savings-row-hint">{{ t('dashboard.savings.anatomy.hint') }}</div>
+            </div>
+            <div class="savings-row">
+              <div class="savings-row-head">
+                <span class="savings-row-label">{{ t('dashboard.savings.auto_summary') }}</span>
+                <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.auto_summary) }}</span>
+              </div>
+              <div class="small savings-row-hint">{{ t('dashboard.savings.auto_summary.hint', n=lifetime.get('log_entries_auto', 0), factor=savings_factors.auto_summary) }}</div>
+            </div>
+            <div class="savings-row">
+              <div class="savings-row-head">
+                <span class="savings-row-label">{{ t('dashboard.savings.stop_block') }}</span>
+                <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.stop_block) }}</span>
+              </div>
+              <div class="small savings-row-hint">{{ t('dashboard.savings.stop_block.hint', n=lifetime.get('stop_blocks', 0), factor=savings_factors.stop_block) }}</div>
+            </div>
+          </div>
+        </div>
+      </details>
+      <div class="label">{{ t('dashboard.card.savings') }}</div>
+      <div class="value">~ {{ '{:,}'.format(savings_total) }}</div>
+      <div class="hint">{{ t('dashboard.card.savings.hint') }}</div>
+    </div>
+  </section>
+
+  {% if anatomy_projects %}
+  <ul class="docs-list anatomy-projects">
+    {% for p in anatomy_projects %}
+      <li>
+        <div class="title"><a href="/anatomy/{{ p.slug }}">{{ p.slug }}</a></div>
+        <div class="meta">{{ p.root }} · {{ p.files }} files · {{ p.tokens_est }} tokens · scanned {{ p.scanned_at or '(not scanned)' }}</div>
+      </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty">{{ t('dashboard.empty.anatomy') }}</div>
+  {% endif %}
+</div>
 {% endblock %}
