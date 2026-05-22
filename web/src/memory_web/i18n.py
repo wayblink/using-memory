@@ -47,6 +47,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "common.markdown_gfm": "Markdown · GFM",
         "common.reload": "Reload",
         "common.reload.title": "Reload this page from disk",
+        "common.delete": "Delete",
+        "common.delete.confirm": "Delete this entry?",
         # Dashboard
         "dashboard.title": "Dashboard",
         "dashboard.sub": "Lifetime stats and project overview · last event {ts}",
@@ -250,6 +252,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "common.markdown_gfm": "Markdown · GFM",
         "common.reload": "刷新",
         "common.reload.title": "从磁盘重新加载本页",
+        "common.delete": "删除",
+        "common.delete.confirm": "确定删除这条吗？",
         # Dashboard
         "dashboard.title": "仪表盘",
         "dashboard.sub": "全生命周期统计与项目概览 · 最近事件 {ts}",

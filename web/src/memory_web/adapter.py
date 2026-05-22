@@ -7,10 +7,17 @@ import importlib.util
 import io
 import json
 import os
+import re
 from datetime import date
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
+
+
+_MEMORY_LINE_RE = re.compile(
+    r"^- \[(?P<tag>[A-Za-z0-9_-]+)(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?\]\s+(?P<text>.*)$"
+)
+_PREF_LINE_RE = re.compile(r"^- \[(?P<tag>[A-Za-z0-9_-]+)\]\s+(?P<text>.*)$")
 
 
 _MEMORY_TOOL: ModuleType | None = None
@@ -365,6 +372,130 @@ class MemoryAdapter:
         if not path.exists() or not path.is_file():
             return None
         return path.read_text(encoding="utf-8")
+
+    # --- MEMORY.md / PREFERENCES.md card helpers ---------------------------
+
+    def list_memory_entries(self) -> list[dict]:
+        """Parse MEMORY.md into per-entry cards keyed by 1-based line number.
+
+        Lines that don't match the bullet pattern (headers, blank lines, free
+        prose) are kept out of the cards list so the UI shows only editable
+        entries. The line_no on each card refers to the canonical position in
+        the original file — used by update/delete to locate the row safely.
+        """
+        return self._parse_entries("MEMORY.md", _MEMORY_LINE_RE, with_date=True)
+
+    def list_preference_entries(self) -> list[dict]:
+        return self._parse_entries("PREFERENCES.md", _PREF_LINE_RE, with_date=False)
+
+    def _parse_entries(
+        self, relative: str, pattern: re.Pattern[str], *, with_date: bool
+    ) -> list[dict]:
+        content = self.read_text_file(relative)
+        if not content:
+            return []
+        entries: list[dict] = []
+        for idx, line in enumerate(content.splitlines(), start=1):
+            m = pattern.match(line.rstrip("\r"))
+            if not m:
+                continue
+            entry = {
+                "line_no": idx,
+                "tag": m.group("tag"),
+                "text": m.group("text"),
+            }
+            if with_date:
+                entry["date"] = m.group("date") or ""
+            entries.append(entry)
+        # Show newest first — entries near the bottom of the file are usually
+        # the most recently appended.
+        entries.reverse()
+        return entries
+
+    def update_memory_line(
+        self, *, line_no: int, tag: str, when: str | None, text: str
+    ) -> None:
+        if tag not in self._MEMORY_TAGS:
+            raise MemoryToolError(f"tag '{tag}' is not allowed for memory")
+        when_str = (when or "").strip()
+        if when_str:
+            try:
+                date.fromisoformat(when_str)
+            except ValueError:
+                raise MemoryToolError(f"invalid date: {when_str!r}") from None
+        text = text.strip()
+        if not text:
+            raise MemoryToolError("text must not be empty")
+        new_line = f"- [{tag}|{when_str}] {text}" if when_str else f"- [{tag}] {text}"
+        self._replace_line("MEMORY.md", line_no, new_line, _MEMORY_LINE_RE)
+
+    def delete_memory_line(self, *, line_no: int) -> None:
+        self._delete_line("MEMORY.md", line_no, _MEMORY_LINE_RE)
+
+    def update_preference_line(self, *, line_no: int, text: str) -> None:
+        text = text.strip()
+        if not text:
+            raise MemoryToolError("text must not be empty")
+        new_line = f"- [pref] {text}"
+        self._replace_line("PREFERENCES.md", line_no, new_line, _PREF_LINE_RE)
+
+    def delete_preference_line(self, *, line_no: int) -> None:
+        self._delete_line("PREFERENCES.md", line_no, _PREF_LINE_RE)
+
+    def _resolve_path(self, relative: str) -> Path:
+        root = self.primary_root()
+        if root is None:
+            raise MemoryToolError("memory root is not configured")
+        path = root / relative
+        if not path.exists():
+            raise MemoryToolError(f"{relative} does not exist yet")
+        return path
+
+    def _replace_line(
+        self,
+        relative: str,
+        line_no: int,
+        new_line: str,
+        pattern: re.Pattern[str],
+    ) -> None:
+        path = self._resolve_path(relative)
+        mt = self._mt
+        with mt.exclusive_file_lock(mt.lock_path_for(path)):
+            existing = path.read_text(encoding="utf-8")
+            had_trailing_newline = existing.endswith("\n")
+            lines = existing.splitlines()
+            if line_no < 1 or line_no > len(lines):
+                raise MemoryToolError(f"line {line_no} is out of range")
+            current = lines[line_no - 1]
+            if not pattern.match(current.rstrip("\r")):
+                raise MemoryToolError(
+                    f"line {line_no} no longer matches an entry; refresh the page"
+                )
+            lines[line_no - 1] = new_line
+            new_content = "\n".join(lines) + ("\n" if had_trailing_newline else "")
+            mt.atomic_write_text(path, new_content)
+
+    def _delete_line(
+        self, relative: str, line_no: int, pattern: re.Pattern[str]
+    ) -> None:
+        path = self._resolve_path(relative)
+        mt = self._mt
+        with mt.exclusive_file_lock(mt.lock_path_for(path)):
+            existing = path.read_text(encoding="utf-8")
+            had_trailing_newline = existing.endswith("\n")
+            lines = existing.splitlines()
+            if line_no < 1 or line_no > len(lines):
+                raise MemoryToolError(f"line {line_no} is out of range")
+            current = lines[line_no - 1]
+            if not pattern.match(current.rstrip("\r")):
+                raise MemoryToolError(
+                    f"line {line_no} no longer matches an entry; refresh the page"
+                )
+            del lines[line_no - 1]
+            new_content = "\n".join(lines)
+            if new_content and had_trailing_newline:
+                new_content += "\n"
+            mt.atomic_write_text(path, new_content)
 
 
 def _fallback_title(path: Path) -> str:

@@ -1005,3 +1005,68 @@ a.bar-row:hover .bar-label { color: var(--accent); }
   color: var(--text-soft);
   text-align: right;
 }
+
+/* Per-entry cards on /memory and /preferences pages */
+.entry-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.entry-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  padding: 12px 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.entry-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+.entry-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.entry-card-head .entry-date {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.entry-card-head .entry-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.entry-card-text {
+  white-space: pre-wrap;
+  font-size: 14px;
+  color: var(--text);
+  word-break: break-word;
+}
+.entry-card-edit {
+  margin-top: 4px;
+}
+.entry-card-edit[hidden] { display: none; }
+.entry-card-view[hidden] { display: none; }
+.inline-form {
+  display: inline;
+  margin: 0;
+}
+.link-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.link-btn:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.link-btn.danger:hover {
+  background: #fdecec;
+  color: #b54708;
+}

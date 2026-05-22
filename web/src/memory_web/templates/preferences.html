@@ -26,21 +26,62 @@
 {% if missing %}
   <div class="empty" style="margin-top:24px;">{{ t('pref.empty') }}</div>
 {% else %}
-  <h2 class="section-label">{{ t('pref.current') }}</h2>
-  <div class="markdown" id="md-body"></div>
-  <script id="md-source" type="text/markdown">{{ content }}</script>
+  <h2 class="section-label">{{ t('pref.current') }} · {{ entries|length }}</h2>
+  <div class="entry-cards">
+    {% for e in entries %}
+      <article class="entry-card" data-line="{{ e.line_no }}">
+        <div class="entry-card-view">
+          <div class="entry-card-head">
+            <span class="tag">{{ e.tag }}</span>
+            <div class="entry-actions">
+              <button type="button" class="link-btn" data-action="edit">{{ t('common.edit') }}</button>
+              <form method="post" action="/preferences/delete/{{ e.line_no }}" class="inline-form"
+                    data-confirm="{{ t('common.delete.confirm') }}">
+                <button type="submit" class="link-btn danger">{{ t('common.delete') }}</button>
+              </form>
+            </div>
+          </div>
+          <div class="entry-card-text">{{ e.text }}</div>
+        </div>
+        <form class="entry-card-edit entry-form" method="post" action="/preferences/update/{{ e.line_no }}" hidden>
+          <label class="full">{{ t('pref.form.text') }}
+            <textarea name="text" rows="3" required>{{ e.text }}</textarea>
+          </label>
+          <div class="row">
+            <button type="submit">{{ t('common.save') }}</button>
+            <button type="button" class="secondary" data-action="cancel">{{ t('common.cancel') }}</button>
+          </div>
+        </form>
+      </article>
+    {% endfor %}
+  </div>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
-{% if not missing %}
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
 (function() {
-  const src = document.getElementById('md-source').textContent;
-  marked.setOptions({ gfm: true });
-  document.getElementById('md-body').innerHTML = marked.parse(src);
+  document.querySelectorAll('.entry-card').forEach(function(card) {
+    var view = card.querySelector('.entry-card-view');
+    var edit = card.querySelector('.entry-card-edit');
+    var editBtn = card.querySelector('[data-action="edit"]');
+    var cancelBtn = card.querySelector('[data-action="cancel"]');
+    if (editBtn) editBtn.addEventListener('click', function() {
+      view.hidden = true;
+      edit.hidden = false;
+      var ta = edit.querySelector('textarea');
+      if (ta) ta.focus();
+    });
+    if (cancelBtn) cancelBtn.addEventListener('click', function() {
+      edit.hidden = true;
+      view.hidden = false;
+    });
+  });
+  document.querySelectorAll('form.inline-form[data-confirm]').forEach(function(f) {
+    f.addEventListener('submit', function(ev) {
+      if (!window.confirm(f.dataset.confirm)) ev.preventDefault();
+    });
+  });
 })();
 </script>
-{% endif %}
 {% endblock %}
