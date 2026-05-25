@@ -202,16 +202,6 @@ def stop_gate_reason(events: list[str], last_message: str, distill_md: str | Non
     return base
 
 
-def precompact_gate_reason() -> str:
-    """Compact block reason for PreCompact. Same philosophy as stop_gate_reason."""
-    return (
-        "Context will be compacted shortly. Run scripts/memory_tool.py write-log "
-        "(level=summary) before the window shrinks: current task and unfinished "
-        "subgoals, key identifiers (paths/SHAs/branches/PR/deploy), open risks. "
-        "Promote any confirmed decisions or lessons to write-memory."
-    )
-
-
 # Tool-input keys whose value is the most useful one-line hint for the
 # event summary. Ordered by preference: shell command beats file path beats
 # generic URL/query. Used by _summarise_single_tool_call.
@@ -902,18 +892,10 @@ def run(host: str) -> int:
         return 0
 
     if event == "PreCompact":
-        if payload.get("stop_hook_active") or payload.get("precompact_hook_active"):
-            print("{}")
-            return 0
-        last_message = assistant_text(payload)
-        if MEMORY_WRITE_RE.search(last_message):
-            state["memory_written"] = True
-            save_state(payload, host, state)
-            print("{}")
-            return 0
-        save_state(payload, host, state)
-        bump_stats({"precompact_blocks": 1})
-        print(json.dumps({"decision": "block", "reason": precompact_gate_reason()}, ensure_ascii=False))
+        # PreCompact hook intentionally disabled: blocking compact to force a
+        # memory write has been observed to hang the compact pipeline. Leave
+        # this as a no-op so any leftover settings.json wiring is harmless.
+        print("{}")
         return 0
 
     print("{}")
