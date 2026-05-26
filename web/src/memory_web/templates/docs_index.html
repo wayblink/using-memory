@@ -59,6 +59,7 @@
   </label>
   <label>{{ t('docs.filter.group') }}
     <select name="group">
+      <option value="none"    {% if selected['group'] == 'none'    %}selected{% endif %}>{{ t('docs.group.none') }}</option>
       <option value="type"    {% if selected['group'] == 'type'    %}selected{% endif %}>{{ t('docs.group.type') }}</option>
       <option value="project" {% if selected['group'] == 'project' %}selected{% endif %}>{{ t('docs.group.project') }}</option>
     </select>
@@ -79,7 +80,9 @@
 {% if items %}
   {% for key, group in groups.items() %}
     <section class="docs-section">
+      {% if key != all_docs_key %}
       <h2>{% if key == no_project_key %}{{ t('docs.group.no_project') }}{% else %}{{ key }}{% endif %} · {{ group|length }}</h2>
+      {% endif %}
       <ul class="docs-list">
         {% for it in group %}
           <li>

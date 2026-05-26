@@ -18,9 +18,10 @@ DOC_TYPES = (
     "project",
 )
 
-GROUP_OPTIONS = ("type", "project")
+GROUP_OPTIONS = ("none", "type", "project")
 SORT_OPTIONS = ("name", "modified")
 NO_PROJECT_KEY = "__no_project__"
+ALL_DOCS_KEY = "__all_docs__"
 
 
 @router.get("/docs", response_class=HTMLResponse, name="docs_index")
@@ -55,10 +56,10 @@ def docs_index(
     indexed_flag = (indexed or "").strip() or None  # "yes" | "no" | None
     group_value = (group or "").strip()
     if group_value not in GROUP_OPTIONS:
-        group_value = "type"
+        group_value = "none"
     sort_value = (sort or "").strip()
     if sort_value not in SORT_OPTIONS:
-        sort_value = "name"
+        sort_value = "modified"
 
     filtered = items
     if type:
@@ -85,7 +86,9 @@ def docs_index(
         filtered = [i for i in filtered if needle in _hay(i)]
 
     groups: dict[str, list[dict]] = {}
-    if group_value == "project":
+    if group_value == "none":
+        groups[ALL_DOCS_KEY] = list(filtered)
+    elif group_value == "project":
         for item in filtered:
             projects = item.get("projects") or []
             if projects:
@@ -134,6 +137,7 @@ def docs_index(
             "available_projects": available_projects,
             "available_tags": available_tags,
             "no_project_key": NO_PROJECT_KEY,
+            "all_docs_key": ALL_DOCS_KEY,
             "selected": {
                 "type": type or "",
                 "format": format or "",
