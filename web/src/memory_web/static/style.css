@@ -52,6 +52,83 @@ a:hover { text-decoration: underline; }
   display: flex;
   flex-direction: column;
 }
+
+/* Namespace picker — sits just below the brand header.
+   Neutral dark-grey trigger using the project's --text token (the same warm
+   slate used for body copy), opens a white card menu. Native <details>/
+   <summary> — no JS. Colors and font-size match the rest of the sidebar. */
+.ns-picker {
+  margin: 4px 4px 16px;
+  position: relative;
+}
+.ns-picker-details > .ns-picker-trigger {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 4px;
+  background: var(--text-soft);
+  color: #fff;
+  user-select: none;
+  transition: background 0.12s ease;
+  outline: none;
+}
+.ns-picker-details > .ns-picker-trigger:hover { background: #5e5b56; }
+.ns-picker-details > .ns-picker-trigger:focus-visible {
+  box-shadow: 0 0 0 3px var(--tag-bg);
+}
+.ns-picker-details > .ns-picker-trigger::-webkit-details-marker { display: none; }
+.ns-picker-details[open] > .ns-picker-trigger {
+  background: #5e5b56;
+  border-radius: 4px 4px 0 0;
+}
+
+.ns-picker-icon { flex-shrink: 0; }
+.ns-picker-trigger .ns-picker-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.005em;
+}
+.ns-picker-arrow {
+  margin-left: auto;
+  color: #fff;
+  transition: transform 0.18s ease;
+}
+.ns-picker-details[open] .ns-picker-arrow { transform: rotate(180deg); }
+
+.ns-picker-menu {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+}
+.ns-picker-menu li a {
+  display: block;
+  padding: 9px 14px;
+  font-size: 14px;
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text-soft);
+  letter-spacing: 0.005em;
+  transition: background 0.1s ease;
+}
+.ns-picker-menu li a:hover {
+  background: var(--bg-soft);
+  text-decoration: none;
+}
+.ns-picker-menu li.is-current a {
+  background: var(--tag-bg);
+  color: var(--text);
+  font-weight: 700;
+}
+
 .sidebar-head {
   display: flex;
   align-items: baseline;

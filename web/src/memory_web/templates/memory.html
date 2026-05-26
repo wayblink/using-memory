@@ -10,6 +10,7 @@
   <div class="warning">{{ error }}</div>
 {% endif %}
 
+{% if ns_writable %}
 <section class="card">
   <h2 class="card-title">{{ t('memory.form.title') }}</h2>
   <form class="entry-form" method="post" action="/memory/append">
@@ -32,6 +33,7 @@
     </div>
   </form>
 </section>
+{% endif %}
 
 {% if missing %}
   <div class="empty" style="margin-top:24px;">{{ t('memory.empty') }}</div>
@@ -45,15 +47,18 @@
             <span class="tag">{{ e.tag }}</span>
             {% if e.date %}<span class="entry-date">{{ e.date }}</span>{% endif %}
             <div class="entry-actions">
+              {% if ns_writable %}
               <button type="button" class="link-btn" data-action="edit">{{ t('common.edit') }}</button>
               <form method="post" action="/memory/delete/{{ e.line_no }}" class="inline-form"
                     data-confirm="{{ t('common.delete.confirm') }}">
                 <button type="submit" class="link-btn danger">{{ t('common.delete') }}</button>
               </form>
+              {% endif %}
             </div>
           </div>
           <div class="entry-card-text">{{ e.text }}</div>
         </div>
+        {% if ns_writable %}
         <form class="entry-card-edit entry-form" method="post" action="/memory/update/{{ e.line_no }}" hidden>
           <div class="row">
             <label>{{ t('memory.form.tag') }}
@@ -75,6 +80,7 @@
             <button type="button" class="secondary" data-action="cancel">{{ t('common.cancel') }}</button>
           </div>
         </form>
+        {% endif %}
       </article>
     {% endfor %}
   </div>

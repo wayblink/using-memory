@@ -20,7 +20,7 @@ def _redirect_with_error(exc: MemoryToolError) -> RedirectResponse:
 
 @router.get("/memory", response_class=HTMLResponse, name="memory")
 def memory(request: Request, error: str | None = None) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     entries = adapter.list_memory_entries()
@@ -45,7 +45,7 @@ def memory_append(
     text: str = Form(...),
     when: str = Form(""),
 ):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     try:
         adapter.write_memory(when=(when or None), tag=tag, text=text)
     except MemoryToolError as exc:
@@ -61,7 +61,7 @@ def memory_update(
     text: str = Form(...),
     when: str = Form(""),
 ):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     try:
         adapter.update_memory_line(line_no=line_no, tag=tag, when=when or None, text=text)
     except MemoryToolError as exc:
@@ -71,7 +71,7 @@ def memory_update(
 
 @router.post("/memory/delete/{line_no}")
 def memory_delete(line_no: int, request: Request):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     try:
         adapter.delete_memory_line(line_no=line_no)
     except MemoryToolError as exc:

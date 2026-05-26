@@ -32,6 +32,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.preferences": "Preferences",
         "nav.anatomy": "Anatomy",
         "version_tag": "browse + edit",
+        # Namespace switcher
+        "ns.label": "Namespace",
+        "ns.readonly": "read-only",
+        "ns.default_hint": "default · writable",
+        "ns.other_hint": "browse-only",
+        "ns.switch_back": "Back to default",
         # Common
         "common.apply": "Apply",
         "common.reset": "Reset",
@@ -244,6 +250,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.preferences": "偏好",
         "nav.anatomy": "项目快照",
         "version_tag": "浏览 + 编辑",
+        # Namespace switcher
+        "ns.label": "命名空间",
+        "ns.readonly": "只读",
+        "ns.default_hint": "默认 · 可写",
+        "ns.other_hint": "仅浏览",
+        "ns.switch_back": "回到默认",
         # Common
         "common.apply": "应用",
         "common.reset": "重置",

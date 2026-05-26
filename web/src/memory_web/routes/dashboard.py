@@ -20,7 +20,7 @@ _ANATOMY_DISCOVERY_FACTOR = 1.0      # injected anatomy tokens are 1:1 saved
 
 @router.get("/", response_class=HTMLResponse, name="dashboard")
 def dashboard(request: Request) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     status = adapter.status()

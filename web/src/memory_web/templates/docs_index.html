@@ -13,7 +13,9 @@
       {% if unregistered %}{{ t('docs.sub.unindexed', n=unregistered) }}{% endif %}
     </div>
   </div>
+  {% if ns_writable %}
   <a href="/docs/new" class="btn page-actions">{{ t('docs.new') }}</a>
+  {% endif %}
 </header>
 
 <form class="filters" method="get" action="/docs">

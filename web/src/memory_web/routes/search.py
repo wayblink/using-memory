@@ -44,7 +44,7 @@ def search(
     log_days: int = Query(30, ge=1, le=3650),
     scope: str | None = None,
 ) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     scope_value = (scope or "all").strip().lower()

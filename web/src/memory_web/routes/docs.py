@@ -35,7 +35,7 @@ def docs_index(
     group: str | None = None,
     sort: str | None = None,
 ) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     items = adapter.list_docs()
@@ -185,7 +185,7 @@ def doc_save(
     summary: str = Form(""),
     body: str = Form(...),
 ):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
 
     project_list = [p.strip() for p in projects.split(",") if p.strip()]
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
@@ -236,7 +236,7 @@ def doc_view(
     raw: int | None = Query(None),
     edit: int | None = Query(None),
 ):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     doc = adapter.read_doc(slug)

@@ -9,12 +9,15 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .adapter import MemoryAdapter
+from .adapter import MemoryAdapter, NamespaceRegistry
 from .i18n import COOKIE_NAME, SUPPORTED, lang_context, resolve_lang
 from .routes import anatomy, dashboard, docs, logs, memory, preferences, search
 
 
 _PKG_DIR = Path(__file__).resolve().parent
+
+
+NAMESPACE_COOKIE = "memory_web_ns"
 
 
 def _read_skill_version() -> str:
@@ -44,9 +47,24 @@ def _read_skill_version() -> str:
 SKILL_VERSION = _read_skill_version()
 
 
+def _namespace_context(request: Request) -> dict:
+    """Surface the active namespace + sibling list to every template.
+
+    Reads ``request.state.adapter`` and ``request.state.namespaces`` set by
+    the ``attach_namespace`` middleware. Falls back to an empty list if the
+    middleware didn't run (e.g. error responses).
+    """
+    adapter = getattr(request.state, "adapter", None)
+    return {
+        "current_ns": getattr(adapter, "namespace", "main") if adapter else "main",
+        "ns_writable": getattr(adapter, "writable", True) if adapter else True,
+        "namespaces": getattr(request.state, "namespaces", []) or [],
+    }
+
+
 TEMPLATES = Jinja2Templates(
     directory=str(_PKG_DIR / "templates"),
-    context_processors=[lang_context],
+    context_processors=[lang_context, _namespace_context],
 )
 # Make the skill version available to every template without per-route boilerplate.
 TEMPLATES.env.globals["skill_version"] = SKILL_VERSION
@@ -62,8 +80,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
         openapi_url=None,
     )
     adapter = MemoryAdapter(config_path=config_path)
+    registry = NamespaceRegistry(adapter)
 
     app.state.adapter = adapter
+    app.state.namespaces = registry
     app.state.templates = TEMPLATES
     app.state.skill_version = SKILL_VERSION
 
@@ -77,6 +97,18 @@ def create_app(config_path: str | None = None) -> FastAPI:
             accept_language=request.headers.get("accept-language"),
         )
         request.state.lang = lang
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def attach_namespace(request: Request, call_next):
+        # ?ns= overrides the cookie (one-shot deep linking) but does not
+        # persist; /ns/<name> is the way to switch durably via cookie.
+        ns_name = (
+            request.query_params.get("ns")
+            or request.cookies.get(NAMESPACE_COOKIE)
+        )
+        request.state.adapter = registry.resolve(ns_name)
+        request.state.namespaces = registry.available()
         return await call_next(request)
 
     @app.get("/lang/{code}", name="set_lang")
@@ -93,6 +125,25 @@ def create_app(config_path: str | None = None) -> FastAPI:
             httponly=False,
             samesite="lax",
         )
+        return resp
+
+    @app.get("/ns/{name}", name="set_namespace")
+    def set_namespace(name: str, request: Request):
+        # Only allow switching to a discovered namespace; anything else is a
+        # cookie clear (back to the default).
+        valid = {row["name"] for row in registry.available()}
+        target = request.headers.get("referer") or "/"
+        resp = RedirectResponse(target, status_code=303)
+        if name == registry.default_namespace or name not in valid:
+            resp.delete_cookie(NAMESPACE_COOKIE)
+        else:
+            resp.set_cookie(
+                NAMESPACE_COOKIE,
+                name,
+                max_age=60 * 60 * 24 * 365,
+                httponly=False,
+                samesite="lax",
+            )
         return resp
 
     # Serve the SVG favicon at /favicon.ico (browsers request that path even

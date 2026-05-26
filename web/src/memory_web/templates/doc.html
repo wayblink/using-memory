@@ -32,7 +32,7 @@
   {% if entry.get('tags') %}<span>{{ t('docs.meta.tags') }}:{{ entry.tags|join(', ') }}</span>{% endif %}
   <span class="small">{{ rel }}</span>
   <a href="/docs/{{ rel }}?raw=1" class="small" style="margin-left:auto;">{{ t('common.view_source') }}</a>
-  {% if ext == 'md' %}
+  {% if ext == 'md' and ns_writable %}
     <a href="/docs/{{ rel }}?edit=1" class="btn" style="margin-left:8px;">{{ t('common.edit') }}</a>
   {% endif %}
 </div>

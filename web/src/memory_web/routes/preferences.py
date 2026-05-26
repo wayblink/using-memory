@@ -18,7 +18,7 @@ def _redirect_with_error(exc: MemoryToolError) -> RedirectResponse:
 
 @router.get("/preferences", response_class=HTMLResponse, name="preferences")
 def preferences(request: Request, error: str | None = None) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     entries = adapter.list_preference_entries()
@@ -41,7 +41,7 @@ def preferences_append(
     text: str = Form(...),
     when: str = Form(""),
 ):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     try:
         adapter.write_preference(when=(when or None), text=text)
     except MemoryToolError as exc:
@@ -56,7 +56,7 @@ def preferences_update(
     text: str = Form(...),
     when: str = Form(""),
 ):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     try:
         adapter.update_preference_line(line_no=line_no, when=when or None, text=text)
     except MemoryToolError as exc:
@@ -66,7 +66,7 @@ def preferences_update(
 
 @router.post("/preferences/delete/{line_no}")
 def preferences_delete(line_no: int, request: Request):
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     try:
         adapter.delete_preference_line(line_no=line_no)
     except MemoryToolError as exc:

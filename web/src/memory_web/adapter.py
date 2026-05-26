@@ -8,10 +8,13 @@ import io
 import json
 import os
 import re
+import tempfile
 from datetime import date
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
+
+import yaml
 
 
 _MEMORY_LINE_RE = re.compile(
@@ -58,14 +61,110 @@ def _args(**kwargs: Any) -> SimpleNamespace:
 
 
 class MemoryAdapter:
-    """Single entry point used by FastAPI routes."""
+    """Single entry point used by FastAPI routes.
 
-    def __init__(self, config_path: str | None = None) -> None:
+    The default adapter (``namespace_override=None``) reads and writes against
+    the configured primary root + namespace from ``~/.skills/using-memory/config.yaml``.
+
+    A second adapter constructed via ``for_namespace("other-ns")`` reads from a
+    sibling namespace under the same path. It is **read-only**: writes raise
+    ``MemoryToolError``. The do_* read paths see the alternate namespace via a
+    lazily-materialized temp config file whose ``memory_roots[*].namespace`` is
+    rewritten — no monkeypatching of ``memory_tool`` needed.
+    """
+
+    def __init__(
+        self,
+        config_path: str | None = None,
+        *,
+        namespace_override: str | None = None,
+    ) -> None:
         self.config_path = config_path
+        self.namespace_override = namespace_override
         self._mt = memory_tool()
+        self._override_config_path: str | None = None
+        self._cached_namespace: str | None = None
+
+    # -- namespace plumbing --------------------------------------------------
+
+    @property
+    def writable(self) -> bool:
+        """True only on the default adapter. Alternate namespaces are read-only."""
+        return self.namespace_override is None
+
+    @property
+    def namespace(self) -> str:
+        """The active namespace name. Resolves from config when no override is set."""
+        if self.namespace_override:
+            return self.namespace_override
+        if self._cached_namespace is None:
+            self._cached_namespace = self._resolve_default_namespace()
+        return self._cached_namespace
+
+    def _resolve_default_namespace(self) -> str:
+        mt = self._mt
+        config = mt.load_config(
+            Path(self.config_path) if self.config_path else None,
+            os.environ.get("USING_MEMORY_CONFIG"),
+        )
+        if not config:
+            return "main"
+        primary_list, _ = mt.collect_roots(config)
+        if not primary_list:
+            return "main"
+        return mt.namespace_from_root(primary_list[0])
+
+    def _effective_config_path(self) -> str | None:
+        """Return the config path to hand to memory_tool.do_*.
+
+        Default adapter: returns self.config_path unchanged. Alternate-namespace
+        adapter: writes a temp config (once) with ``namespace`` rewritten on
+        every root. ``writable`` is left untouched because several read-only
+        do_* paths (do_status, do_anatomy_list, do_maintain --distill) call
+        ``load_primary_for_write`` internally and require ``writable: true``
+        on the primary root even though they don't actually mutate state.
+        Write-gating happens one layer up via ``_require_writable()``.
+        Cached on the instance; the file lives for the process lifetime.
+        """
+        if self.namespace_override is None:
+            return self.config_path
+        if self._override_config_path is not None:
+            return self._override_config_path
+
+        mt = self._mt
+        base = mt.load_config(
+            Path(self.config_path) if self.config_path else None,
+            os.environ.get("USING_MEMORY_CONFIG"),
+        )
+        # Strip internal fields memory_tool stamps onto the loaded dict before
+        # writing back out so yaml.safe_dump doesn't reject them.
+        base = {k: v for k, v in base.items() if not k.startswith("_")}
+        roots = base.get("memory_roots") or []
+        for root in roots:
+            if isinstance(root, dict):
+                root["namespace"] = self.namespace_override
+        fd, path = tempfile.mkstemp(
+            prefix=f"memory-web-ns-{self.namespace_override}-",
+            suffix=".yaml",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fp:
+                yaml.safe_dump(base, fp, sort_keys=False, allow_unicode=True)
+        except Exception:
+            os.unlink(path)
+            raise
+        self._override_config_path = path
+        return path
 
     def _ns(self, **extra: Any) -> SimpleNamespace:
-        return _args(config=self.config_path, **extra)
+        return _args(config=self._effective_config_path(), **extra)
+
+    def _require_writable(self) -> None:
+        if not self.writable:
+            raise MemoryToolError(
+                f"namespace '{self.namespace}' is read-only in the web UI; "
+                "switch to the default namespace to make changes"
+            )
 
     def status(self) -> dict:
         return self._mt.do_status(self._ns(json=True))
@@ -188,11 +287,13 @@ class MemoryAdapter:
     _MEMORY_TAGS = ("fact", "decision", "lesson")
 
     def write_memory(self, *, when: str | None, tag: str, text: str) -> dict:
+        self._require_writable()
         when_str = when or date.today().isoformat()
         ns = self._ns(date=when_str, tag=tag, text=text, json=True)
         return self._call_capturing_exits(self._mt.do_write_memory, ns)
 
     def write_preference(self, *, when: str | None, text: str) -> dict:
+        self._require_writable()
         when_str = when or date.today().isoformat()
         ns = self._ns(date=when_str, text=text, json=True)
         return self._call_capturing_exits(self._mt.do_write_preference, ns)
@@ -210,6 +311,7 @@ class MemoryAdapter:
         summary: str | None = None,
         link_logs: list[str] | None = None,
     ) -> dict:
+        self._require_writable()
         ns = self._ns(
             doc=doc,
             text=text,
@@ -230,8 +332,9 @@ class MemoryAdapter:
     def primary_root(self) -> Path | None:
         """Resolve the primary repo's namespace-scoped root directory."""
         mt = self._mt
+        eff = self._effective_config_path()
         config = mt.load_config(
-            Path(self.config_path) if self.config_path else None,
+            Path(eff) if eff else None,
             os.environ.get("USING_MEMORY_CONFIG"),
         )
         if not config:
@@ -420,6 +523,7 @@ class MemoryAdapter:
     def update_memory_line(
         self, *, line_no: int, tag: str, when: str | None, text: str
     ) -> None:
+        self._require_writable()
         if tag not in self._MEMORY_TAGS:
             raise MemoryToolError(f"tag '{tag}' is not allowed for memory")
         when_str = (when or "").strip()
@@ -435,9 +539,11 @@ class MemoryAdapter:
         self._replace_line("MEMORY.md", line_no, new_line, _MEMORY_LINE_RE)
 
     def delete_memory_line(self, *, line_no: int) -> None:
+        self._require_writable()
         self._delete_line("MEMORY.md", line_no, _MEMORY_LINE_RE)
 
     def update_preference_line(self, *, line_no: int, when: str | None, text: str) -> None:
+        self._require_writable()
         when_str = (when or "").strip()
         if not when_str:
             raise MemoryToolError("date must not be empty")
@@ -452,6 +558,7 @@ class MemoryAdapter:
         self._replace_line("PREFERENCES.md", line_no, new_line, _PREF_LINE_RE)
 
     def delete_preference_line(self, *, line_no: int) -> None:
+        self._require_writable()
         self._delete_line("PREFERENCES.md", line_no, _PREF_LINE_RE)
 
     def _resolve_path(self, relative: str) -> Path:
@@ -533,4 +640,115 @@ def _fallback_title(path: Path) -> str:
             pass
         return path.stem
     return name
+
+
+# --- Namespace discovery + registry ----------------------------------------
+#
+# The configured memory_root holds one or more sibling namespace directories
+# (e.g. /Users/foo/.memories/{main,step-ws}). The web UI lets the user browse
+# any of them; the default — read from config — is writable, the rest are not.
+
+
+_NAMESPACE_MARKERS = ("MEMORY.md", "PREFERENCES.md", "log", "docs", "anatomy")
+
+
+def _looks_like_namespace_dir(p: Path) -> bool:
+    if not p.is_dir() or p.name.startswith("."):
+        return False
+    for marker in _NAMESPACE_MARKERS:
+        if (p / marker).exists():
+            return True
+    return False
+
+
+def list_namespaces(default_adapter: MemoryAdapter) -> list[dict]:
+    """Discover sibling namespaces under each configured memory root.
+
+    Returns a list of ``{"name", "path", "is_default"}`` dicts, with the
+    default namespace first. Always includes the default; empty list only if
+    no config is loaded.
+    """
+    mt = default_adapter._mt
+    config = mt.load_config(
+        Path(default_adapter.config_path) if default_adapter.config_path else None,
+        os.environ.get("USING_MEMORY_CONFIG"),
+    )
+    if not config:
+        return []
+    primary_list, _ = mt.collect_roots(config)
+    if not primary_list:
+        return []
+
+    default_ns = default_adapter.namespace
+    seen: dict[str, dict] = {}
+    for root_cfg in primary_list:
+        raw_path = root_cfg.get("path", "")
+        if not raw_path:
+            continue
+        base = mt.expand_path(raw_path)
+        if not base.exists() or not base.is_dir():
+            continue
+        for child in sorted(base.iterdir()):
+            if not _looks_like_namespace_dir(child):
+                continue
+            name = child.name
+            if name in seen:
+                continue
+            seen[name] = {
+                "name": name,
+                "path": str(child),
+                "is_default": name == default_ns,
+            }
+
+    # Always surface the default even if its directory layout doesn't match
+    # the marker heuristic (defensive — should never happen for a real repo).
+    if default_ns not in seen:
+        seen[default_ns] = {"name": default_ns, "path": "", "is_default": True}
+
+    ordered = [seen[default_ns]] + [
+        v for k, v in seen.items() if k != default_ns
+    ]
+    return ordered
+
+
+class NamespaceRegistry:
+    """Caches one MemoryAdapter per namespace.
+
+    The default adapter is the writable one constructed at app startup. All
+    others are constructed lazily with ``namespace_override`` set and a
+    rewritten temp config that pins ``writable: false`` for safety.
+    """
+
+    def __init__(self, default_adapter: MemoryAdapter) -> None:
+        self._default = default_adapter
+        self._default_namespace = default_adapter.namespace
+        self._others: dict[str, MemoryAdapter] = {}
+
+    @property
+    def default_namespace(self) -> str:
+        return self._default_namespace
+
+    @property
+    def default(self) -> MemoryAdapter:
+        return self._default
+
+    def available(self) -> list[dict]:
+        return list_namespaces(self._default)
+
+    def resolve(self, name: str | None) -> MemoryAdapter:
+        if not name or name == self._default_namespace:
+            return self._default
+        # Reject anything that isn't a real sibling — the picker only shows
+        # discovered names, so this guards against tampered cookies.
+        valid = {row["name"] for row in self.available()}
+        if name not in valid:
+            return self._default
+        adapter = self._others.get(name)
+        if adapter is None:
+            adapter = MemoryAdapter(
+                config_path=self._default.config_path,
+                namespace_override=name,
+            )
+            self._others[name] = adapter
+        return adapter
 

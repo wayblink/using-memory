@@ -8,7 +8,7 @@ router = APIRouter()
 
 @router.get("/anatomy", response_class=HTMLResponse, name="anatomy_index")
 def anatomy_index(request: Request) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     listing = adapter.anatomy_list()
@@ -25,7 +25,7 @@ def anatomy_index(request: Request) -> HTMLResponse:
 
 @router.get("/anatomy/{slug}", response_class=HTMLResponse, name="anatomy_show")
 def anatomy_show(request: Request, slug: str) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     data = adapter.anatomy_show(slug)

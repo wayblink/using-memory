@@ -21,7 +21,7 @@ def logs(
     project: list[str] | None = Query(None),
     topic: list[str] | None = Query(None),
 ) -> HTMLResponse:
-    adapter = request.app.state.adapter
+    adapter = request.state.adapter
     templates = request.app.state.templates
 
     # Empty form fields submit as "" — treat those as "no filter" so the
