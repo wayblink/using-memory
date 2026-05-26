@@ -55,6 +55,18 @@
       <option value="no" {% if selected['indexed'] == 'no' %}selected{% endif %}>{{ t('docs.filter.indexed.no') }}</option>
     </select>
   </label>
+  <label>{{ t('docs.filter.group') }}
+    <select name="group">
+      <option value="type"    {% if selected['group'] == 'type'    %}selected{% endif %}>{{ t('docs.group.type') }}</option>
+      <option value="project" {% if selected['group'] == 'project' %}selected{% endif %}>{{ t('docs.group.project') }}</option>
+    </select>
+  </label>
+  <label>{{ t('docs.filter.sort') }}
+    <select name="sort">
+      <option value="name"     {% if selected['sort'] == 'name'     %}selected{% endif %}>{{ t('docs.sort.name') }}</option>
+      <option value="modified" {% if selected['sort'] == 'modified' %}selected{% endif %}>{{ t('docs.sort.modified') }}</option>
+    </select>
+  </label>
   <label style="flex:2 1 220px;">{{ t('docs.filter.q') }}
     <input type="text" name="q" value="{{ selected['q'] }}" placeholder="{{ t('docs.filter.q.placeholder') }}">
   </label>
@@ -63,9 +75,9 @@
 </form>
 
 {% if items %}
-  {% for type, group in by_type.items() %}
+  {% for key, group in groups.items() %}
     <section class="docs-section">
-      <h2>{{ type }} · {{ group|length }}</h2>
+      <h2>{% if key == no_project_key %}{{ t('docs.group.no_project') }}{% else %}{{ key }}{% endif %} · {{ group|length }}</h2>
       <ul class="docs-list">
         {% for it in group %}
           <li>

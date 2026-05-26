@@ -636,10 +636,19 @@ def append_memory_entry(root: Path, when: date, tag: str, text: str) -> Path:
     return append_markdown_entry(mem_path, entry)
 
 
-def append_preference_entry(root: Path, text: str) -> Path:
+def append_preference_entry(root: Path, when: date, text: str) -> Path:
     pref_path = root / "PREFERENCES.md"
-    entry = f"- [pref] {text}\n"
-    return append_markdown_entry(pref_path, entry)
+    entry = f"- [{when:%Y-%m-%d}] {text}\n"
+    with exclusive_file_lock(lock_path_for(pref_path)):
+        existing = pref_path.read_text(encoding="utf-8") if pref_path.exists() else ""
+        if existing:
+            # One blank line between entries — preferences are often multi-paragraph
+            # (Why: / How to apply:), so a clear separator improves readability.
+            existing = existing.rstrip("\n") + "\n\n"
+            atomic_write_text(pref_path, existing + entry)
+        else:
+            atomic_write_text(pref_path, entry)
+    return pref_path
 
 
 def looks_like_memory_namespace_root(path: Path) -> bool:
@@ -1244,7 +1253,8 @@ def do_write_memory(args: argparse.Namespace) -> dict:
 
 def do_write_preference(args: argparse.Namespace) -> dict:
     primary_root, primary_namespace = load_primary_for_write(args)
-    target = append_preference_entry(namespace_root(primary_root, primary_namespace), args.text)
+    when = parse_iso_date(args.date, "--date") if args.date else date.today()
+    target = append_preference_entry(namespace_root(primary_root, primary_namespace), when, args.text)
     return {
         "changed": True,
         "path": str(target),
@@ -3573,6 +3583,8 @@ def cmd_write_memory(sub: argparse._SubParsersAction) -> None:
 def cmd_write_preference(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("write-preference", help="Append one stable preference to the configured namespace PREFERENCES.md")
     p.add_argument("--config", type=str, required=True)
+    p.add_argument("--date", type=str, default=None,
+                   help="YYYY-MM-DD; defaults to today. Recorded as the preference's effective date.")
     p.add_argument("--text", type=str, required=True)
     p.add_argument("--json", action="store_true")
 

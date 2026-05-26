@@ -17,7 +17,9 @@ from typing import Any
 _MEMORY_LINE_RE = re.compile(
     r"^- \[(?P<tag>[A-Za-z0-9_-]+)(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?\]\s+(?P<text>.*)$"
 )
-_PREF_LINE_RE = re.compile(r"^- \[(?P<tag>[A-Za-z0-9_-]+)\]\s+(?P<text>.*)$")
+_PREF_LINE_RE = re.compile(
+    r"^- \[(?P<date>\d{4}-\d{2}-\d{2})\]\s+(?P<text>.+)$"
+)
 
 
 _MEMORY_TOOL: ModuleType | None = None
@@ -190,8 +192,9 @@ class MemoryAdapter:
         ns = self._ns(date=when_str, tag=tag, text=text, json=True)
         return self._call_capturing_exits(self._mt.do_write_memory, ns)
 
-    def write_preference(self, *, text: str) -> dict:
-        ns = self._ns(text=text, json=True)
+    def write_preference(self, *, when: str | None, text: str) -> dict:
+        when_str = when or date.today().isoformat()
+        ns = self._ns(date=when_str, text=text, json=True)
         return self._call_capturing_exits(self._mt.do_write_preference, ns)
 
     def upsert_doc(
@@ -386,7 +389,7 @@ class MemoryAdapter:
         return self._parse_entries("MEMORY.md", _MEMORY_LINE_RE, with_date=True)
 
     def list_preference_entries(self) -> list[dict]:
-        return self._parse_entries("PREFERENCES.md", _PREF_LINE_RE, with_date=False)
+        return self._parse_entries("PREFERENCES.md", _PREF_LINE_RE, with_date=True)
 
     def _parse_entries(
         self, relative: str, pattern: re.Pattern[str], *, with_date: bool
@@ -399,13 +402,15 @@ class MemoryAdapter:
             m = pattern.match(line.rstrip("\r"))
             if not m:
                 continue
+            groups = m.groupdict()
             entry = {
                 "line_no": idx,
-                "tag": m.group("tag"),
-                "text": m.group("text"),
+                "text": groups["text"],
             }
+            if "tag" in groups:
+                entry["tag"] = groups["tag"]
             if with_date:
-                entry["date"] = m.group("date") or ""
+                entry["date"] = groups.get("date") or ""
             entries.append(entry)
         # Show newest first — entries near the bottom of the file are usually
         # the most recently appended.
@@ -432,11 +437,18 @@ class MemoryAdapter:
     def delete_memory_line(self, *, line_no: int) -> None:
         self._delete_line("MEMORY.md", line_no, _MEMORY_LINE_RE)
 
-    def update_preference_line(self, *, line_no: int, text: str) -> None:
+    def update_preference_line(self, *, line_no: int, when: str | None, text: str) -> None:
+        when_str = (when or "").strip()
+        if not when_str:
+            raise MemoryToolError("date must not be empty")
+        try:
+            date.fromisoformat(when_str)
+        except ValueError:
+            raise MemoryToolError(f"invalid date: {when_str!r}") from None
         text = text.strip()
         if not text:
             raise MemoryToolError("text must not be empty")
-        new_line = f"- [pref] {text}"
+        new_line = f"- [{when_str}] {text}"
         self._replace_line("PREFERENCES.md", line_no, new_line, _PREF_LINE_RE)
 
     def delete_preference_line(self, *, line_no: int) -> None:

@@ -845,7 +845,7 @@ memory_roots:
             self.assertTrue(result["changed"])
             self.assertEqual(Path(result["path"]), self.namespace_root(primary) / "PREFERENCES.md")
             primary_text = (self.namespace_root(primary) / "PREFERENCES.md").read_text(encoding="utf-8")
-            self.assertIn("- [pref] prefer concise Chinese replies", primary_text)
+            self.assertRegex(primary_text, r"- \[\d{4}-\d{2}-\d{2}\] prefer concise Chinese replies")
             self.assertEqual((self.namespace_root(reference) / "PREFERENCES.md").read_text(encoding="utf-8"), reference_before)
 
     def test_upsert_doc_writes_body_and_updates_index(self):

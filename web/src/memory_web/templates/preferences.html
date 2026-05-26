@@ -13,6 +13,11 @@
 <section class="card">
   <h2 class="card-title">{{ t('pref.form.title') }}</h2>
   <form class="entry-form" method="post" action="/preferences/append">
+    <div class="row">
+      <label>{{ t('memory.form.date') }}
+        <input type="date" name="when" value="{{ today }}">
+      </label>
+    </div>
     <label class="full">{{ t('pref.form.text') }}
       <textarea name="text" rows="4" required placeholder="{{ t('pref.form.text.placeholder') }}"></textarea>
     </label>
@@ -32,7 +37,7 @@
       <article class="entry-card" data-line="{{ e.line_no }}">
         <div class="entry-card-view">
           <div class="entry-card-head">
-            <span class="tag">{{ e.tag }}</span>
+            {% if e.date %}<span class="entry-date">{{ e.date }}</span>{% endif %}
             <div class="entry-actions">
               <button type="button" class="link-btn" data-action="edit">{{ t('common.edit') }}</button>
               <form method="post" action="/preferences/delete/{{ e.line_no }}" class="inline-form"
@@ -44,6 +49,11 @@
           <div class="entry-card-text">{{ e.text }}</div>
         </div>
         <form class="entry-card-edit entry-form" method="post" action="/preferences/update/{{ e.line_no }}" hidden>
+          <div class="row">
+            <label>{{ t('memory.form.date') }}
+              <input type="date" name="when" value="{{ e.date }}" required>
+            </label>
+          </div>
           <label class="full">{{ t('pref.form.text') }}
             <textarea name="text" rows="3" required>{{ e.text }}</textarea>
           </label>

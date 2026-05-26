@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
@@ -28,16 +29,21 @@ def preferences(request: Request, error: str | None = None) -> HTMLResponse:
             "page": "preferences",
             "entries": entries,
             "missing": not entries,
+            "today": date.today().isoformat(),
             "error": error,
         },
     )
 
 
 @router.post("/preferences/append")
-def preferences_append(request: Request, text: str = Form(...)):
+def preferences_append(
+    request: Request,
+    text: str = Form(...),
+    when: str = Form(""),
+):
     adapter = request.app.state.adapter
     try:
-        adapter.write_preference(text=text)
+        adapter.write_preference(when=(when or None), text=text)
     except MemoryToolError as exc:
         return _redirect_with_error(exc)
     return RedirectResponse("/preferences", status_code=303)
@@ -48,10 +54,11 @@ def preferences_update(
     line_no: int,
     request: Request,
     text: str = Form(...),
+    when: str = Form(""),
 ):
     adapter = request.app.state.adapter
     try:
-        adapter.update_preference_line(line_no=line_no, text=text)
+        adapter.update_preference_line(line_no=line_no, when=when or None, text=text)
     except MemoryToolError as exc:
         return _redirect_with_error(exc)
     return RedirectResponse("/preferences", status_code=303)

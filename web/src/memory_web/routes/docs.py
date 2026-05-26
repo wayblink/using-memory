@@ -18,6 +18,10 @@ DOC_TYPES = (
     "project",
 )
 
+GROUP_OPTIONS = ("type", "project")
+SORT_OPTIONS = ("name", "modified")
+NO_PROJECT_KEY = "__no_project__"
+
 
 @router.get("/docs", response_class=HTMLResponse, name="docs_index")
 def docs_index(
@@ -28,6 +32,8 @@ def docs_index(
     tag: str | None = None,
     q: str | None = None,
     indexed: str | None = None,
+    group: str | None = None,
+    sort: str | None = None,
 ) -> HTMLResponse:
     adapter = request.app.state.adapter
     templates = request.app.state.templates
@@ -47,6 +53,12 @@ def docs_index(
     tag = (tag or "").strip() or None
     q = (q or "").strip() or None
     indexed_flag = (indexed or "").strip() or None  # "yes" | "no" | None
+    group_value = (group or "").strip()
+    if group_value not in GROUP_OPTIONS:
+        group_value = "type"
+    sort_value = (sort or "").strip()
+    if sort_value not in SORT_OPTIONS:
+        sort_value = "name"
 
     filtered = items
     if type:
@@ -72,11 +84,41 @@ def docs_index(
             ])).lower()
         filtered = [i for i in filtered if needle in _hay(i)]
 
-    by_type: dict[str, list[dict]] = {}
-    for item in filtered:
-        by_type.setdefault(item.get("type") or "wiki", []).append(item)
-    for k in by_type:
-        by_type[k].sort(key=lambda e: (e.get("title") or e.get("rel") or "").lower())
+    groups: dict[str, list[dict]] = {}
+    if group_value == "project":
+        for item in filtered:
+            projects = item.get("projects") or []
+            if projects:
+                for p in projects:
+                    groups.setdefault(p, []).append(item)
+            else:
+                groups.setdefault(NO_PROJECT_KEY, []).append(item)
+    else:
+        for item in filtered:
+            groups.setdefault(item.get("type") or "wiki", []).append(item)
+
+    def _name_key(e: dict) -> str:
+        return (e.get("title") or e.get("rel") or "").lower()
+
+    if sort_value == "modified":
+        for k in groups:
+            with_mod = [e for e in groups[k] if e.get("modified")]
+            without_mod = [e for e in groups[k] if not e.get("modified")]
+            # Two-pass stable sort: ascending name first, then descending date.
+            # On equal dates, ascending-name order is preserved.
+            with_mod.sort(key=_name_key)
+            with_mod.sort(key=lambda e: e.get("modified") or "", reverse=True)
+            without_mod.sort(key=_name_key)
+            groups[k] = with_mod + without_mod
+    else:
+        for k in groups:
+            groups[k].sort(key=_name_key)
+
+    def _group_sort_key(k: str) -> tuple:
+        # NO_PROJECT_KEY always last; everything else alphabetical.
+        return (1, "") if k == NO_PROJECT_KEY else (0, k.lower())
+
+    ordered_groups = dict(sorted(groups.items(), key=lambda kv: _group_sort_key(kv[0])))
 
     return templates.TemplateResponse(
         request,
@@ -84,13 +126,14 @@ def docs_index(
         {
             "page": "docs",
             "items": filtered,
-            "by_type": dict(sorted(by_type.items())),
+            "groups": ordered_groups,
             "total": len(filtered),
             "grand_total": len(items),
             "unregistered": sum(1 for i in filtered if not i.get("in_index")),
             "available_types": available_types,
             "available_projects": available_projects,
             "available_tags": available_tags,
+            "no_project_key": NO_PROJECT_KEY,
             "selected": {
                 "type": type or "",
                 "format": format or "",
@@ -98,6 +141,8 @@ def docs_index(
                 "tag": tag or "",
                 "q": q or "",
                 "indexed": indexed_flag or "",
+                "group": group_value,
+                "sort": sort_value,
             },
         },
     )
