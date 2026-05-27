@@ -40,6 +40,8 @@ def dashboard(request: Request) -> HTMLResponse:
     docs_unindexed = docs_total - docs_indexed
     docs_md = sum(1 for it in docs_items if it.get("ext") == "md")
     docs_html = sum(1 for it in docs_items if it.get("ext") == "html")
+    docs_htm = sum(1 for it in docs_items if it.get("ext") == "htm")
+    docs_txt = sum(1 for it in docs_items if it.get("ext") == "txt")
 
     # Preferences entry count: each line beginning with "- [" counts as an
     # entry. PREFERENCES.md is append-only with this single-format shape.
@@ -104,6 +106,8 @@ def dashboard(request: Request) -> HTMLResponse:
             "docs_unindexed": docs_unindexed,
             "docs_md": docs_md,
             "docs_html": docs_html,
+            "docs_htm": docs_htm,
+            "docs_txt": docs_txt,
             "prefs_total": prefs_total,
             "distill_candidates": distill_candidates,
             "last_distill_check": _short_ts(last_distill_check),

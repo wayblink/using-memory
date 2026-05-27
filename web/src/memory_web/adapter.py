@@ -364,12 +364,15 @@ class MemoryAdapter:
 
     # --- Filesystem-aware docs listing ---------------------------------------
     #
-    # memory_tool's index.json only tracks .md files (the skill's curated set).
-    # The web UI also lists raw .html and .md files that exist on disk but
-    # aren't registered, and renders both formats. Slug = path under docs/
-    # without the extension. Subdirectories are allowed.
+    # memory_tool's index.json tracks any extension in SUPPORTED_DOC_EXTS
+    # (md/html/htm/txt). The web UI lists every doc in docs/ regardless of
+    # whether it's in the index, then renders+edits the supported formats.
+    # Slug = rel path under docs/ without the extension; the index is keyed
+    # by full rel path (including extension) so two files sharing a stem
+    # (foo.md and foo.html) get distinct entries.
 
-    _DOC_EXTS = (".md", ".html", ".htm")
+    _DOC_EXTS = (".md", ".html", ".htm", ".txt")
+    _EDITABLE_DOC_EXTS = frozenset({"md", "html", "htm", "txt"})
 
     def list_docs(self) -> list[dict]:
         root = self.primary_root()
@@ -378,12 +381,11 @@ class MemoryAdapter:
         docs_dir = root / "docs"
         if not docs_dir.exists():
             return []
-        index_by_slug: dict[str, dict] = {}
+        index_by_rel: dict[str, dict] = {}
         for e in self.docs_index_entries():
             raw = e.get("path") or ""
-            slug = raw.removesuffix(".md")
-            if slug:
-                index_by_slug[slug] = e
+            if raw:
+                index_by_rel[raw] = e
 
         items: list[dict] = []
         for f in sorted(docs_dir.rglob("*")):
@@ -396,14 +398,14 @@ class MemoryAdapter:
             rel = f.relative_to(docs_dir).as_posix()
             slug = rel.rsplit(".", 1)[0]
             ext = f.suffix.lower().lstrip(".")
-            entry = index_by_slug.get(slug)
+            entry = index_by_rel.get(rel)
             items.append({
                 "slug": slug,
                 "rel": rel,
-                "ext": "md" if ext == "md" else "html",
+                "ext": ext,
                 "in_index": entry is not None,
                 "title": (entry.get("title") if entry else None) or _fallback_title(f),
-                "type": (entry.get("type") if entry else None) or ("markdown" if ext == "md" else "html"),
+                "type": (entry.get("type") if entry else None) or _fallback_type(ext),
                 "modified": (entry.get("modified") if entry else None),
                 "projects": (entry.get("projects") if entry else None) or [],
                 "tags": (entry.get("tags") if entry else None) or [],
@@ -454,19 +456,21 @@ class MemoryAdapter:
         if candidate is None:
             return None
 
+        # Look up the index entry by *full rel path* so .md / .html / .htm /
+        # .txt all populate metadata correctly (in_index, title, projects…).
+        full_rel = candidate.relative_to(docs_dir.resolve()).as_posix()
         index_entry: dict | None = None
-        if ext_used == "md":
-            for e in self.docs_index_entries():
-                if (e.get("path") or "").removesuffix(".md") == bare:
-                    index_entry = e
-                    break
+        for e in self.docs_index_entries():
+            if (e.get("path") or "") == full_rel:
+                index_entry = e
+                break
 
         return {
             "slug": bare,
-            "ext": "md" if ext_used == "md" else "html",
+            "ext": ext_used,
             "content": candidate.read_text(encoding="utf-8"),
             "entry": index_entry,
-            "rel": candidate.relative_to(docs_dir).as_posix(),
+            "rel": full_rel,
             "in_index": index_entry is not None,
         }
 
@@ -619,8 +623,8 @@ class MemoryAdapter:
 
 def _fallback_title(path: Path) -> str:
     """Best-effort title when index.json has no entry."""
-    name = path.name
-    if path.suffix.lower() == ".md":
+    suffix = path.suffix.lower()
+    if suffix == ".md":
         try:
             for line in path.read_text(encoding="utf-8").splitlines()[:40]:
                 line = line.strip()
@@ -629,7 +633,7 @@ def _fallback_title(path: Path) -> str:
         except OSError:
             pass
         return path.stem
-    if path.suffix.lower() in (".html", ".htm"):
+    if suffix in (".html", ".htm"):
         try:
             import re
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -639,7 +643,26 @@ def _fallback_title(path: Path) -> str:
         except OSError:
             pass
         return path.stem
-    return name
+    if suffix == ".txt":
+        try:
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()[:40]:
+                stripped = line.strip()
+                if stripped:
+                    return stripped[:200]
+        except OSError:
+            pass
+        return path.stem
+    return path.name
+
+
+def _fallback_type(ext: str) -> str:
+    if ext == "md":
+        return "markdown"
+    if ext in ("html", "htm"):
+        return "html"
+    if ext == "txt":
+        return "text"
+    return ext or "doc"
 
 
 # --- Namespace discovery + registry ----------------------------------------

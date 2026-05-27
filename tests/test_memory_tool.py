@@ -893,6 +893,68 @@ memory_roots:
             self.assertEqual(entry["projects"], ["using-memory"])
             self.assertEqual(entry["tags"], ["roadmap"])
 
+    def test_upsert_doc_writes_html_and_txt_with_index_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            html_result = self.run_tool(
+                "upsert-doc",
+                "--config", str(config),
+                "--doc", "pages/landing.html",
+                "--text", "<!doctype html><title>Landing</title><h1>Landing</h1><p>x</p>",
+                "--json",
+            )
+            self.assertTrue(html_result["changed"])
+            self.assertEqual(
+                Path(html_result["path"]),
+                self.namespace_root(primary) / "docs" / "pages" / "landing.html",
+            )
+            self.assertEqual(html_result["title"], "Landing")
+
+            txt_result = self.run_tool(
+                "upsert-doc",
+                "--config", str(config),
+                "--doc", "notes/quick.txt",
+                "--text", "Quick note title\n\nbody\n",
+                "--json",
+            )
+            self.assertTrue(txt_result["changed"])
+            self.assertEqual(
+                Path(txt_result["path"]),
+                self.namespace_root(primary) / "docs" / "notes" / "quick.txt",
+            )
+            self.assertEqual(txt_result["title"], "Quick note title")
+
+            index = json.loads(
+                (self.namespace_root(primary) / "docs" / "index.json").read_text(encoding="utf-8")
+            )
+            paths = {entry["path"] for entry in index["documents"]}
+            self.assertIn("pages/landing.html", paths)
+            self.assertIn("notes/quick.txt", paths)
+
+    def test_upsert_doc_rejects_unsupported_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            proc = self.run_tool(
+                "upsert-doc",
+                "--config", str(config),
+                "--doc", "not-allowed.exe",
+                "--text", "body",
+                "--json",
+                expect_ok=False,
+            )
+            self.assertIn("invalid doc name", proc.stderr)
+            self.assertFalse(
+                (self.namespace_root(primary) / "docs" / "not-allowed.exe").exists()
+            )
+
     def test_write_log_uses_warning_free_local_timestamp(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -1247,6 +1309,39 @@ memory_roots:
             self.assertEqual(manual_entries[0]["type"], "wiki")
             self.assertEqual(manual_entries[0]["tags"], [])
             self.assertEqual(manual_entries[0]["projects"], [])
+
+    def test_maintain_indexes_manually_added_html_and_txt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            html_doc = self.namespace_root(primary) / "docs" / "manual-page.html"
+            html_doc.write_text(
+                "<!doctype html><title>Manual HTML</title><h1>Manual HTML</h1><p>body</p>",
+                encoding="utf-8",
+            )
+            txt_doc = self.namespace_root(primary) / "docs" / "manual-note.txt"
+            txt_doc.write_text("Plain text title line\n\nbody line\n", encoding="utf-8")
+
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool("maintain", "--config", str(config), "--json")
+            indexed = {entry["path"]: entry for entry in result["indexed_docs"]}
+
+            self.assertIn("manual-page.html", indexed)
+            self.assertEqual(indexed["manual-page.html"]["title"], "Manual HTML")
+            self.assertEqual(indexed["manual-page.html"]["type"], "wiki")
+
+            self.assertIn("manual-note.txt", indexed)
+            self.assertEqual(indexed["manual-note.txt"]["title"], "Plain text title line")
+            self.assertEqual(indexed["manual-note.txt"]["type"], "wiki")
+
+            index = json.loads(
+                (self.namespace_root(primary) / "docs" / "index.json").read_text(encoding="utf-8")
+            )
+            paths = {entry["path"] for entry in index["documents"]}
+            self.assertIn("manual-page.html", paths)
+            self.assertIn("manual-note.txt", paths)
 
     def test_maintain_rejects_non_writable_primary_root(self):
         with tempfile.TemporaryDirectory() as tmp:

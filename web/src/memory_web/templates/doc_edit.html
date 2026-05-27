@@ -21,6 +21,15 @@
     <label>{{ t('doc_edit.slug') }}
       <input type="text" name="slug" value="{{ slug }}" required pattern="[A-Za-z0-9_\-./]+" {% if mode == "edit" %}readonly{% endif %} placeholder="my-doc-name">
     </label>
+    {% if mode == "new" %}
+    <label>Format
+      <select name="ext" id="ext-select">
+        {% for e in doc_exts %}<option value="{{ e }}" {% if ext == e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+      </select>
+    </label>
+    {% else %}
+    <input type="hidden" name="ext" value="{{ ext }}">
+    {% endif %}
     <label>{{ t('doc_edit.type') }}
       <select name="doc_type">
         {% for ty in doc_types %}<option value="{{ ty }}" {% if doc_type == ty %}selected{% endif %}>{{ ty }}</option>{% endfor %}
@@ -48,10 +57,10 @@
     <input type="text" name="summary" value="{{ summary }}">
   </label>
 
-  <div class="editor-tabs">
+  <div class="editor-tabs" id="editor-tabs">
     <button type="button" id="tab-write" class="tab active">{{ t('doc_edit.tab.write') }}</button>
-    <button type="button" id="tab-preview" class="tab">{{ t('doc_edit.tab.preview') }}</button>
-    <span class="small" style="margin-left:auto;">{{ t('common.markdown_gfm') }}</span>
+    <button type="button" id="tab-preview" class="tab" {% if ext != 'md' %}style="display:none;"{% endif %}>{{ t('doc_edit.tab.preview') }}</button>
+    <span class="small" id="format-hint" style="margin-left:auto;">{% if ext == 'md' %}{{ t('common.markdown_gfm') }}{% else %}{{ ext }}{% endif %}</span>
   </div>
 
   <div id="pane-write">
@@ -79,18 +88,39 @@
   const paneWrite = document.getElementById('pane-write');
   const panePreview = document.getElementById('pane-preview');
   const body = document.getElementById('body-input');
+  const extSelect = document.getElementById('ext-select');
+  const formatHint = document.getElementById('format-hint');
+  let currentExt = {{ ext|tojson }};
   marked.setOptions({ gfm: true, breaks: false });
   function showWrite() {
     tabWrite.classList.add('active'); tabPreview.classList.remove('active');
     paneWrite.style.display = ''; panePreview.style.display = 'none';
   }
   function showPreview() {
+    if (currentExt !== 'md') { showWrite(); return; }
     tabPreview.classList.add('active'); tabWrite.classList.remove('active');
     panePreview.innerHTML = marked.parse(body.value || '');
     paneWrite.style.display = 'none'; panePreview.style.display = '';
   }
+  function syncExtUI() {
+    if (currentExt === 'md') {
+      tabPreview.style.display = '';
+      if (formatHint) formatHint.textContent = 'Markdown · GFM';
+    } else {
+      tabPreview.style.display = 'none';
+      if (formatHint) formatHint.textContent = currentExt;
+      showWrite();
+    }
+  }
   tabWrite.addEventListener('click', showWrite);
   tabPreview.addEventListener('click', showPreview);
+  if (extSelect) {
+    extSelect.addEventListener('change', () => {
+      currentExt = extSelect.value;
+      syncExtUI();
+    });
+  }
+  syncExtUI();
 })();
 </script>
 {% endblock %}

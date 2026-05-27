@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, RedirectResponse
@@ -18,6 +19,41 @@ _PKG_DIR = Path(__file__).resolve().parent
 
 
 NAMESPACE_COOKIE = "memory_web_ns"
+
+# Section roots that are guaranteed to render without entity lookup, so they
+# stay valid after switching namespaces. Anything deeper (``/docs/<slug>``,
+# ``/anatomy/<slug>``) is collapsed to its section root because the slug
+# usually does not exist in the sibling namespace.
+_NAMESPACE_SAFE_ROOTS = frozenset({
+    "/",
+    "/docs",
+    "/logs",
+    "/memory",
+    "/preferences",
+    "/anatomy",
+    "/search",
+})
+
+
+def _safe_namespace_target(referer: str) -> str:
+    """Return a namespace-agnostic redirect target derived from ``referer``.
+
+    Section roots like ``/docs`` or ``/logs`` round-trip; deeper paths are
+    collapsed to their section root if recognized, otherwise to ``/``.
+    Querystrings on safe roots are preserved (search filters, log date
+    ranges) since they carry no slug-shaped entity reference.
+    """
+    if not referer:
+        return "/"
+    parsed = urlparse(referer)
+    path = parsed.path or "/"
+    query = f"?{parsed.query}" if parsed.query else ""
+    if path in _NAMESPACE_SAFE_ROOTS:
+        return f"{path}{query}"
+    head = "/" + path.lstrip("/").split("/", 1)[0]
+    if head in _NAMESPACE_SAFE_ROOTS:
+        return head
+    return "/"
 
 
 def _read_skill_version() -> str:
@@ -132,7 +168,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
         # Only allow switching to a discovered namespace; anything else is a
         # cookie clear (back to the default).
         valid = {row["name"] for row in registry.available()}
-        target = request.headers.get("referer") or "/"
+        # The referer typically points at a namespace-scoped resource (e.g.
+        # /docs/foo.md or /logs?from=...). Switching ns and replaying that
+        # URL against the new ns 404s the moment the entity does not exist
+        # there. Redirect to a stable section root (or home for unknown
+        # paths) so the user always lands somewhere valid in the new ns.
+        referer = request.headers.get("referer") or "/"
+        target = _safe_namespace_target(referer)
         resp = RedirectResponse(target, status_code=303)
         if name == registry.default_namespace or name not in valid:
             resp.delete_cookie(NAMESPACE_COOKIE)

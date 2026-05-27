@@ -30,8 +30,10 @@
   <label>{{ t('docs.filter.format') }}
     <select name="format">
       <option value="">{{ t('common.all') }}</option>
-      <option value="md" {% if selected['format'] == 'md' %}selected{% endif %}>md</option>
+      <option value="md"   {% if selected['format'] == 'md'   %}selected{% endif %}>md</option>
       <option value="html" {% if selected['format'] == 'html' %}selected{% endif %}>html</option>
+      <option value="htm"  {% if selected['format'] == 'htm'  %}selected{% endif %}>htm</option>
+      <option value="txt"  {% if selected['format'] == 'txt'  %}selected{% endif %}>txt</option>
     </select>
   </label>
   <label>{{ t('docs.filter.project') }}

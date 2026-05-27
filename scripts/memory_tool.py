@@ -23,6 +23,11 @@ except ImportError:  # pragma: no cover - Windows fallback for portable installs
 DEFAULT_CONFIG_PATH = "~/.skills/using-memory/config.yaml"
 DOC_ENTRY_REQUIRED_FIELDS = ("path", "title", "type", "modified")
 DEFAULT_NAMESPACE = "main"
+# Whitelisted doc filename extensions. Add a new format here and the rest of
+# the docs subsystem (validate, upsert, maintain index, web list/edit) picks
+# it up automatically. Keep ``DEFAULT_DOC_EXT`` in sync with the leading entry.
+SUPPORTED_DOC_EXTS = (".md", ".html", ".htm", ".txt")
+DEFAULT_DOC_EXT = ".md"
 SETUP_HINT = "Run `python3 scripts/memory_tool.py setup` to configure memory path, optional remote Git repo, namespace, and machine ID."
 LOG_TAGS = {
     "operation",
@@ -191,10 +196,12 @@ def validate_doc_name(doc: str | None) -> str | None:
     if ".." in doc_path.parts:
         sys.stderr.write("invalid doc name\n")
         sys.exit(2)
-    if doc_path.suffix and doc_path.suffix != ".md":
-        sys.stderr.write("invalid doc name\n")
-        sys.exit(2)
-    return doc.removesuffix(".md")
+    if doc_path.suffix:
+        if doc_path.suffix.lower() not in SUPPORTED_DOC_EXTS:
+            sys.stderr.write("invalid doc name\n")
+            sys.exit(2)
+        return doc
+    return f"{doc}{DEFAULT_DOC_EXT}"
 
 
 def normalize_index_doc_path(doc: str) -> str | None:
@@ -203,9 +210,26 @@ def normalize_index_doc_path(doc: str) -> str | None:
     doc_path = Path(doc)
     if ".." in doc_path.parts:
         return None
-    if doc_path.suffix and doc_path.suffix != ".md":
-        return None
-    return doc.removesuffix(".md")
+    if doc_path.suffix:
+        if doc_path.suffix.lower() not in SUPPORTED_DOC_EXTS:
+            return None
+        return doc
+    return f"{doc}{DEFAULT_DOC_EXT}"
+
+
+def strip_doc_ext(value: str) -> str:
+    """Return ``value`` with a single trailing supported doc extension removed.
+
+    Used by the ``--doc`` selector to match an index entry whose ``path`` is
+    e.g. ``foo.md`` against a user-supplied slug ``foo`` (with or without
+    extension). Unknown / missing extensions are returned unchanged.
+    """
+    if not value:
+        return value
+    suffix = Path(value).suffix.lower()
+    if suffix in SUPPORTED_DOC_EXTS:
+        return value[: -len(suffix)]
+    return value
 
 
 def read_json_source(path: Path, source_type: str, role: str, machine_id: str = "") -> dict:
@@ -292,15 +316,27 @@ def doc_entry_matches(entry: dict, selectors: dict) -> bool:
     query = selectors.get("query")
 
     if doc_name:
+        # Match either form: with extension (``foo.md`` against entry.path
+        # ``foo.md``) or without (``foo`` matches both ``foo.md`` and the
+        # ext-stripped path of any other supported format).
+        normalized_input = strip_doc_ext(doc_name)
         candidates = {
-            str(entry.get("path", "")).removesuffix(".md"),
-            str(entry.get("id", "")).removesuffix(".md"),
-            str(entry.get("title", "")).removesuffix(".md"),
+            doc_name,
+            normalized_input,
+            str(entry.get("path", "")),
+            strip_doc_ext(str(entry.get("path", ""))),
+            str(entry.get("id", "")),
+            strip_doc_ext(str(entry.get("id", ""))),
+            str(entry.get("title", "")),
+            strip_doc_ext(str(entry.get("title", ""))),
         }
         aliases = entry.get("aliases", [])
         if isinstance(aliases, list):
-            candidates.update(str(alias).removesuffix(".md") for alias in aliases)
-        if doc_name not in candidates:
+            for alias in aliases:
+                candidates.add(str(alias))
+                candidates.add(strip_doc_ext(str(alias)))
+        candidates.discard("")
+        if doc_name not in candidates and normalized_input not in candidates:
             return False
 
     if doc_type and str(entry.get("type", "")).lower() != doc_type.lower():
@@ -333,7 +369,7 @@ def doc_path_from_entry(root: Path, entry: dict) -> Path | None:
     validated = normalize_index_doc_path(str(rel))
     if validated is None:
         return None
-    return root / "docs" / f"{validated}.md"
+    return root / "docs" / validated
 
 
 def sha256_file(path: Path) -> str:
@@ -458,23 +494,29 @@ def merge_log_backlinks_section(existing_text: str, new_links: list[str]) -> str
 
 
 def collect_promoted_log_refs(scoped_root: Path) -> set[tuple[str, int]]:
-    """Walk ``<namespace>/docs/*.md`` and return every ``(date, line_no)``
-    cited via ``[[log:YYYY-MM-DD#L<n>]]``. The distillation pipeline uses
-    this set to skip log entries that have already been promoted into a doc.
+    """Walk every ``<namespace>/docs/*.{md,html,htm,txt}`` file and return every
+    ``(date, line_no)`` cited via ``[[log:YYYY-MM-DD#L<n>]]``. The distillation
+    pipeline uses this set to skip log entries that have already been promoted
+    into a doc.
 
     Backlinks may live anywhere in the doc body (not only inside the
-    Related-log-entries section), so we scan the whole markdown.
+    Related-log-entries section), so we scan the whole document.
     """
     docs_dir = scoped_root / "docs"
     refs: set[tuple[str, int]] = set()
     if not docs_dir.is_dir():
         return refs
-    for path in docs_dir.glob("*.md"):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        refs |= extract_log_backlinks_from_text(text)
+    seen: set[Path] = set()
+    for ext in SUPPORTED_DOC_EXTS:
+        for path in docs_dir.rglob(f"*{ext}"):
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            refs |= extract_log_backlinks_from_text(text)
     return refs
 
 
@@ -752,30 +794,77 @@ def write_doc_index(index_path: Path, index: dict) -> None:
     atomic_write_text(index_path, json.dumps(index, ensure_ascii=False, indent=2) + "\n")
 
 
-def extract_markdown_title(path: Path) -> str:
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+_HTML_TITLE_TAG_RE = re.compile(r"<title>([^<]+)</title>", re.IGNORECASE)
+_HTML_H1_TAG_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_STRIP_RE = re.compile(r"<[^>]+>")
+
+
+def _slug_to_title(stem: str) -> str:
+    base = stem.rsplit("/", 1)[-1]
+    return base.replace("-", " ").replace("_", " ").strip().title() or base
+
+
+def extract_doc_title_from_text(text: str, ext: str) -> str | None:
+    """Multi-format doc-title extractor used by ``upsert-doc`` and ``maintain``.
+
+    md/no-ext: first ``# Heading`` line.
+    html/htm:  first ``<title>`` then first ``<h1>`` (tags stripped).
+    txt:       first non-empty line (capped at 200 chars).
+    Returns None when nothing usable was found so the caller can fall back
+    to a slug-derived title.
+    """
+    if not text:
+        return None
+    suffix = (ext or "").lower()
+    if not suffix.startswith("."):
+        suffix = f".{suffix}" if suffix else ""
+    if suffix in ("", ".md"):
+        for line in text.splitlines():
             stripped = line.strip()
             if stripped.startswith("# "):
-                title = stripped[2:].strip()
-                if title:
-                    return title
-    except UnicodeDecodeError:
-        pass
-    return path.stem.replace("-", " ").replace("_", " ").strip().title() or path.stem
+                candidate = stripped[2:].strip()
+                if candidate:
+                    return candidate
+        return None
+    if suffix in (".html", ".htm"):
+        m = _HTML_TITLE_TAG_RE.search(text)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+        m = _HTML_H1_TAG_RE.search(text)
+        if m:
+            inner = _HTML_TAG_STRIP_RE.sub("", m.group(1)).strip()
+            if inner:
+                return inner
+        return None
+    if suffix == ".txt":
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                return stripped[:200]
+        return None
+    return None
+
+
+def extract_doc_title_from_file(path: Path) -> str:
+    suffix = path.suffix.lower()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return _slug_to_title(path.stem)
+    title = extract_doc_title_from_text(text, suffix)
+    if title:
+        return title
+    return _slug_to_title(path.stem)
+
+
+# Back-compat aliases — kept for any callers that still import the old names.
+def extract_markdown_title(path: Path) -> str:
+    return extract_doc_title_from_file(path)
 
 
 def extract_h1_from_text(text: str) -> str | None:
     """Return the first ``# Heading`` line from a markdown string, or None."""
-    if not text:
-        return None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            candidate = stripped[2:].strip()
-            if candidate:
-                return candidate
-    return None
+    return extract_doc_title_from_text(text, ".md")
 
 
 def doc_index_entry_for_file(docs_dir: Path, doc_path: Path) -> dict:
@@ -803,24 +892,27 @@ def maintain_doc_index(primary_root: Path) -> list[dict]:
             for entry in normalize_doc_index(index)
         }
         added = []
-        for doc_path in sorted(docs_dir.rglob("*.md")):
-            if not doc_path.is_file():
-                continue
-            rel_path = doc_path.relative_to(docs_dir).as_posix()
-            if rel_path in indexed_paths:
-                continue
-            entry = doc_index_entry_for_file(docs_dir, doc_path)
-            error = validate_doc_entry(entry)
-            if error:
-                sys.stderr.write(f"invalid generated doc metadata: {error}\n")
-                sys.exit(2)
-            index = doc_index_with_entry(index, entry)
-            indexed_paths.add(entry["path"])
-            added.append({
-                "path": entry["path"],
-                "title": entry["title"],
-                "type": entry["type"],
-            })
+        seen: set[Path] = set()
+        for ext in SUPPORTED_DOC_EXTS:
+            for doc_path in sorted(docs_dir.rglob(f"*{ext}")):
+                if not doc_path.is_file() or doc_path in seen:
+                    continue
+                seen.add(doc_path)
+                rel_path = doc_path.relative_to(docs_dir).as_posix()
+                if rel_path in indexed_paths:
+                    continue
+                entry = doc_index_entry_for_file(docs_dir, doc_path)
+                error = validate_doc_entry(entry)
+                if error:
+                    sys.stderr.write(f"invalid generated doc metadata: {error}\n")
+                    sys.exit(2)
+                index = doc_index_with_entry(index, entry)
+                indexed_paths.add(entry["path"])
+                added.append({
+                    "path": entry["path"],
+                    "title": entry["title"],
+                    "type": entry["type"],
+                })
         if added:
             write_doc_index(index_path, index)
         return added
@@ -1027,7 +1119,7 @@ def do_load(args: argparse.Namespace) -> dict:
                         doc_set.append(
                             {
                                 "path": doc_source["path"],
-                                "name": str(entry.get("path") or entry.get("id") or "").removesuffix(".md"),
+                                "name": strip_doc_ext(str(entry.get("path") or entry.get("id") or "")),
                                 "role": role,
                                 "machine_id": machine_id,
                                 "metadata": entry,
@@ -1266,6 +1358,8 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     primary_root, primary_namespace = load_primary_for_write(args)
     scoped_root = namespace_root(primary_root, primary_namespace)
     doc_name = validate_doc_name(args.doc)
+    # ``doc_name`` is now the rel path *with* extension (default ``.md`` when
+    # the caller omitted one). Stem-only fallbacks below use ``strip_doc_ext``.
 
     text = args.text
     if text is None:
@@ -1275,16 +1369,25 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
             sys.stderr.write("upsert-doc requires --text or --text-stdin\n")
             sys.exit(2)
 
-    # Fallback fields: title -> first H1 -> slug-derived; doc_type -> "wiki";
-    # modified -> today. Keep behaviour identical when explicit values pass.
-    title = args.title or extract_h1_from_text(text) or doc_name.replace("-", " ").replace("_", " ").strip().title() or doc_name
+    ext = Path(doc_name).suffix.lower()
+    stem = strip_doc_ext(doc_name)
+
+    # Fallback fields: title -> first H1 / <title> / first non-empty line ->
+    # slug-derived; doc_type -> "wiki"; modified -> today. Keep behaviour
+    # identical when explicit values pass.
+    title = (
+        args.title
+        or extract_doc_title_from_text(text, ext)
+        or stem.replace("-", " ").replace("_", " ").strip().title()
+        or stem
+    )
     doc_type = args.doc_type or "wiki"
     modified = args.modified or date.today().isoformat()
     parse_iso_date(modified, "--modified")
 
-    doc_path = scoped_root / "docs" / f"{doc_name}.md"
+    doc_path = scoped_root / "docs" / doc_name
     index_path = scoped_root / "docs" / "index.json"
-    rel_path = f"{doc_name}.md"
+    rel_path = doc_name
     entry = {
         "path": rel_path,
         "title": title,
@@ -3590,13 +3693,14 @@ def cmd_write_preference(sub: argparse._SubParsersAction) -> None:
 
 
 def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("upsert-doc", help="Write one configured namespace docs/*.md file and update <namespace>/docs/index.json")
+    p = sub.add_parser("upsert-doc", help="Write one configured namespace docs/* file and update <namespace>/docs/index.json")
     p.add_argument("--config", type=str, default=None,
                    help="Config path. Falls back to USING_MEMORY_CONFIG env or ~/.skills/using-memory/config.yaml.")
     p.add_argument("--doc", type=str, required=True,
-                   help="Doc slug (filename without .md). Required.")
+                   help="Doc rel path. Extension defaults to .md when omitted. "
+                        "Supported: .md, .html, .htm, .txt.")
     p.add_argument("--title", type=str, default=None,
-                   help="Optional. Defaults to first H1 in --text, then slug-derived title.")
+                   help="Optional. Defaults to first H1 (md), <title>/<h1> (html), first non-empty line (txt), then slug-derived title.")
     p.add_argument("--doc-type", type=str, default=None,
                    help="Optional. Defaults to 'wiki'. Common values: wiki, lesson, troubleshooting, decision-record, runbook, SOP, project.")
     p.add_argument("--modified", type=str, default=None,

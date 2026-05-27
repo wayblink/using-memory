@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ entry.get('title') or slug }} · {{ t('nav.docs') }}{% endblock %}
 {% block head_extra %}
-  {% if ext == 'html' %}
+  {% if ext in ('html', 'htm') %}
   <style>
     /* The HTML doc renders in an isolated iframe whose height we sync
        to its scrollHeight, so the surrounding page scrolls naturally. */
@@ -11,6 +11,20 @@
       border-radius: var(--radius-lg);
       background: white;
       min-height: 400px;
+    }
+  </style>
+  {% elif ext == 'txt' %}
+  <style>
+    pre.txt-doc {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      padding: 16px;
+      background: var(--code-bg, #f7f7f8);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.5;
     }
   </style>
   {% endif %}
@@ -32,7 +46,7 @@
   {% if entry.get('tags') %}<span>{{ t('docs.meta.tags') }}:{{ entry.tags|join(', ') }}</span>{% endif %}
   <span class="small">{{ rel }}</span>
   <a href="/docs/{{ rel }}?raw=1" class="small" style="margin-left:auto;">{{ t('common.view_source') }}</a>
-  {% if ext == 'md' and ns_writable %}
+  {% if ext in ('md', 'html', 'htm', 'txt') and ns_writable %}
     <a href="/docs/{{ rel }}?edit=1" class="btn" style="margin-left:8px;">{{ t('common.edit') }}</a>
   {% endif %}
 </div>
@@ -40,6 +54,8 @@
 {% if ext == 'md' %}
   <div class="markdown" id="doc-body"></div>
   <script id="doc-source" type="text/markdown">{{ content }}</script>
+{% elif ext == 'txt' %}
+  <pre class="txt-doc">{{ content }}</pre>
 {% else %}
   <iframe id="doc-frame" class="html-doc" sandbox="allow-same-origin" srcdoc="{{ content|e }}"></iframe>
 {% endif %}
@@ -55,7 +71,7 @@
   document.getElementById('doc-body').innerHTML = marked.parse(src);
 })();
 </script>
-{% else %}
+{% elif ext in ('html', 'htm') %}
 <script>
 (function() {
   const f = document.getElementById('doc-frame');

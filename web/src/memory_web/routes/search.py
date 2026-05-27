@@ -18,12 +18,15 @@ _SCOPE_TO_FLAGS = {
 
 
 def _doc_link(path: str) -> str:
-    # Index hits use a relative path like "foo.md"; some sources include the
-    # docs/ prefix or absolute path.
+    # Index hits use a relative path like "foo.md" / "page.html" / "notes.txt";
+    # some sources include the docs/ prefix or absolute path. We pass the full
+    # rel path (with extension) to /docs/<rel> so any registered format
+    # resolves correctly — read_doc honours an explicit extension before
+    # falling back to the historic md→html→htm→txt resolution order.
     if "/docs/" in path:
         path = path.split("/docs/", 1)[1]
-    slug = path.removesuffix(".md").lstrip("/")
-    return f"/docs/{slug}" if slug else "/docs"
+    rel = path.lstrip("/")
+    return f"/docs/{rel}" if rel else "/docs"
 
 
 def _log_link(path: str, q: str | None) -> tuple[str, str]:

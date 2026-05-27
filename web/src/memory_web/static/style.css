@@ -423,6 +423,8 @@ a:hover { text-decoration: underline; }
 .tag.source-user { background: #e7f5ec; color: #2c7a4b; }
 .tag.tag-ext-md { background: #eef5ff; color: #1d6fc2; font-family: var(--mono); }
 .tag.tag-ext-html { background: #ffe9e0; color: #b54708; font-family: var(--mono); }
+.tag.tag-ext-htm { background: #ffe9e0; color: #b54708; font-family: var(--mono); }
+.tag.tag-ext-txt { background: #efefef; color: #555; font-family: var(--mono); }
 
 .empty {
   border: 1px dashed var(--border-strong);

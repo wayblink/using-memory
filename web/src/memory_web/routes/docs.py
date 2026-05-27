@@ -18,6 +18,10 @@ DOC_TYPES = (
     "project",
 )
 
+DOC_EXTS = ("md", "html", "txt")
+DEFAULT_DOC_EXT = "md"
+EDITABLE_DOC_EXTS = frozenset({"md", "html", "htm", "txt"})
+
 GROUP_OPTIONS = ("none", "type", "project")
 SORT_OPTIONS = ("name", "modified")
 NO_PROJECT_KEY = "__no_project__"
@@ -164,6 +168,7 @@ def doc_new(request: Request, error: str | None = None) -> HTMLResponse:
             "page": "docs",
             "mode": "new",
             "slug": "",
+            "ext": DEFAULT_DOC_EXT,
             "title": "",
             "doc_type": "wiki",
             "modified": "",
@@ -172,6 +177,7 @@ def doc_new(request: Request, error: str | None = None) -> HTMLResponse:
             "summary": "",
             "body": "",
             "doc_types": DOC_TYPES,
+            "doc_exts": DOC_EXTS,
             "error": error,
         },
     )
@@ -181,6 +187,7 @@ def doc_new(request: Request, error: str | None = None) -> HTMLResponse:
 def doc_save(
     request: Request,
     slug: str = Form(...),
+    ext: str = Form(DEFAULT_DOC_EXT),
     title: str = Form(""),
     doc_type: str = Form("wiki"),
     modified: str = Form(""),
@@ -194,10 +201,23 @@ def doc_save(
     project_list = [p.strip() for p in projects.split(",") if p.strip()]
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     slug = slug.strip()
+    ext = (ext or "").strip().lower().lstrip(".")
+    if ext not in EDITABLE_DOC_EXTS:
+        ext = DEFAULT_DOC_EXT
+
+    # If the user typed an extension into the slug field, honor it; otherwise
+    # use the format selector. memory_tool.upsert-doc accepts the full rel
+    # path (with extension) as ``--doc``.
+    if "." in slug.rsplit("/", 1)[-1]:
+        doc_arg = slug
+        rel_for_redirect = slug
+    else:
+        doc_arg = f"{slug}.{ext}"
+        rel_for_redirect = f"{slug}.{ext}"
 
     try:
         result = adapter.upsert_doc(
-            doc=slug,
+            doc=doc_arg,
             text=body,
             title=(title or None),
             doc_type=(doc_type or None),
@@ -217,6 +237,7 @@ def doc_save(
                 "page": "docs",
                 "mode": "new" if not slug else "edit",
                 "slug": slug,
+                "ext": ext,
                 "title": title,
                 "doc_type": doc_type,
                 "modified": modified,
@@ -225,12 +246,13 @@ def doc_save(
                 "summary": summary,
                 "body": body,
                 "doc_types": DOC_TYPES,
+                "doc_exts": DOC_EXTS,
                 "error": str(exc),
             },
             status_code=400,
         )
 
-    return RedirectResponse(f"/docs/{slug}", status_code=303)
+    return RedirectResponse(f"/docs/{rel_for_redirect}", status_code=303)
 
 
 @router.get("/docs/{slug:path}", name="doc_view")
@@ -248,12 +270,17 @@ def doc_view(
         raise HTTPException(status_code=404, detail=f"doc not found: {slug}")
 
     if raw:
-        media = "text/markdown; charset=utf-8" if doc["ext"] == "md" else "text/plain; charset=utf-8"
+        if doc["ext"] == "md":
+            media = "text/markdown; charset=utf-8"
+        elif doc["ext"] in ("html", "htm"):
+            media = "text/html; charset=utf-8"
+        else:
+            media = "text/plain; charset=utf-8"
         return PlainTextResponse(doc["content"], media_type=media)
 
     if edit:
-        if doc["ext"] != "md":
-            raise HTTPException(status_code=400, detail="HTML docs are read-only; edit them on disk.")
+        if doc["ext"] not in EDITABLE_DOC_EXTS:
+            raise HTTPException(status_code=400, detail=f"{doc['ext']} docs are read-only; edit them on disk.")
         entry = doc.get("entry") or {}
         return templates.TemplateResponse(
             request,
@@ -262,6 +289,7 @@ def doc_view(
                 "page": "docs",
                 "mode": "edit",
                 "slug": doc["slug"],
+                "ext": doc["ext"],
                 "title": entry.get("title") or "",
                 "doc_type": entry.get("type") or "wiki",
                 "modified": entry.get("modified") or "",
@@ -270,6 +298,7 @@ def doc_view(
                 "summary": entry.get("summary") or "",
                 "body": doc["content"],
                 "doc_types": DOC_TYPES,
+                "doc_exts": DOC_EXTS,
                 "error": None,
             },
         )
