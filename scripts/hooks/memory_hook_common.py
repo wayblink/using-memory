@@ -352,11 +352,25 @@ def _memory_tool_path() -> str:
     return str(Path.home() / ".claude" / "skills" / "using-memory" / "scripts" / "memory_tool.py")
 
 
+_MACHINE_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_machine_id(value: str) -> str:
+    cleaned = _MACHINE_ID_SAFE_RE.sub("-", (value or "").strip())
+    return (cleaned[:64] or "unknown-machine")
+
+
 def _stats_path() -> Path | None:
-    """Resolve <primary memory root>/<namespace>/STATS.json.
+    """Resolve ``<primary memory root>/<namespace>/STATS/<machine_id>.json``.
 
     Returns None when the config isn't readable yet — silent fail keeps
-    hook stability strict; STATS.json is best-effort accounting.
+    hook stability strict; STATS shards are best-effort accounting.
+
+    Each machine writes into its own shard so the file is git-syncable
+    without merge conflicts; the dashboard aggregates across shards. A
+    legacy single-file ``<namespace>/STATS.json`` is migrated into this
+    machine's shard on first hook write so existing installs keep their
+    counters.
     """
     try:
         config = _resolve_memory_config()
@@ -375,8 +389,21 @@ def _stats_path() -> Path | None:
             if not raw:
                 continue
             namespace = root.get("namespace") or "main"
+            machine_id = _safe_machine_id(root.get("machine_id") or "")
             base = Path(os.path.expanduser(os.path.expandvars(str(raw))))
-            return base / str(namespace) / "STATS.json"
+            scoped = base / str(namespace)
+            shard = scoped / "STATS" / f"{machine_id}.json"
+            # Best-effort migrate any pre-shard file into this shard.
+            if not shard.exists():
+                for legacy in (scoped / "STATS.json", scoped / "local" / "STATS.json"):
+                    if legacy.is_file():
+                        try:
+                            shard.parent.mkdir(parents=True, exist_ok=True)
+                            legacy.replace(shard)
+                        except OSError:
+                            pass
+                        break
+            return shard
     except Exception:
         return None
     return None

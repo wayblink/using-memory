@@ -1227,6 +1227,7 @@ def do_write_log(args: argparse.Namespace) -> dict:
     _bump_lifetime_stats(
         scoped_root,
         {"log_entries_auto" if (source or "user") == "auto" else "log_entries_user": 1},
+        machine_id=_primary_machine_id(args),
     )
     return {
         "changed": True,
@@ -1237,8 +1238,151 @@ def do_write_log(args: argparse.Namespace) -> dict:
     }
 
 
-def _bump_lifetime_stats(scoped_root: Path, deltas: dict, sets: dict | None = None) -> None:
-    """Atomic update of <namespace>/STATS.json.
+_MACHINE_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+# Field-name suffix that means "this is an ISO timestamp, take max across
+# shards" instead of summing. Counter fields (anything else) are summed.
+_STATS_TS_SUFFIX = "_ts"
+
+
+def _safe_machine_id(value: str) -> str:
+    cleaned = _MACHINE_ID_SAFE_RE.sub("-", (value or "").strip())
+    return (cleaned[:64] or "unknown-machine")
+
+
+def _stats_dir(scoped_root: Path) -> Path:
+    return scoped_root / "STATS"
+
+
+def _stats_shard_path(scoped_root: Path, machine_id: str) -> Path:
+    return _stats_dir(scoped_root) / f"{_safe_machine_id(machine_id)}.json"
+
+
+def _migrate_legacy_stats(scoped_root: Path, machine_id: str) -> None:
+    """Move ``<ns>/STATS.json`` to ``<ns>/STATS/<machine>.json`` once.
+
+    Idempotent: skips when the shard already exists or the legacy file is
+    missing. Best-effort — failures leave both copies in place; the
+    aggregate reader will still pick up either one. Also handles the
+    ``<ns>/local/STATS.json`` pre-V2.4 location for completeness.
+    """
+    target = _stats_shard_path(scoped_root, machine_id)
+    if target.exists():
+        return
+    candidates = [scoped_root / "STATS.json", scoped_root / "local" / "STATS.json"]
+    for legacy in candidates:
+        if not legacy.is_file():
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            legacy.replace(target)
+            return
+        except OSError:
+            return
+
+
+def _list_stats_shards(scoped_root: Path) -> list[Path]:
+    """Return every shard plus surviving legacy paths the dashboard should read."""
+    shards: list[Path] = []
+    stats_dir = _stats_dir(scoped_root)
+    if stats_dir.is_dir():
+        shards.extend(sorted(stats_dir.glob("*.json")))
+    # Legacy fall-throughs: still readable when migration hasn't run yet
+    # (e.g., dashboard touched before any write-* command).
+    for legacy in (scoped_root / "STATS.json", scoped_root / "local" / "STATS.json"):
+        if legacy.is_file() and legacy not in shards:
+            shards.append(legacy)
+    return shards
+
+
+def aggregate_lifetime_stats(scoped_root: Path) -> dict:
+    """Sum counters / max timestamps across every machine's STATS shard.
+
+    Output schema mirrors the legacy single-file shape so callers
+    (dashboard, status CLI) keep working unchanged:
+      ``{"last_event_ts": str|None, "lifetime": {...}, "shard_count": int}``.
+    Counters (default) are summed across shards; field names ending with
+    ``_ts`` are timestamps and take the max value (ISO-8601 sorts
+    lexicographically). Per-machine throttling state like
+    ``last_distill_inject_turn`` and ``cumulative_human_turns`` are
+    integers — summing them across shards over-states a single machine's
+    progress, but the dashboard treats both as totals so the sum is the
+    right rendering. The hook side reads its own shard via
+    ``read_machine_stats``.
+    """
+    out_lifetime: dict[str, Any] = {}
+    last_event_ts: str | None = None
+    shards = _list_stats_shards(scoped_root)
+    for path in shards:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        shard_ts = raw.get("last_event_ts")
+        if isinstance(shard_ts, str):
+            if last_event_ts is None or shard_ts > last_event_ts:
+                last_event_ts = shard_ts
+        lifetime = raw.get("lifetime")
+        if not isinstance(lifetime, dict):
+            continue
+        for key, value in lifetime.items():
+            if key.endswith(_STATS_TS_SUFFIX):
+                if isinstance(value, str):
+                    cur = out_lifetime.get(key)
+                    if not isinstance(cur, str) or value > cur:
+                        out_lifetime[key] = value
+                continue
+            try:
+                delta = int(value)
+            except (TypeError, ValueError):
+                continue
+            out_lifetime[key] = int(out_lifetime.get(key, 0) or 0) + delta
+    return {
+        "last_event_ts": last_event_ts,
+        "lifetime": out_lifetime,
+        "shard_count": len(shards),
+    }
+
+
+def read_machine_stats(scoped_root: Path, machine_id: str) -> dict:
+    """Read THIS machine's STATS shard only. Used for per-machine throttling
+    (the hook side) where summing across machines would corrupt thresholds.
+    """
+    path = _stats_shard_path(scoped_root, machine_id)
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _primary_machine_id(args: argparse.Namespace) -> str:
+    """Resolve the primary root's ``machine_id`` from the active config.
+
+    Re-reads config rather than threading it through every do_* signature.
+    Returns ``"unknown-machine"`` if anything fails so write paths still
+    succeed (just under a fallback shard name).
+    """
+    try:
+        config = load_config(
+            Path(args.config) if getattr(args, "config", None) else None,
+            os.environ.get("USING_MEMORY_CONFIG"),
+        )
+        if not config:
+            return "unknown-machine"
+        primary_list, _ = collect_roots(config)
+        if not primary_list:
+            return "unknown-machine"
+        return _safe_machine_id(primary_list[0].get("machine_id") or "")
+    except Exception:
+        return "unknown-machine"
+
+
+def _bump_lifetime_stats(scoped_root: Path, deltas: dict, sets: dict | None = None, *, machine_id: str = "unknown-machine") -> None:
+    """Atomic update of ``<namespace>/STATS/<machine_id>.json``.
 
     Same contract as the hook-side bump_stats; lives here so write-* CLI
     commands can update counts independently of any hook context.
@@ -1246,7 +1390,8 @@ def _bump_lifetime_stats(scoped_root: Path, deltas: dict, sets: dict | None = No
     """
     if not deltas and not sets:
         return
-    path = scoped_root / "STATS.json"
+    _migrate_legacy_stats(scoped_root, machine_id)
+    path = _stats_shard_path(scoped_root, machine_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -2006,8 +2151,9 @@ def do_anatomy_list(args: argparse.Namespace) -> dict:
 def do_status(args: argparse.Namespace) -> dict:
     """Aggregate dashboard for the using-memory installation.
 
-    Reads <namespace>/STATS.json (real event counters, no estimates), plus
-    the anatomy index, and computes two diagnostic ratios:
+    Reads every ``<namespace>/STATS/<machine_id>.json`` shard (real event
+    counters, no estimates), plus the anatomy index, and computes two
+    diagnostic ratios:
       - anatomy_hit_rate     = anatomy_attached_count / sessions
       - stop_block_ratio     = stop_blocks / (stop_blocks + stop_throttled_passthrough)
 
@@ -2016,27 +2162,23 @@ def do_status(args: argparse.Namespace) -> dict:
     suggests more anatomy-register calls would help. The block ratio tells
     the user whether the N=8 throttle is too aggressive (high → too many
     blocks) or too lax (very low → silent summaries doing all the work).
+
+    Multi-machine semantics: counters are summed across shards; ``_ts``
+    fields take the max value. Pre-sharded installs are migrated on first
+    write; un-migrated namespaces are still readable via the legacy
+    fall-through inside ``aggregate_lifetime_stats``.
     """
     primary_root, primary_namespace = load_primary_for_write(args)
     scoped_root = namespace_root(primary_root, primary_namespace)
-    stats_path = scoped_root / "STATS.json"
-    # Backward compat: pre-V2.4 installs had it under local/. If only the old
-    # path exists, surface it so the dashboard still works during transition.
-    legacy_path = scoped_root / "local" / "STATS.json"
-    if not stats_path.exists() and legacy_path.exists():
-        stats_path = legacy_path
-    lifetime: dict = {}
-    last_event_ts: str | None = None
-    if stats_path.exists():
-        try:
-            raw = json.loads(stats_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                lt = raw.get("lifetime")
-                if isinstance(lt, dict):
-                    lifetime = lt
-                last_event_ts = raw.get("last_event_ts")
-        except (OSError, json.JSONDecodeError):
-            pass
+    machine_id = _primary_machine_id(args)
+    # Best-effort migrate while we have the lock-free read path; the next
+    # write would do it anyway, this just makes the listing tidy sooner.
+    _migrate_legacy_stats(scoped_root, machine_id)
+
+    aggregated = aggregate_lifetime_stats(scoped_root)
+    lifetime: dict = aggregated.get("lifetime") or {}
+    last_event_ts: str | None = aggregated.get("last_event_ts")
+    shard_count: int = int(aggregated.get("shard_count") or 0)
 
     def _g(k: str) -> int:
         try:
@@ -2082,7 +2224,8 @@ def do_status(args: argparse.Namespace) -> dict:
         })
 
     return {
-        "stats_path": str(stats_path),
+        "stats_path": str(_stats_dir(scoped_root)),
+        "stats_shards": shard_count,
         "last_event_ts": last_event_ts,
         "lifetime": {
             "sessions": sessions,
@@ -3074,7 +3217,12 @@ def do_distill(scoped_root: Path, args: argparse.Namespace) -> dict:
     buckets = _build_distill_buckets(entries, promoted, min_entries, min_days)
 
     now_ts = datetime.now().astimezone().isoformat(timespec="seconds")
-    _bump_lifetime_stats(scoped_root, {}, sets={"last_distill_check_ts": now_ts})
+    _bump_lifetime_stats(
+        scoped_root,
+        {},
+        sets={"last_distill_check_ts": now_ts},
+        machine_id=_primary_machine_id(args),
+    )
 
     return {
         "mode": "distill",
