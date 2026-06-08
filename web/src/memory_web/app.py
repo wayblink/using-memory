@@ -12,7 +12,8 @@ from fastapi.templating import Jinja2Templates
 
 from .adapter import MemoryAdapter, NamespaceRegistry
 from .i18n import COOKIE_NAME, SUPPORTED, lang_context, resolve_lang
-from .routes import anatomy, dashboard, docs, logs, memory, preferences, search
+from .maintenance import MaintenanceScheduler, read_interval_from_env
+from .routes import admin, anatomy, dashboard, docs, logs, memory, preferences, search
 
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -123,6 +124,18 @@ def create_app(config_path: str | None = None) -> FastAPI:
     app.state.templates = TEMPLATES
     app.state.skill_version = SKILL_VERSION
 
+    interval_min = read_interval_from_env()
+    scheduler = MaintenanceScheduler(adapter, interval_minutes=interval_min)
+    app.state.maintenance = scheduler
+
+    @app.on_event("startup")
+    async def _start_maintenance() -> None:
+        scheduler.start()
+
+    @app.on_event("shutdown")
+    async def _stop_maintenance() -> None:
+        await scheduler.stop()
+
     @app.middleware("http")
     async def attach_lang(request: Request, call_next):
         # Query ?lang= takes precedence so deep-linking with explicit lang works
@@ -209,5 +222,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
     app.include_router(memory.router)
     app.include_router(preferences.router)
     app.include_router(anatomy.router)
+    app.include_router(admin.router)
 
     return app

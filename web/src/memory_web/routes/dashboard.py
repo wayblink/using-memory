@@ -33,6 +33,9 @@ def dashboard(request: Request) -> HTMLResponse:
     log_block = stats.get("log") or {}
     memory_block = stats.get("memory") or {}
 
+    maintenance = getattr(request.app.state, "maintenance", None)
+    maintenance_status = maintenance.status() if maintenance is not None else None
+
     # Docs counts straight from filesystem (already deduped/typed by adapter)
     docs_items = adapter.list_docs()
     docs_total = len(docs_items)
@@ -126,5 +129,6 @@ def dashboard(request: Request) -> HTMLResponse:
                 "auto_summary": _AUTO_SUMMARY_TOKENS_AVOIDED,
                 "stop_block": _STOP_BLOCK_TOKENS_AVOIDED,
             },
+            "maintenance": maintenance_status,
         },
     )

@@ -235,6 +235,23 @@ class MemoryAdapter:
     def anatomy_list(self) -> dict:
         return self._mt.do_anatomy_list(self._ns(json=True))
 
+    def maintain(self) -> dict:
+        """Run the full maintain audit (no --distill, no --promote).
+
+        Returns the structured report (stale files, corrupt jsonl lines, doc
+        index repairs, anatomy drift). Requires the default writable namespace
+        because do_maintain calls load_primary_for_write internally.
+        """
+        self._require_writable()
+        ns = self._ns(
+            distill=False,
+            promote=None,
+            min_entries=3,
+            min_days=3,
+            json=True,
+        )
+        return self._call_capturing_exits(self._mt.do_maintain, ns)
+
     def distill_candidates(self, *, min_entries: int = 3, min_days: int = 3) -> dict:
         """Read-only distillation bucket analysis.
 

@@ -12,6 +12,52 @@
   {% endfor %}
 {% endif %}
 
+{% if maintenance %}
+<section class="maintenance-card" style="margin:16px 0; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-lg); background:var(--card-bg, transparent);">
+  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+    <strong>{{ t('dashboard.maintain.title') }}</strong>
+    {% if maintenance.enabled %}
+      <span class="small">{{ t('dashboard.maintain.interval', n=maintenance.interval_minutes) }}</span>
+    {% else %}
+      <span class="small">{{ t('dashboard.maintain.disabled') }}</span>
+    {% endif %}
+    {% if maintenance.last_run_ts %}
+      <span class="small">{{ t('dashboard.maintain.last_run', ts=maintenance.last_run_ts) }}</span>
+    {% else %}
+      <span class="small">{{ t('dashboard.maintain.never') }}</span>
+    {% endif %}
+    {% if maintenance.last_status == 'ok' %}
+      <span class="tag" title="{{ t('dashboard.maintain.last_status') }}">{{ t('dashboard.maintain.status_ok') }}</span>
+    {% elif maintenance.last_status == 'error' %}
+      <span class="tag" style="background:#fdecec; color:#a92626;" title="{{ maintenance.last_error or '' }}">{{ t('dashboard.maintain.status_error') }}</span>
+    {% endif %}
+    {% if maintenance.enabled and maintenance.next_run_ts %}
+      <span class="small" style="margin-left:auto;">{{ t('dashboard.maintain.next_run', ts=maintenance.next_run_ts) }}</span>
+    {% endif %}
+    {% if ns_writable %}
+    <form method="post" action="/admin/maintain" style="margin:0 0 0 auto; display:inline;">
+      <button type="submit" class="btn"{% if maintenance.running %} disabled{% endif %}>
+        {% if maintenance.running %}{{ t('dashboard.maintain.running') }}{% else %}{{ t('dashboard.maintain.run_now') }}{% endif %}
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% if maintenance.last_summary %}
+    <div class="small" style="margin-top:6px; color:var(--text-soft);">
+      {{ t('dashboard.maintain.summary',
+            stale=maintenance.last_summary.get('stale', 0),
+            corrupt=maintenance.last_summary.get('corrupt', 0),
+            repaired=maintenance.last_summary.get('repaired', 0),
+            broken=maintenance.last_summary.get('broken_log_refs', 0),
+            drift=maintenance.last_summary.get('anatomy_projects_with_drift', 0)) }}
+    </div>
+  {% endif %}
+  {% if maintenance.last_status == 'error' and maintenance.last_error %}
+    <div class="small" style="margin-top:6px; color:#a92626;">{{ maintenance.last_error }}</div>
+  {% endif %}
+</section>
+{% endif %}
+
 <h2 class="section-label">{{ t('dashboard.lifetime_counters') }}</h2>
 <section class="stat-grid stat-grid-4">
   {# Row 1 — what's stored #}
