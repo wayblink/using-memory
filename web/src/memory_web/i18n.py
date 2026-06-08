@@ -32,6 +32,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.preferences": "Preferences",
         "nav.anatomy": "Anatomy",
         "version_tag": "browse + edit",
+        # Width-mode switcher
+        "width.aria": "Content width",
+        "width.narrow": "Narrow",
+        "width.narrow.title": "Narrow — center the content column",
+        "width.wide": "Wide",
+        "width.wide.title": "Wide — fill the available space",
         # Namespace switcher
         "ns.label": "Namespace",
         "ns.readonly": "read-only",
@@ -263,6 +269,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav.preferences": "偏好",
         "nav.anatomy": "项目快照",
         "version_tag": "浏览 + 编辑",
+        # Width-mode switcher
+        "width.aria": "内容宽度",
+        "width.narrow": "窄屏",
+        "width.narrow.title": "窄屏 — 内容居中显示",
+        "width.wide": "宽屏",
+        "width.wide.title": "宽屏 — 内容铺满可用空间",
         # Namespace switcher
         "ns.label": "命名空间",
         "ns.readonly": "只读",

@@ -6,6 +6,17 @@
   <title>{% block title %}{{ t('brand') }}{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <script>
+    (function () {
+      try {
+        var m = localStorage.getItem('memory-web:width-mode');
+        if (m !== 'wide' && m !== 'narrow') m = 'narrow';
+        document.documentElement.setAttribute('data-width-mode', m);
+      } catch (e) {
+        document.documentElement.setAttribute('data-width-mode', 'narrow');
+      }
+    })();
+  </script>
   {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -47,6 +58,21 @@
       <a href="/anatomy" class="{% if page == 'anatomy' %}active{% endif %}"><span class="icon">⌗</span> {{ t('nav.anatomy') }}</a>
     </nav>
     <footer class="sidebar-footer">
+      <div class="width-switcher" role="group" aria-label="{{ t('width.aria') }}">
+        <button type="button" data-width-mode="narrow" title="{{ t('width.narrow.title') }}" aria-label="{{ t('width.narrow') }}">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="5" y="2" width="6" height="12" rx="1"/>
+          </svg>
+          {{ t('width.narrow') }}
+        </button>
+        <span class="sep">·</span>
+        <button type="button" data-width-mode="wide" title="{{ t('width.wide.title') }}" aria-label="{{ t('width.wide') }}">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="1" y="2" width="14" height="12" rx="1"/>
+          </svg>
+          {{ t('width.wide') }}
+        </button>
+      </div>
       <div class="lang-switcher">
         <a href="/lang/en" class="{% if lang == 'en' %}active{% endif %}">EN</a>
         <span class="sep">·</span>
@@ -67,5 +93,24 @@
   </main>
 </div>
 {% block scripts %}{% endblock %}
+<script>
+  (function () {
+    var html = document.documentElement;
+    function apply(mode) {
+      html.setAttribute('data-width-mode', mode);
+      document.querySelectorAll('.width-switcher button[data-width-mode]').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-width-mode') === mode);
+      });
+    }
+    apply(html.getAttribute('data-width-mode') || 'narrow');
+    document.querySelectorAll('.width-switcher button[data-width-mode]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var mode = b.getAttribute('data-width-mode');
+        try { localStorage.setItem('memory-web:width-mode', mode); } catch (e) {}
+        apply(mode);
+      });
+    });
+  })();
+</script>
 </body>
 </html>
