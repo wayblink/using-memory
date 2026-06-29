@@ -286,6 +286,60 @@ class MemoryAdapter:
         except (OSError, json.JSONDecodeError):
             return None
 
+    def namespace_file_path(self, relative: str) -> Path | None:
+        """Return a safe absolute path for a namespace-scoped file."""
+        root = self.primary_root()
+        if root is None:
+            return None
+        rel_path = Path(relative)
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            return None
+        path = (root / rel_path).resolve()
+        try:
+            path.relative_to(root.resolve())
+        except ValueError:
+            return None
+        if not path.exists() or not path.is_file():
+            return None
+        return path
+
+    def resolve_doc_path(self, slug: str) -> Path | None:
+        root = self.primary_root()
+        if root is None:
+            return None
+        docs_dir = root / "docs"
+        if not docs_dir.exists():
+            return None
+
+        explicit_ext: str | None = None
+        bare = slug
+        for ext in self._DOC_EXTS:
+            if slug.lower().endswith(ext):
+                explicit_ext = ext
+                bare = slug[: -len(ext)]
+                break
+
+        if bare.startswith("/") or ".." in Path(bare).parts:
+            return None
+
+        exts_to_try: tuple[str, ...] = (explicit_ext,) if explicit_ext else self._DOC_EXTS
+        docs_root = docs_dir.resolve()
+        for ext in exts_to_try:
+            candidate = (docs_dir / f"{bare}{ext}").resolve()
+            try:
+                candidate.relative_to(docs_root)
+            except ValueError:
+                continue
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        return None
+
+    def anatomy_file_path(self, slug: str, fmt: str = "json") -> Path | None:
+        fmt = (fmt or "").strip().lower()
+        if fmt not in {"json", "md"}:
+            return None
+        return self.namespace_file_path(f"anatomy/{slug}.{fmt}")
+
     # --- Write operations ---------------------------------------------------
     #
     # memory_tool.do_* functions call sys.exit(2) on validation failures and
@@ -432,49 +486,15 @@ class MemoryAdapter:
         return items
 
     def read_doc(self, slug: str) -> dict | None:
-        root = self.primary_root()
-        if root is None:
-            return None
-        docs_dir = root / "docs"
-        if not docs_dir.exists():
-            return None
-
-        # If the URL carried an explicit extension, look up that file only —
-        # otherwise an HTML doc with a same-named .md sibling would silently
-        # resolve to the .md. When no extension is given, fall back to the
-        # historic resolution order (md → html → htm) so legacy slug-only
-        # links (search hits, /docs/save redirect, edit links) still work.
-        explicit_ext: str | None = None
-        bare = slug
-        for ext in self._DOC_EXTS:
-            if slug.lower().endswith(ext):
-                explicit_ext = ext
-                bare = slug[: -len(ext)]
-                break
-
-        if bare.startswith("/") or ".." in Path(bare).parts:
-            return None
-
-        exts_to_try: tuple[str, ...] = (explicit_ext,) if explicit_ext else self._DOC_EXTS
-
-        candidate: Path | None = None
-        ext_used: str | None = None
-        for ext in exts_to_try:
-            p = (docs_dir / f"{bare}{ext}").resolve()
-            try:
-                p.relative_to(docs_dir.resolve())
-            except ValueError:
-                continue
-            if p.exists() and p.is_file():
-                candidate = p
-                ext_used = ext.lstrip(".")
-                break
-
+        candidate = self.resolve_doc_path(slug)
         if candidate is None:
             return None
 
         # Look up the index entry by *full rel path* so .md / .html / .htm /
         # .txt all populate metadata correctly (in_index, title, projects…).
+        root = self.primary_root()
+        assert root is not None
+        docs_dir = root / "docs"
         full_rel = candidate.relative_to(docs_dir.resolve()).as_posix()
         index_entry: dict | None = None
         for e in self.docs_index_entries():
@@ -483,8 +503,8 @@ class MemoryAdapter:
                 break
 
         return {
-            "slug": bare,
-            "ext": ext_used,
+            "slug": full_rel.rsplit(".", 1)[0],
+            "ext": candidate.suffix.lower().lstrip("."),
             "content": candidate.read_text(encoding="utf-8"),
             "entry": index_entry,
             "rel": full_rel,
@@ -791,4 +811,3 @@ class NamespaceRegistry:
             )
             self._others[name] = adapter
         return adapter
-

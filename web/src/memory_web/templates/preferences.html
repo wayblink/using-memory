@@ -3,7 +3,10 @@
 {% block content %}
 <header class="page">
   <h1>{{ t('pref.title') }}</h1>
-  <div class="sub">{{ t('pref.sub') }}</div>
+  <div class="sub">
+    {{ t('pref.sub') }}
+    <a href="/preferences/download" style="margin-left:8px;">{{ t('common.download') }}</a>
+  </div>
 </header>
 
 {% if error %}

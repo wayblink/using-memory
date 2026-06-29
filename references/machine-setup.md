@@ -131,7 +131,7 @@ Add a user-level hook block to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+            "command": "python3 ~/.claude/skills/using-memory/scripts/hooks/claude_session_start_hook.py"
           }
         ]
       }
@@ -192,11 +192,13 @@ Add a user-level hook block to `~/.claude/settings.json`:
 }
 ```
 
+Use the dedicated Claude SessionStart wrapper on purpose: it chains `using-superpowers` startup guidance with `using-memory` SessionStart context, including the compact `<namespace>/PREFERENCES.md` summary. If an older machine still points SessionStart at `~/.claude/hooks/session-start` or directly at `claude_memory_hook.py`, update it after pulling this repo.
+
 Claude Code also supports project `.claude/settings.json`, local `.claude/settings.local.json`, plugins, and skill-scoped hooks. Prefer user-level hooks for a machine-wide memory rule; use project hooks when the project should carry its own enforcement. Run `/hooks` in Claude Code to inspect which hooks are active.
 
 ### Hook behavior and limits
 
-- `SessionStart` and memory-relevant `UserPromptSubmit` add context reminding the agent to use the skill and to write operation logs broadly.
+- `SessionStart` and memory-relevant `UserPromptSubmit` add context reminding the agent to use the skill and to write operation logs broadly. SessionStart also injects a compact saved-preferences summary so host-level reply rules such as language preference are visible before the first answer.
 - `PostToolUse` and Claude's `PostToolBatch` mark the turn as log-worthy when commands, edits, builds, tests, commits, pushes, deployments, hook/config changes, failures, or fixes appear.
 - `Stop` is the enforcement point: when the main agent is about to finish, the hook returns `decision: "block"` once if the turn looks log-worthy and no `memory_tool.py write-log`, `write-memory`, `write-preference`, or `upsert-doc` was observed.
 - `stop_hook_active` is honored to prevent infinite loops after the agent continues from a Stop hook.
@@ -216,14 +218,16 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 4. Start a brand-new Codex or Claude Code session. Do not reuse an older chat that may have loaded stale skill text.
 5. First probe: ask a prompt that should not need memory. A simple prompt is: `For a greeting like "hello", should using-memory load saved memory? Answer yes/no with one reason.` Expected answer: no, because greetings do not need persisted context.
 6. Second probe: ask a prompt that explicitly needs saved memory. A simple prompt is: `Using saved preferences and prior project memory, what memory sources would you load? List only source categories.` Expected answer: `<namespace>/PREFERENCES.md`, `<namespace>/MEMORY.md`, relevant local context, and relevant indexed docs when the config is reachable.
-7. Third probe: ask the agent to state its automatic write decision for the current turn. A simple prompt is: `If this turn only had a greeting and no operation history, what is your automatic write decision? Answer only skip/log_detail/log_summary/write_memory, with one reason.`
-8. Optional durable-write probe: tell the agent one durable preference and ask what it would write. For example: `Remember: I prefer concise direct replies. Where would you write it?` Expected answer: `<namespace>/PREFERENCES.md` through `write-preference`.
-9. Optional hook probe: in a test repo, ask the agent to make a tiny harmless file edit and finish. Expected behavior: before the final answer, the Stop hook should force a `write-log` entry unless the agent already wrote one.
+7. SessionStart preference probe: on a fresh Claude or Codex session, ask `Before I say anything else, what saved reply-language preference is already active?` Expected answer: it should mention the stored language preference from `<namespace>/PREFERENCES.md` instead of claiming no preference is loaded.
+8. Third probe: ask the agent to state its automatic write decision for the current turn. A simple prompt is: `If this turn only had a greeting and no operation history, what is your automatic write decision? Answer only skip/log_detail/log_summary/write_memory, with one reason.`
+9. Optional durable-write probe: tell the agent one durable preference and ask what it would write. For example: `Remember: I prefer concise direct replies. Where would you write it?` Expected answer: `<namespace>/PREFERENCES.md` through `write-preference`.
+10. Optional hook probe: in a test repo, ask the agent to make a tiny harmless file edit and finish. Expected behavior: before the final answer, the Stop hook should force a `write-log` entry unless the agent already wrote one.
 
 ## Pass conditions
 - The first probe says memory retrieval should be skipped for the greeting.
 - The second probe mentions the configured primary repo and any readable reference repos in `sources` when source details are available.
 - The second probe mentions retrieval from `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md`, plus log or `<namespace>/local/*` context when relevant.
+- The SessionStart preference probe surfaces the saved reply-language preference without waiting for a memory-specific user prompt.
 - The third probe returns one of `skip`, `log_detail`, `log_summary`, or `write_memory`.
 - The agent does not claim that every conversation must load memory.
 - The agent does not claim that every tool call must be mirrored mechanically.
@@ -233,6 +237,7 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 ## Common failures to check first
 - `~/.codex/superpowers/GEMINI.md` still points to `@./skills/using-memory/SKILL.md` instead of `@../skills/using-memory/SKILL.md`.
 - `~/.claude/CLAUDE.md` does not include `@./skills/using-memory/SKILL.md`.
+- `~/.claude/settings.json` still points `SessionStart` at `~/.claude/hooks/session-start` or `claude_memory_hook.py` instead of `scripts/hooks/claude_session_start_hook.py`.
 - Codex `~/.codex/config.toml` is missing `[features] codex_hooks = true`.
 - The hook config points at a copied skill path but the skill was only linked under the other host.
 - The skill was never linked or installed. Re-run `scripts/link.sh both` for live symlinks or `scripts/install.sh both` for copied installs.
@@ -248,12 +253,14 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 4. Create `~/.skills/using-memory/config.yaml` or set `USING_MEMORY_CONFIG` to a machine-local config file.
 5. Point the primary root at the memory repo checkout, then set a stable `namespace` for this machine/user/environment. If omitted, namespace defaults to `main`.
 6. Edit `~/.codex/superpowers/GEMINI.md` and/or `~/.claude/CLAUDE.md` with the startup lines above.
-7. Start a brand-new host session and run the smoke test before trusting the setup.
+7. Wire the host hooks exactly as shown above. For Claude Code, make sure `SessionStart` uses `claude_session_start_hook.py`.
+8. Start a brand-new host session and run the smoke test before trusting the setup.
 
 ## Ready-to-copy templates
 - Start from `examples/new-machine/config.template.yaml` when creating `~/.skills/using-memory/config.yaml` on a fresh machine.
 - Copy `examples/new-machine/GEMINI.template.md` into `~/.codex/superpowers/GEMINI.md` if you want the minimal startup include block without retyping it.
 - Copy `examples/new-machine/CLAUDE.template.md` into `~/.claude/CLAUDE.md` if you want the minimal Claude Code startup include block without retyping it.
+- After any `git pull` that changes hook behavior, rerun `scripts/link.sh` or `scripts/install.sh both` so installed host paths pick up new helper scripts before you restart Codex or Claude Code.
 - Only change machine-local values such as `path`, `namespace`, `machine_id`, and whether a reference root should exist on this machine.
 
 ## Per-machine values only

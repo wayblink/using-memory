@@ -55,6 +55,12 @@ IMPORTANT_OPERATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+PREFERENCE_SIGNAL_RE = re.compile(
+    r"(reply|respond|response|language|style|tone|format|always|never|must|"
+    r"中文|简体中文|日语|日文|日本语|日本語|英语|英文|回复|回答|语言|风格|格式|始终|不要|必须|优先)",
+    re.IGNORECASE,
+)
+
 
 def load_payload() -> dict[str, Any]:
     try:
@@ -157,6 +163,67 @@ def memory_protocol_reminder() -> str:
         "Stable preferences go to write-preference; stable facts, confirmed decisions, and lessons "
         "go to write-memory."
     )
+
+
+def _clean_preference_line(raw: str) -> str:
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        return ""
+    line = re.sub(r"^[-*+]\s*", "", line)
+    line = re.sub(r"^\d+\.\s*", "", line)
+    line = re.sub(r"^\[[0-9]{4}-[0-9]{2}-[0-9]{2}\]\s*", "", line)
+    line = re.sub(r"\s+", " ", line).strip()
+    return line
+
+
+def _score_preference_line(line: str) -> int:
+    score = 0
+    if PREFERENCE_SIGNAL_RE.search(line):
+        score += 4
+    if any(token in line for token in ("中文", "简体中文", "日语", "日本語", "日本语", "回复", "回答", "语言")):
+        score += 4
+    lower = line.lower()
+    if any(token in lower for token in ("reply", "respond", "language", "style", "format", "always", "never")):
+        score += 3
+    if len(line) <= 120:
+        score += 1
+    return score
+
+
+def render_preference_summary(preferences: list[str], max_items: int = 4) -> str | None:
+    """Distill loaded PREFERENCES.md content into a compact SessionStart block."""
+    candidates: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    ordinal = 0
+    for doc in preferences:
+        for raw_line in doc.splitlines():
+            line = _clean_preference_line(raw_line)
+            if not line:
+                continue
+            key = line.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((_score_preference_line(line), ordinal, line))
+            ordinal += 1
+
+    if not candidates:
+        return None
+
+    priority = [item for item in candidates if item[0] > 0]
+    ordered = sorted(priority or candidates, key=lambda item: (-item[0], item[1]))
+    picked = [line for _, _, line in ordered[:max_items]]
+    if not picked:
+        return None
+
+    lines = [
+        "## Active preferences",
+        "",
+        "Apply these saved preferences unless the current user turn overrides them:",
+        "",
+    ]
+    lines.extend(f"- {line}" for line in picked)
+    return "\n".join(lines)
 
 
 def stop_gate_reason(events: list[str], last_message: str, distill_md: str | None = None) -> str:
@@ -535,9 +602,9 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
         return
 
 
-def fetch_session_start_anatomy(payload: dict[str, Any]) -> tuple[str | None, dict[str, int]]:
+def fetch_session_start_snapshot(payload: dict[str, Any]) -> tuple[str | None, str | None, dict[str, int]]:
     """Best-effort: call `memory_tool.py load --anatomy --json` and return
-    (markdown, stats_deltas) for the SessionStart context injection.
+    (preference_markdown, anatomy_markdown, stats_deltas) for SessionStart.
 
     ``stats_deltas`` is an empty dict on failure / no anatomy; otherwise it
     contains the counters this call earned (e.g. anatomy_attached_count=1,
@@ -549,7 +616,7 @@ def fetch_session_start_anatomy(payload: dict[str, Any]) -> tuple[str | None, di
     try:
         config = _resolve_memory_config()
         if not config:
-            return None, deltas
+            return None, None, deltas
         cwd = payload.get("cwd") or os.getcwd()
         cmd = [
             sys.executable or "python3",
@@ -562,11 +629,18 @@ def fetch_session_start_anatomy(payload: dict[str, Any]) -> tuple[str | None, di
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=20, text=True)
         if result.returncode != 0:
-            return None, deltas
+            return None, None, deltas
         data = json.loads(result.stdout or "{}")
+        preference_md = None
+        if isinstance(data, dict):
+            preferences = data.get("preferences")
+            if isinstance(preferences, list):
+                preference_md = render_preference_summary(
+                    [entry for entry in preferences if isinstance(entry, str)]
+                )
         anatomy = data.get("anatomy") if isinstance(data, dict) else None
         if not isinstance(anatomy, dict):
-            return None, deltas
+            return preference_md, None, deltas
         if anatomy.get("matched"):
             content = anatomy.get("content") or ""
             warning = anatomy.get("warning") or ""
@@ -579,18 +653,18 @@ def fetch_session_start_anatomy(payload: dict[str, Any]) -> tuple[str | None, di
                 deltas["anatomy_attached_tokens_est"] = max(1, int(len(content) / 3.75 + 0.5))
                 if anatomy.get("truncated"):
                     deltas["anatomy_truncated_count"] = 1
-                return content, deltas
+                return preference_md, content, deltas
             if warning:
                 deltas["anatomy_attached_count"] = 1  # matched but unscanned still counts as an attach attempt
-                return f"## Anatomy\n\n{warning}\n", deltas
-            return None, deltas
+                return preference_md, f"## Anatomy\n\n{warning}\n", deltas
+            return preference_md, None, deltas
         hint = anatomy.get("hint")
         if hint:
             deltas["anatomy_hint_emitted"] = 1
-            return f"## Anatomy hint\n\n{hint}\n", deltas
-        return None, deltas
+            return preference_md, f"## Anatomy hint\n\n{hint}\n", deltas
+        return preference_md, None, deltas
     except Exception:
-        return None, deltas
+        return None, None, deltas
 
 
 def fetch_distillation_candidates() -> tuple[str | None, dict[str, int]]:
@@ -789,9 +863,11 @@ def run(host: str) -> int:
         state.setdefault("important_events", [])
         save_state(payload, host, state)
         reminder = memory_protocol_reminder()
-        anatomy_md, anatomy_deltas = fetch_session_start_anatomy(payload)
+        preference_md, anatomy_md, anatomy_deltas = fetch_session_start_snapshot(payload)
         distill_md, distill_deltas = fetch_distillation_candidates()
         sections = [reminder]
+        if preference_md:
+            sections.append(preference_md)
         if anatomy_md:
             sections.append(anatomy_md)
         if distill_md:

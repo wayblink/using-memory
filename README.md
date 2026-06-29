@@ -140,7 +140,7 @@ Registration is explicit on purpose: `cd ~/Downloads` should not silently create
 python3 scripts/memory_tool.py load --anatomy --cwd ~/yard/spark-ann/src
 ```
 
-The bundled hook calls this on every SessionStart and appends the rendered anatomy (capped at ~2000 tokens, falling back to a top-level directory summary above the cap) to the model's context. When cwd is inside an unregistered git repo, it emits a one-line hint suggesting `anatomy-register`. Otherwise it stays silent.
+The bundled hook calls this on every SessionStart and appends two compact blocks to the model's context: a high-priority preference summary distilled from `<namespace>/PREFERENCES.md`, plus the rendered anatomy (capped at ~2000 tokens, falling back to a top-level directory summary above the cap). When cwd is inside an unregistered git repo, it emits an anatomy hint suggesting `anatomy-register`. Otherwise only the reminder + preferences block are injected.
 
 ### Incremental upkeep
 
@@ -251,7 +251,7 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 
 | Event | Action |
 |---|---|
-| **SessionStart** | Inject memory-protocol reminder + anatomy snapshot for cwd (or one-line hint when cwd is inside an unregistered git repo). |
+| **SessionStart** | Inject memory-protocol reminder + compact preference summary from `<namespace>/PREFERENCES.md` + anatomy snapshot for cwd (or one-line hint when cwd is inside an unregistered git repo). |
 | **UserPromptSubmit** | Set `prompt_mentions_memory` if the prompt contains memory keywords; emit reminder when set. Session-lifetime counters are not reset. |
 | **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For write/edit-style tools, also call `anatomy-upsert-file` on every touched path (best-effort, 8 s timeout). |
 | **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final message contains a memory-write call, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL: when `prompt_mentions_memory` OR `delta >= STOP_DETAIL_TURN_INTERVAL` (default `8`), BLOCK with a short reason asking the model to write a detail-level log. Other substantial turns get a silent `level=summary tag=progress source=auto` log entry (deduped per turn, capped at 200 per session). |
@@ -268,7 +268,9 @@ codex_hooks = true
 
 Then point `~/.codex/hooks.json` at `~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact`, and `Stop`.
 
-For Claude Code, point `~/.claude/settings.json` at `~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PostToolBatch`, `ConfigChange`, `PreCompact`, and `Stop`.
+For Claude Code, point `SessionStart` at `~/.claude/skills/using-memory/scripts/hooks/claude_session_start_hook.py` so startup includes both `using-superpowers` and `using-memory`. Point `UserPromptSubmit`, `PostToolUse`, `PostToolBatch`, `ConfigChange`, `PreCompact`, and `Stop` at `~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py`.
+
+When you pull an update that changes hook behavior, rerun `./scripts/link.sh` or `./scripts/install.sh both` before restarting the host. Copied installs do not pick up new helper scripts until you reinstall.
 
 See [references/machine-setup.md](references/machine-setup.md) for complete hook JSON examples and smoke tests.
 

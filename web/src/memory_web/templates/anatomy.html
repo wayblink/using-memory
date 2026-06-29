@@ -13,6 +13,8 @@
   <span class="tag">{{ t('anatomy.tokens_count', n=totals.get('tokens_est', 0)) }}</span>
   <span class="small">{{ root }}</span>
   {% if scanned_at %}<span class="small">{{ t('anatomy.scanned', ts=scanned_at) }}</span>{% endif %}
+  <a href="/anatomy/{{ slug }}/download?format=json" class="small" style="margin-left:auto;">{{ t('common.download_json') }}</a>
+  <a href="/anatomy/{{ slug }}/download?format=md" class="small" style="margin-left:8px;">{{ t('common.download_markdown') }}</a>
 </div>
 
 {% if files %}

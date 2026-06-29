@@ -15,12 +15,14 @@ class IntegrationDocTests(unittest.TestCase):
         self.assertIn("--exclude=.git", text)
         self.assertIn("--exclude=tests", text)
         self.assertIn("--exclude=__pycache__", text)
+        self.assertIn("claude_session_start_hook.py", text)
         self.assertNotIn('cp -a "$HERE"/. "$dest"/', text)
 
     def test_link_script_refuses_to_replace_existing_directory(self):
         text = (ROOT / "scripts" / "link.sh").read_text(encoding="utf-8")
         self.assertIn("refusing to replace existing directory", text)
         self.assertIn('if [ -e "$dest" ] && [ ! -L "$dest" ]; then', text)
+        self.assertIn("claude_session_start_hook.py", text)
 
     def test_machine_setup_mentions_install_and_decision_based_retrieval_behavior(self):
         text = (ROOT / "references/machine-setup.md").read_text(encoding="utf-8")
@@ -101,3 +103,13 @@ class IntegrationDocTests(unittest.TestCase):
     def test_root_readme_mentions_using_memory(self):
         text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("using-memory/", text)
+
+    def test_web_readme_mentions_download_endpoints(self):
+        text = (ROOT / "web" / "README.md").read_text(encoding="utf-8")
+        for needle in [
+            "/docs/<rel>/download",
+            "/memory/download",
+            "/preferences/download",
+            "/anatomy/<slug>/download?format=json|md",
+        ]:
+            self.assertIn(needle, text)

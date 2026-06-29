@@ -2,7 +2,7 @@
 
 Local web browser + lightweight editor for the [using-memory](..) skill.
 Browse and edit log entries, docs (markdown + HTML), `MEMORY.md`,
-`PREFERENCES.md`, anatomy snapshots, and run full-text search across them.
+`PREFERENCES.md`, anatomy snapshots, download underlying files, and run full-text search across them.
 Bilingual UI (English / 中文).
 
 ## Install
@@ -51,13 +51,17 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 | `/docs/<rel>` | Single document rendered (`.md` via marked.js, `.html` in a sandboxed iframe) |
 | `/docs/<rel>?edit=1` | Editor for an existing `.md` doc (textarea + Write/Preview toggle) |
 | `/docs/<rel>?raw=1` | Source text (`text/markdown` or `text/plain`) |
+| `/docs/<rel>/download` | Download the original doc file as an attachment |
 | `POST /docs/save` | Upsert one doc via `memory_tool.upsert-doc` |
 | `/memory` | `MEMORY.md` rendered + Append-entry form (`fact` / `decision` / `lesson`) |
+| `/memory/download` | Download `MEMORY.md` |
 | `POST /memory/append` | Append via `memory_tool.write-memory` |
 | `/preferences` | `PREFERENCES.md` rendered + Append-preference form |
+| `/preferences/download` | Download `PREFERENCES.md` |
 | `POST /preferences/append` | Append via `memory_tool.write-preference` |
 | `/anatomy` | Registered anatomy projects |
 | `/anatomy/<slug>` | File-level snapshot for one project (reads `<ns>/anatomy/<slug>.json` directly) |
+| `/anatomy/<slug>/download?format=json|md` | Download one anatomy snapshot file |
 | `/lang/{en,zh}` | Set language cookie + redirect back |
 | `/favicon.ico` · `/static/favicon.svg` | SVG favicon (also referenced via `<link rel="icon">`) |
 

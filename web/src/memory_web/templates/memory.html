@@ -3,7 +3,10 @@
 {% block content %}
 <header class="page">
   <h1>{{ t('memory.title') }}</h1>
-  <div class="sub">{{ t('memory.sub') }}</div>
+  <div class="sub">
+    {{ t('memory.sub') }}
+    <a href="/memory/download" style="margin-left:8px;">{{ t('common.download') }}</a>
+  </div>
 </header>
 
 {% if error %}
