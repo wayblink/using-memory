@@ -889,9 +889,55 @@ memory_roots:
             entry = next(doc for doc in index["documents"] if doc["path"] == "plans/q2-roadmap.md")
             self.assertEqual(entry["title"], "Q2 Roadmap")
             self.assertEqual(entry["type"], "plan")
+            self.assertEqual(entry["created"], "2026-05-06")
             self.assertEqual(entry["modified"], "2026-05-06")
             self.assertEqual(entry["projects"], ["using-memory"])
             self.assertEqual(entry["tags"], ["roadmap"])
+
+    def test_upsert_doc_preserves_created_and_refreshes_modified_on_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            self.run_tool(
+                "upsert-doc",
+                "--config",
+                str(config),
+                "--doc",
+                "plans/q2-roadmap",
+                "--title",
+                "Q2 Roadmap",
+                "--created",
+                "2026-05-01",
+                "--modified",
+                "2026-05-06",
+                "--text",
+                "# First version\n",
+                "--json",
+            )
+            result = self.run_tool(
+                "upsert-doc",
+                "--config",
+                str(config),
+                "--doc",
+                "plans/q2-roadmap",
+                "--title",
+                "Q2 Roadmap v2",
+                "--modified",
+                "2026-05-09",
+                "--text",
+                "# Second version\n",
+                "--json",
+            )
+
+            self.assertEqual(result["created"], "2026-05-01")
+            self.assertEqual(result["modified"], "2026-05-09")
+            index = json.loads((self.namespace_root(primary) / "docs" / "index.json").read_text(encoding="utf-8"))
+            entry = next(doc for doc in index["documents"] if doc["path"] == "plans/q2-roadmap.md")
+            self.assertEqual(entry["created"], "2026-05-01")
+            self.assertEqual(entry["modified"], "2026-05-09")
 
     def test_upsert_doc_writes_html_and_txt_with_index_entries(self):
         with tempfile.TemporaryDirectory() as tmp:

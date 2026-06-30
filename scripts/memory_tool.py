@@ -275,6 +275,14 @@ def validate_doc_entry(entry: dict) -> str | None:
         date.fromisoformat(entry["modified"])
     except ValueError:
         return f"document entry has invalid modified date: {entry['modified']}"
+    created = entry.get("created")
+    if created is not None:
+        if not isinstance(created, str) or not created.strip():
+            return "document entry has invalid created date"
+        try:
+            date.fromisoformat(created)
+        except ValueError:
+            return f"document entry has invalid created date: {created}"
     return None
 
 
@@ -295,7 +303,7 @@ def validate_doc_index(data) -> str | None:
 
 def doc_entry_text(entry: dict) -> str:
     values = []
-    for key in ("title", "type", "modified", "path", "summary"):
+    for key in ("title", "type", "created", "modified", "path", "summary"):
         value = entry.get(key)
         if value:
             values.append(str(value))
@@ -874,6 +882,7 @@ def doc_index_entry_for_file(docs_dir: Path, doc_path: Path) -> dict:
         "path": rel_path,
         "title": extract_markdown_title(doc_path),
         "type": "wiki",
+        "created": modified,
         "modified": modified,
         "projects": [],
         "tags": [],
@@ -1518,35 +1527,26 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     stem = strip_doc_ext(doc_name)
 
     # Fallback fields: title -> first H1 / <title> / first non-empty line ->
-    # slug-derived; doc_type -> "wiki"; modified -> today. Keep behaviour
-    # identical when explicit values pass.
-    title = (
-        args.title
-        or extract_doc_title_from_text(text, ext)
-        or stem.replace("-", " ").replace("_", " ").strip().title()
-        or stem
-    )
+    # slug-derived; doc_type -> "wiki"; modified -> today; created ->
+    # today for new docs and preserved from the existing index entry on edit.
+    if args.title is not None:
+        title = args.title
+    else:
+        title = (
+            extract_doc_title_from_text(text, ext)
+            or stem.replace("-", " ").replace("_", " ").strip().title()
+            or stem
+        )
     doc_type = args.doc_type or "wiki"
-    modified = args.modified or date.today().isoformat()
+    today = date.today().isoformat()
+    modified = args.modified or today
     parse_iso_date(modified, "--modified")
+    created = args.created or modified
+    parse_iso_date(created, "--created")
 
     doc_path = scoped_root / "docs" / doc_name
     index_path = scoped_root / "docs" / "index.json"
     rel_path = doc_name
-    entry = {
-        "path": rel_path,
-        "title": title,
-        "type": doc_type,
-        "modified": modified,
-        "projects": args.project or [],
-        "tags": args.doc_tag or [],
-    }
-    if args.summary:
-        entry["summary"] = args.summary
-    error = validate_doc_entry(entry)
-    if error:
-        sys.stderr.write(f"invalid doc metadata: {error}\n")
-        sys.exit(2)
 
     # Validate --link-log values up front (before the lock) so a bad input
     # surfaces a clean error instead of a partial write. Empty list = no
@@ -1574,6 +1574,28 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
             text = merge_log_backlinks_section(text, link_log + preserved)
 
         index = load_doc_index(index_path)
+        existing_entry = next(
+            (doc for doc in normalize_doc_index(index) if doc.get("path") == rel_path),
+            None,
+        )
+        if existing_entry and not args.created:
+            created = existing_entry.get("created") or created
+            parse_iso_date(created, "--created")
+        entry = {
+            "path": rel_path,
+            "title": title,
+            "type": doc_type,
+            "created": created,
+            "modified": modified,
+            "projects": args.project or [],
+            "tags": args.doc_tag or [],
+        }
+        if args.summary:
+            entry["summary"] = args.summary
+        error = validate_doc_entry(entry)
+        if error:
+            sys.stderr.write(f"invalid doc metadata: {error}\n")
+            sys.exit(2)
         index = doc_index_with_entry(index, entry)
         atomic_write_text(doc_path, text)
         write_doc_index(index_path, index)
@@ -1587,6 +1609,7 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
         "index_sha256": sha256_file(index_path),
         "title": title,
         "doc_type": doc_type,
+        "created": created,
         "modified": modified,
         "log_backlinks": sorted(f"{d}#L{n}" for d, n in final_links),
     }
@@ -3853,6 +3876,8 @@ def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
                    help="Optional. Defaults to 'wiki'. Common values: wiki, lesson, troubleshooting, decision-record, runbook, SOP, project.")
     p.add_argument("--modified", type=str, default=None,
                    help="Optional ISO date (YYYY-MM-DD). Defaults to today.")
+    p.add_argument("--created", type=str, default=None,
+                   help="Optional ISO date (YYYY-MM-DD). Defaults to today for new docs and preserves the existing created date on edit.")
     p.add_argument("--project", action="append", default=None)
     p.add_argument("--doc-tag", action="append", default=None)
     p.add_argument("--summary", type=str, default=None)

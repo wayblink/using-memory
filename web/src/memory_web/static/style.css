@@ -859,6 +859,74 @@ mark {
 .page-actions {
   margin-left: auto;
 }
+
+.pagination-wrap {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pagination-status {
+  font-size: 13px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pagination-per-page {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.pagination-per-page label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.pagination-per-page select {
+  min-width: 72px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 0;
+}
+
+.pagination-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 34px;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.pagination .btn.current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  pointer-events: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  transform: translateY(-1px);
+}
 .btn {
   display: inline-block;
   background: var(--text);
@@ -873,6 +941,35 @@ mark {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border-strong);
+}
+
+.pagination .btn:not(.current):not(.secondary) {
+  background: #4b4a46;
+  color: white;
+}
+
+.pagination .btn:not(.current):not(.secondary):hover {
+  background: #3f3e3a;
+}
+
+@media (max-width: 720px) {
+  .pagination-wrap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pagination-status {
+    white-space: normal;
+  }
+
+  .pagination {
+    width: 100%;
+  }
+
+  .pagination-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 /* Section labels (h2 between sections) */

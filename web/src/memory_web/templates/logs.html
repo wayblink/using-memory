@@ -3,7 +3,10 @@
 {% block content %}
 <header class="page">
   <h1>{{ t('logs.title') }}</h1>
-  <div class="sub">{{ t('logs.sub', n=total) }}</div>
+  <div class="sub">
+    {{ t('logs.sub', n=total) }}
+    · {{ t('common.showing_range', start=pagination.start_index, end=pagination.end_index, total=total) }}
+  </div>
 </header>
 
 <form class="filters" method="get" action="/logs">
@@ -14,7 +17,7 @@
     <input type="date" name="to" value="{{ selected['to'] or '' }}">
   </label>
   <label>{{ t('logs.form.days') }}
-    <input type="number" name="days" min="1" max="365" value="{{ selected['days'] or '' }}" placeholder="7">
+    <input type="number" name="days" min="0" max="365" value="{{ selected['days'] if selected['days'] is not none else 0 }}" placeholder="0">
   </label>
   <label>{{ t('logs.form.q') }}
     <input type="text" name="q" value="{{ selected['q'] }}" placeholder="{{ t('logs.form.q.placeholder') }}">
@@ -83,6 +86,58 @@
   </div>
 {% else %}
   <div class="empty">{{ t('logs.empty') }}</div>
+{% endif %}
+
+{% if pagination.show %}
+  <div class="pagination-wrap">
+    <div class="pagination-status" aria-live="polite">
+      {{ t('common.pagination_summary', total=total, page=pagination.page, total_pages=pagination.total_pages, count=pagination.page_size) }}
+    </div>
+    <div class="pagination-controls">
+      <form class="pagination-per-page" method="get" action="/logs">
+        <input type="hidden" name="from" value="{{ selected['from'] or '' }}">
+        <input type="hidden" name="to" value="{{ selected['to'] or '' }}">
+        <input type="hidden" name="days" value="{{ selected['days'] if selected['days'] is not none else 0 }}">
+        <input type="hidden" name="q" value="{{ selected['q'] }}">
+        <input type="hidden" name="tag" value="{{ selected['tag'] }}">
+        <input type="hidden" name="level" value="{{ selected['level'] }}">
+        <input type="hidden" name="source" value="{{ selected['source'] }}">
+        <input type="hidden" name="project" value="{{ selected['project'] }}">
+        <input type="hidden" name="topic" value="{{ selected['topic'] }}">
+        <input type="hidden" name="page" value="1">
+        <label>{{ t('common.per_page') }}
+          <select name="per_page" onchange="this.form.submit()">
+            {% for n in per_page_options %}
+              <option value="{{ n }}" {% if selected['per_page'] == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </form>
+      <nav class="pagination" aria-label="{{ t('common.pagination') }}">
+      {% if pagination.first_url %}
+        <a href="{{ pagination.first_url }}" class="btn secondary">{{ t('common.first') }}</a>
+      {% endif %}
+      {% if pagination.prev_url %}
+        <a href="{{ pagination.prev_url }}" class="btn secondary">{{ t('common.prev') }}</a>
+      {% endif %}
+      {% if pagination.has_leading_gap %}
+        <span class="pagination-ellipsis" aria-hidden="true">…</span>
+      {% endif %}
+      {% for p in pagination.pages %}
+        <a href="{{ p.url }}" class="btn{% if p.current %} current{% endif %}" {% if p.current %}aria-current="page"{% endif %}>{{ p.number }}</a>
+      {% endfor %}
+      {% if pagination.has_trailing_gap %}
+        <span class="pagination-ellipsis" aria-hidden="true">…</span>
+      {% endif %}
+      {% if pagination.next_url %}
+        <a href="{{ pagination.next_url }}" class="btn secondary">{{ t('common.next') }}</a>
+      {% endif %}
+      {% if pagination.last_url %}
+        <a href="{{ pagination.last_url }}" class="btn secondary">{{ t('common.last') }}</a>
+      {% endif %}
+      </nav>
+    </div>
+  </div>
 {% endif %}
 {% endblock %}
 

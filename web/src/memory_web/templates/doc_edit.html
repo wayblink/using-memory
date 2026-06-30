@@ -38,7 +38,16 @@
     <label>{{ t('doc_edit.modified', optional=t('common.optional')) }}
       <input type="date" name="modified" value="{{ modified }}">
     </label>
+    {% if mode == "edit" and created_display %}
+    <label>{{ t('doc_edit.created') }}
+      <input type="text" value="{{ created_display }}" readonly>
+    </label>
+    {% endif %}
   </div>
+
+  {% if mode == "edit" %}
+  <div class="sub" style="margin-top:-8px; margin-bottom:12px;">{{ t('doc_edit.modified_hint') }}</div>
+  {% endif %}
 
   <label class="full">{{ t('doc_edit.title_field', optional=t('common.optional')) }}
     <input type="text" name="title" value="{{ title }}">

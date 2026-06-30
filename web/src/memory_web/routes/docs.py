@@ -4,6 +4,7 @@ from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from ..adapter import MemoryToolError
+from .pagination import DEFAULT_PER_PAGE, PER_PAGE_OPTIONS, normalize_per_page, paginate_items
 
 router = APIRouter()
 
@@ -23,7 +24,7 @@ DEFAULT_DOC_EXT = "md"
 EDITABLE_DOC_EXTS = frozenset({"md", "html", "htm", "txt"})
 
 GROUP_OPTIONS = ("none", "type", "project")
-SORT_OPTIONS = ("name", "modified")
+SORT_OPTIONS = ("name", "modified", "created")
 NO_PROJECT_KEY = "__no_project__"
 ALL_DOCS_KEY = "__all_docs__"
 
@@ -39,6 +40,8 @@ def docs_index(
     indexed: str | None = None,
     group: str | None = None,
     sort: str | None = None,
+    page: int = Query(1, ge=1),
+    per_page: int | None = Query(DEFAULT_PER_PAGE),
 ) -> HTMLResponse:
     adapter = request.state.adapter
     templates = request.app.state.templates
@@ -64,6 +67,7 @@ def docs_index(
     sort_value = (sort or "").strip()
     if sort_value not in SORT_OPTIONS:
         sort_value = "modified"
+    per_page_value = normalize_per_page(per_page)
 
     filtered = items
     if type:
@@ -89,11 +93,42 @@ def docs_index(
             ])).lower()
         filtered = [i for i in filtered if needle in _hay(i)]
 
+    def _name_key(e: dict) -> str:
+        return (e.get("title") or e.get("rel") or "").lower()
+    if sort_value in {"modified", "created"}:
+        sort_field = sort_value
+        with_date = [e for e in filtered if e.get(sort_field)]
+        without_date = [e for e in filtered if not e.get(sort_field)]
+        with_date.sort(key=_name_key)
+        with_date.sort(key=lambda e: e.get(sort_field) or "", reverse=True)
+        without_date.sort(key=_name_key)
+        filtered = with_date + without_date
+    else:
+        filtered.sort(key=_name_key)
+
+    pagination = paginate_items(
+        filtered,
+        page=page,
+        per_page=per_page_value,
+        base_path="/docs",
+        query_params={
+            "type": type,
+            "format": format,
+            "project": project,
+            "tag": tag,
+            "q": q,
+            "indexed": indexed_flag,
+            "group": group_value,
+            "sort": sort_value,
+        },
+    )
+    page_items = list(pagination["items"])
+
     groups: dict[str, list[dict]] = {}
     if group_value == "none":
-        groups[ALL_DOCS_KEY] = list(filtered)
+        groups[ALL_DOCS_KEY] = page_items
     elif group_value == "project":
-        for item in filtered:
+        for item in page_items:
             projects = item.get("projects") or []
             if projects:
                 for p in projects:
@@ -101,28 +136,10 @@ def docs_index(
             else:
                 groups.setdefault(NO_PROJECT_KEY, []).append(item)
     else:
-        for item in filtered:
+        for item in page_items:
             groups.setdefault(item.get("type") or "wiki", []).append(item)
 
-    def _name_key(e: dict) -> str:
-        return (e.get("title") or e.get("rel") or "").lower()
-
-    if sort_value == "modified":
-        for k in groups:
-            with_mod = [e for e in groups[k] if e.get("modified")]
-            without_mod = [e for e in groups[k] if not e.get("modified")]
-            # Two-pass stable sort: ascending name first, then descending date.
-            # On equal dates, ascending-name order is preserved.
-            with_mod.sort(key=_name_key)
-            with_mod.sort(key=lambda e: e.get("modified") or "", reverse=True)
-            without_mod.sort(key=_name_key)
-            groups[k] = with_mod + without_mod
-    else:
-        for k in groups:
-            groups[k].sort(key=_name_key)
-
     def _group_sort_key(k: str) -> tuple:
-        # NO_PROJECT_KEY always last; everything else alphabetical.
         return (1, "") if k == NO_PROJECT_KEY else (0, k.lower())
 
     ordered_groups = dict(sorted(groups.items(), key=lambda kv: _group_sort_key(kv[0])))
@@ -132,11 +149,13 @@ def docs_index(
         "docs_index.html",
         {
             "page": "docs",
-            "items": filtered,
+            "items": page_items,
             "groups": ordered_groups,
-            "total": len(filtered),
+            "total": pagination["total"],
             "grand_total": len(items),
-            "unregistered": sum(1 for i in filtered if not i.get("in_index")),
+            "unregistered": sum(1 for i in page_items if not i.get("in_index")),
+            "pagination": pagination,
+            "per_page_options": PER_PAGE_OPTIONS,
             "available_types": available_types,
             "available_projects": available_projects,
             "available_tags": available_tags,
@@ -151,6 +170,8 @@ def docs_index(
                 "indexed": indexed_flag or "",
                 "group": group_value,
                 "sort": sort_value,
+                "page": pagination["page"],
+                "per_page": pagination["per_page"],
             },
         },
     )
@@ -172,6 +193,7 @@ def doc_new(request: Request, error: str | None = None) -> HTMLResponse:
             "title": "",
             "doc_type": "wiki",
             "modified": "",
+            "created_display": "",
             "projects": "",
             "tags": "",
             "summary": "",
@@ -241,6 +263,7 @@ def doc_save(
                 "title": title,
                 "doc_type": doc_type,
                 "modified": modified,
+                "created_display": "",
                 "projects": projects,
                 "tags": tags,
                 "summary": summary,
@@ -292,7 +315,8 @@ def doc_view(
                 "ext": doc["ext"],
                 "title": entry.get("title") or "",
                 "doc_type": entry.get("type") or "wiki",
-                "modified": entry.get("modified") or "",
+                "modified": "",
+                "created_display": entry.get("created") or "",
                 "projects": ", ".join(entry.get("projects") or []),
                 "tags": ", ".join(entry.get("tags") or []),
                 "summary": entry.get("summary") or "",

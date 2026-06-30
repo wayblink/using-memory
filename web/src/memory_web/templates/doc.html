@@ -41,6 +41,7 @@
   <span class="tag tag-ext-{{ ext }}">{{ ext }}</span>
   {% if entry.get('type') %}<span class="tag">{{ entry.type }}</span>{% endif %}
   {% if not in_index %}<span class="tag" title="not in docs/index.json">{{ t('docs.unindexed_badge') }}</span>{% endif %}
+  {% if entry.get('created') %}<span>{{ t('docs.meta.created') }} {{ entry.created }}</span>{% endif %}
   {% if entry.get('modified') %}<span>{{ t('docs.meta.modified') }} {{ entry.modified }}</span>{% endif %}
   {% if entry.get('projects') %}<span>{{ t('docs.meta.project') }}:{{ entry.projects|join(', ') }}</span>{% endif %}
   {% if entry.get('tags') %}<span>{{ t('docs.meta.tags') }}:{{ entry.tags|join(', ') }}</span>{% endif %}

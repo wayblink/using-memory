@@ -10,6 +10,7 @@
       {% else %}
         {{ t('docs.sub.filtered', n=total, total=grand_total, s='' if total == 1 else 's') }}
       {% endif %}
+      · {{ t('common.showing_range', start=pagination.start_index, end=pagination.end_index, total=total) }}
       {% if unregistered %}{{ t('docs.sub.unindexed', n=unregistered) }}{% endif %}
     </div>
   </div>
@@ -70,6 +71,7 @@
     <select name="sort">
       <option value="name"     {% if selected['sort'] == 'name'     %}selected{% endif %}>{{ t('docs.sort.name') }}</option>
       <option value="modified" {% if selected['sort'] == 'modified' %}selected{% endif %}>{{ t('docs.sort.modified') }}</option>
+      <option value="created" {% if selected['sort'] == 'created' %}selected{% endif %}>{{ t('docs.sort.created') }}</option>
     </select>
   </label>
   <label style="flex:2 1 220px;">{{ t('docs.filter.q') }}
@@ -95,6 +97,7 @@
             </div>
             <div class="meta">
               {{ it.rel }}
+              {% if it.created %} · {{ t('docs.meta.created') }} {{ it.created }}{% endif %}
               {% if it.modified %} · {{ t('docs.meta.modified') }} {{ it.modified }}{% endif %}
               {% if it.projects %} · {{ t('docs.meta.project') }}:{{ it.projects|join(', ') }}{% endif %}
               {% if it.tags %} · {{ t('docs.meta.tags') }}:{{ it.tags|join(', ') }}{% endif %}
@@ -110,5 +113,56 @@
   <div class="empty">{{ t('docs.empty.filtered') }}</div>
 {% else %}
   <div class="empty">{{ t('docs.empty') }}</div>
+{% endif %}
+
+{% if pagination.show %}
+  <div class="pagination-wrap">
+    <div class="pagination-status" aria-live="polite">
+      {{ t('common.pagination_summary', total=total, page=pagination.page, total_pages=pagination.total_pages, count=pagination.page_size) }}
+    </div>
+    <div class="pagination-controls">
+      <form class="pagination-per-page" method="get" action="/docs">
+        <input type="hidden" name="type" value="{{ selected['type'] }}">
+        <input type="hidden" name="format" value="{{ selected['format'] }}">
+        <input type="hidden" name="project" value="{{ selected['project'] }}">
+        <input type="hidden" name="tag" value="{{ selected['tag'] }}">
+        <input type="hidden" name="indexed" value="{{ selected['indexed'] }}">
+        <input type="hidden" name="group" value="{{ selected['group'] }}">
+        <input type="hidden" name="sort" value="{{ selected['sort'] }}">
+        <input type="hidden" name="q" value="{{ selected['q'] }}">
+        <input type="hidden" name="page" value="1">
+        <label>{{ t('common.per_page') }}
+          <select name="per_page" onchange="this.form.submit()">
+            {% for n in per_page_options %}
+              <option value="{{ n }}" {% if selected['per_page'] == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </form>
+      <nav class="pagination" aria-label="{{ t('common.pagination') }}">
+      {% if pagination.first_url %}
+        <a href="{{ pagination.first_url }}" class="btn secondary">{{ t('common.first') }}</a>
+      {% endif %}
+      {% if pagination.prev_url %}
+        <a href="{{ pagination.prev_url }}" class="btn secondary">{{ t('common.prev') }}</a>
+      {% endif %}
+      {% if pagination.has_leading_gap %}
+        <span class="pagination-ellipsis" aria-hidden="true">…</span>
+      {% endif %}
+      {% for p in pagination.pages %}
+        <a href="{{ p.url }}" class="btn{% if p.current %} current{% endif %}" {% if p.current %}aria-current="page"{% endif %}>{{ p.number }}</a>
+      {% endfor %}
+      {% if pagination.has_trailing_gap %}
+        <span class="pagination-ellipsis" aria-hidden="true">…</span>
+      {% endif %}
+      {% if pagination.next_url %}
+        <a href="{{ pagination.next_url }}" class="btn secondary">{{ t('common.next') }}</a>
+      {% endif %}
+      {% if pagination.last_url %}
+        <a href="{{ pagination.last_url }}" class="btn secondary">{{ t('common.last') }}</a>
+      {% endif %}
+      </nav>
+    </div>
+  </div>
 {% endif %}
 {% endblock %}

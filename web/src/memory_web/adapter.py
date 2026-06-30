@@ -376,6 +376,7 @@ class MemoryAdapter:
         text: str,
         title: str | None = None,
         doc_type: str | None = None,
+        created: str | None = None,
         modified: str | None = None,
         projects: list[str] | None = None,
         doc_tags: list[str] | None = None,
@@ -389,6 +390,7 @@ class MemoryAdapter:
             text_stdin=False,
             title=title,
             doc_type=doc_type,
+            created=created,
             modified=modified,
             project=projects or None,
             doc_tag=doc_tags or None,
@@ -470,6 +472,11 @@ class MemoryAdapter:
             slug = rel.rsplit(".", 1)[0]
             ext = f.suffix.lower().lstrip(".")
             entry = index_by_rel.get(rel)
+            created = None
+            modified = None
+            if entry:
+                modified = entry.get("modified")
+                created = entry.get("created") or modified
             items.append({
                 "slug": slug,
                 "rel": rel,
@@ -477,7 +484,8 @@ class MemoryAdapter:
                 "in_index": entry is not None,
                 "title": (entry.get("title") if entry else None) or _fallback_title(f),
                 "type": (entry.get("type") if entry else None) or _fallback_type(ext),
-                "modified": (entry.get("modified") if entry else None),
+                "created": created,
+                "modified": modified,
                 "projects": (entry.get("projects") if entry else None) or [],
                 "tags": (entry.get("tags") if entry else None) or [],
                 "summary": (entry.get("summary") if entry else None) or "",
@@ -501,6 +509,9 @@ class MemoryAdapter:
             if (e.get("path") or "") == full_rel:
                 index_entry = e
                 break
+        if index_entry is not None and index_entry.get("modified") and not index_entry.get("created"):
+            index_entry = dict(index_entry)
+            index_entry["created"] = index_entry["modified"]
 
         return {
             "slug": full_rel.rsplit(".", 1)[0],
