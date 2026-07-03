@@ -30,7 +30,7 @@ Skip memory for greetings, one-off questions, simple shell commands, isolated co
 - Explicit `load --log-from/--log-to` or `load --log-days` may expand the primary log read window; without those flags, only today and yesterday are read.
 - Explicit `load --log-query` parses `<namespace>/log/*.jsonl` line by line and filters entries by the `text` field; only matching entries appear in `log_entries` and loaded log source content.
 - When retrieval is needed, the read order is strict: first load every repo's `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md`, then browse every repo's `<namespace>/docs/index.json`, load matching `<namespace>/docs/*.md` by indexed metadata, and finally read the local primary namespace log window. The per-machine `<namespace>/STATS.json` accounting file is never part of this snapshot.
-- With `load --anatomy`, an additional anatomy block is attached for the registered project whose root is the longest prefix of cwd. SessionStart hooks pass this flag automatically.
+- With `load --anatomy`, an additional anatomy block is attached for the registered project whose root is the longest prefix of cwd. SessionStart hooks pass this flag only when `features.anatomy.session_start_attach: true`.
 - Log entries from other namespaces are ignored by default. The primary repo's configured namespace is the place for today's writable and readable context.
 
 ## Session Snapshot
@@ -72,8 +72,9 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 - For `<namespace>/log/YYYY-MM-DD.jsonl`, default toward recording concrete operation history and key events. Do not apply a heavy "is this important enough forever?" filter to logs; logs are for traceability and restart continuity.
 - Record commands and tool-driven operations that changed state or produced meaningful evidence: file edits, config changes, service restarts, builds, tests, debug findings, fixes, commits, pushes, PR/release/deploy state, hook behavior, and unresolved follow-up.
 - Simple reads, pure browsing, repeated identical calls, and raw temporary output do not need one entry per tool call unless they produced a decision, diagnosis, verification result, or state change.
+- Hook-driven silent summary writes are disabled by default. Set `logging.silent_summary: true` only when a machine deliberately wants best-effort auto summaries for substantial pass-through turns.
 - Only the local primary repo receives appended JSONL log entries, at `<namespace>/log/YYYY-MM-DD.jsonl`; other namespaces are never written.
-- Project file snapshots go to `<namespace>/anatomy/` via the `anatomy-*` commands; the PostToolUse hook calls `anatomy-upsert-file` automatically for write/edit-style tools.
+- Project file snapshots go to `<namespace>/anatomy/` via the `anatomy-*` commands; the PostToolUse hook calls `anatomy-upsert-file` for write/edit-style tools only when `features.anatomy.post_tool_upsert: true`.
 - Stable preferences go to `<namespace>/PREFERENCES.md` through `scripts/memory_tool.py write-preference`.
 - Stable facts, decisions, and lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`, and only `fact`, `decision`, and `lesson` are allowed.
 - Unresolved issues, parking points, todo risks, and temporary context are not written to `<namespace>/MEMORY.md` by default; keep short-term content in JSONL log entries, and write structured todo or plan material to `<namespace>/docs/`.
@@ -107,6 +108,7 @@ Knowledge tags (`note`, `lesson`, `fact`, `insight`, `pattern`, `context`) may u
 - Distill long-term memory from log entries only during lightweight maintenance moments. A normal conversation turn should not trigger distillation every time.
 - Topic and workflow memory belongs in `<namespace>/docs/`, with `<namespace>/docs/index.json` maintained at the same time. Each Markdown file should stay focused on one topic, workflow, plan, or project.
 - Distillation should preserve enough context for future retrieval without piling up raw conversation text.
+- Optional `session_archive.enabled: true` writes only pointer records to `<namespace>/sessions/index.jsonl` so a human can find raw host transcripts later. It does not copy transcript content and is never part of automatic retrieval when `session_archive.auto_load: false` (the default).
 
 ## Maintenance Commands
 
@@ -126,4 +128,4 @@ Knowledge tags (`note`, `lesson`, `fact`, `insight`, `pattern`, `context`) may u
 - no daemon: no standalone background process.
 - no DB: no database or vector store; everything stays in Markdown, JSONL, and Git.
 - no automatic multi-writer sync: concurrent writes from multiple namespaces still rely on normal Git sync discipline; writes only go to the configured primary repo and namespace.
-- Do not mirror every tool call mechanically: no per-turn transcript logging, and no plan to preserve raw output from every API or tool call. Still record the operation facts and key events broadly enough to reconstruct what happened.
+- Do not mirror every tool call mechanically: no per-tool transcript logging, and no plan to preserve raw output from every API or tool call. Optional session archive stores only transcript pointers by default; operation facts and key events still belong in structured logs when they matter for restart continuity.

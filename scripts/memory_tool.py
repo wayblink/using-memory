@@ -2182,9 +2182,10 @@ def do_status(args: argparse.Namespace) -> dict:
 
     Both ratios are diagnostic, not performance claims. The hit rate tells
     the user how often SessionStart found a registered project; a low rate
-    suggests more anatomy-register calls would help. The block ratio tells
-    the user whether the N=8 throttle is too aggressive (high → too many
-    blocks) or too lax (very low → silent summaries doing all the work).
+    suggests more anatomy-register calls would help when anatomy attach is
+    enabled. The block ratio tells the user whether the configured Stop gate
+    is too aggressive (high -> too many blocks) or mostly passing through
+    (very low).
 
     Multi-machine semantics: counters are summed across shards; ``_ts``
     fields take the max value. Pre-sharded installs are migrated on first
@@ -3640,6 +3641,28 @@ def write_setup_config(config_path: Path, memory_root: Path, namespace: str, mac
             "read_today": True,
             "read_yesterday": True,
             "load_docs_on_demand": True,
+        },
+        "features": {
+            "anatomy": {
+                "enabled": False,
+                "session_start_attach": False,
+                "post_tool_upsert": False,
+                "auto_register": False,
+            },
+        },
+        "logging": {
+            "silent_summary": False,
+            "detail_turn_interval": 20,
+            "hard_gate": {
+                "memory_prompt": True,
+                "important_interval": True,
+            },
+        },
+        "session_archive": {
+            "enabled": False,
+            "mode": "pointer",
+            "auto_load": False,
+            "index_events": True,
         },
     }
     config_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")

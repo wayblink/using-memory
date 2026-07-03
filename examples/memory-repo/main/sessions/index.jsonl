@@ -1,0 +1,1 @@
+{"ts":"2026-04-13T09:30:00+08:00","date":"2026-04-13","host":"codex","session_id":"example-session","turn_id":"t3","transcript_path":"/Users/example/.codex/sessions/example.jsonl","cwd":"/Users/example/project","git_branch":"main","human_turns":3,"mode":"pointer","important_events":["Bash: pytest tests/test_memory_hooks.py"]}

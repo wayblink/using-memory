@@ -14,9 +14,10 @@ from pathlib import Path
 from typing import Any
 
 
-# Threshold: every N real human user turns, escalate Stop hook to a hard block
-# requiring a detail-level write-log. Other turns get a silent summary append.
-STOP_DETAIL_TURN_INTERVAL = 8
+# Default threshold: every N real human user turns, escalate Stop hook to a
+# hard block requiring a detail-level write-log. Config can override this under
+# logging.detail_turn_interval.
+STOP_DETAIL_TURN_INTERVAL = 20
 
 # Cap on how many summary appends a single session will perform. Belt-and-braces
 # against an infinite loop if a hook bug causes Stop to fire repeatedly without
@@ -415,6 +416,108 @@ def _resolve_memory_config() -> str | None:
     return None
 
 
+def _read_memory_config() -> dict[str, Any]:
+    """Best-effort YAML config read for hook-local settings.
+
+    Hooks must stay non-fatal even when PyYAML is unavailable or the config is
+    half-written during setup, so callers always get a dict.
+    """
+    try:
+        config = _resolve_memory_config()
+        if not config:
+            return {}
+        import yaml as _yaml  # local import: hooks should run without config too
+        with open(config, "r", encoding="utf-8") as fh:
+            data = _yaml.safe_load(fh) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _as_int(value: Any, default: int, minimum: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= minimum else default
+
+
+def hook_settings() -> dict[str, Any]:
+    """Return config-driven hook feature flags with conservative defaults.
+
+    Defaults intentionally prefer fewer automatic writes and fewer injected
+    tokens. Existing installs inherit these defaults even before their
+    config.yaml grows the explicit fields.
+    """
+    cfg = _read_memory_config()
+    features_cfg = _as_dict(cfg.get("features"))
+
+    raw_anatomy_cfg = features_cfg.get("anatomy")
+    if isinstance(raw_anatomy_cfg, bool):
+        anatomy_cfg: dict[str, Any] = {"enabled": raw_anatomy_cfg}
+    else:
+        anatomy_cfg = _as_dict(raw_anatomy_cfg)
+    anatomy_enabled = _as_bool(anatomy_cfg.get("enabled"), False)
+
+    logging_cfg = _as_dict(cfg.get("logging"))
+    hard_gate_cfg = _as_dict(logging_cfg.get("hard_gate"))
+
+    archive_cfg = _as_dict(cfg.get("session_archive"))
+    archive_mode = str(archive_cfg.get("mode") or "pointer").strip().lower()
+    if archive_mode != "pointer":
+        archive_mode = "pointer"
+
+    return {
+        "anatomy": {
+            "enabled": anatomy_enabled,
+            "session_start_attach": _as_bool(
+                anatomy_cfg.get("session_start_attach"),
+                anatomy_enabled,
+            ),
+            "post_tool_upsert": _as_bool(
+                anatomy_cfg.get("post_tool_upsert"),
+                anatomy_enabled,
+            ),
+            "auto_register": _as_bool(anatomy_cfg.get("auto_register"), anatomy_enabled),
+        },
+        "logging": {
+            "silent_summary": _as_bool(logging_cfg.get("silent_summary"), False),
+            "detail_turn_interval": _as_int(
+                logging_cfg.get("detail_turn_interval"),
+                STOP_DETAIL_TURN_INTERVAL,
+            ),
+            "hard_gate": {
+                "memory_prompt": _as_bool(hard_gate_cfg.get("memory_prompt"), True),
+                "important_interval": _as_bool(hard_gate_cfg.get("important_interval"), True),
+            },
+        },
+        "session_archive": {
+            "enabled": _as_bool(archive_cfg.get("enabled"), False),
+            "mode": archive_mode,
+            "auto_load": _as_bool(archive_cfg.get("auto_load"), False),
+            "index_events": _as_bool(archive_cfg.get("index_events"), True),
+        },
+    }
+
+
 def _memory_tool_path() -> str:
     return str(Path.home() / ".claude" / "skills" / "using-memory" / "scripts" / "memory_tool.py")
 
@@ -425,6 +528,28 @@ _MACHINE_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 def _safe_machine_id(value: str) -> str:
     cleaned = _MACHINE_ID_SAFE_RE.sub("-", (value or "").strip())
     return (cleaned[:64] or "unknown-machine")
+
+
+def _primary_scope() -> tuple[Path, str] | None:
+    """Resolve the writable primary namespace root and machine id."""
+    try:
+        cfg = _read_memory_config()
+        roots = cfg.get("memory_roots") or []
+        for root in roots:
+            if not isinstance(root, dict):
+                continue
+            if root.get("role") != "primary":
+                continue
+            raw = root.get("path")
+            if not raw:
+                continue
+            namespace = root.get("namespace") or "main"
+            machine_id = _safe_machine_id(root.get("machine_id") or "")
+            base = Path(os.path.expanduser(os.path.expandvars(str(raw))))
+            return base / str(namespace), machine_id
+    except Exception:
+        return None
+    return None
 
 
 def _stats_path() -> Path | None:
@@ -440,40 +565,24 @@ def _stats_path() -> Path | None:
     counters.
     """
     try:
-        config = _resolve_memory_config()
-        if not config:
+        primary = _primary_scope()
+        if not primary:
             return None
-        import yaml as _yaml  # local import: hook common avoids hard dep until needed
-        with open(config, "r", encoding="utf-8") as fh:
-            cfg = _yaml.safe_load(fh) or {}
-        roots = cfg.get("memory_roots") or []
-        for root in roots:
-            if not isinstance(root, dict):
-                continue
-            if root.get("role") != "primary":
-                continue
-            raw = root.get("path")
-            if not raw:
-                continue
-            namespace = root.get("namespace") or "main"
-            machine_id = _safe_machine_id(root.get("machine_id") or "")
-            base = Path(os.path.expanduser(os.path.expandvars(str(raw))))
-            scoped = base / str(namespace)
-            shard = scoped / "STATS" / f"{machine_id}.json"
-            # Best-effort migrate any pre-shard file into this shard.
-            if not shard.exists():
-                for legacy in (scoped / "STATS.json", scoped / "local" / "STATS.json"):
-                    if legacy.is_file():
-                        try:
-                            shard.parent.mkdir(parents=True, exist_ok=True)
-                            legacy.replace(shard)
-                        except OSError:
-                            pass
-                        break
-            return shard
+        scoped, machine_id = primary
+        shard = scoped / "STATS" / f"{machine_id}.json"
+        # Best-effort migrate any pre-shard file into this shard.
+        if not shard.exists():
+            for legacy in (scoped / "STATS.json", scoped / "local" / "STATS.json"):
+                if legacy.is_file():
+                    try:
+                        shard.parent.mkdir(parents=True, exist_ok=True)
+                        legacy.replace(shard)
+                    except OSError:
+                        pass
+                    break
+        return shard
     except Exception:
         return None
-    return None
 
 
 def bump_stats(deltas: dict[str, Any], sets: dict[str, Any] | None = None) -> None:
@@ -551,7 +660,7 @@ def _extract_written_paths(payload: dict[str, Any]) -> list[str]:
     return paths
 
 
-def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
+def anatomy_upsert_for_payload(payload: dict[str, Any], *, auto_register: bool = False) -> None:
     """Best-effort: call `memory_tool.py anatomy-upsert-file <path>` for every
     file written/edited by this tool call. Silent on failure — anatomy drift
     is recoverable via `anatomy-scan`, blocking hooks on this is not.
@@ -576,9 +685,10 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
                     "anatomy-upsert-file",
                     "--config", config,
                     raw,
-                    "--auto-register",
                     "--json",
                 ]
+                if auto_register:
+                    cmd.insert(-1, "--auto-register")
                 result = subprocess.run(cmd, capture_output=True, timeout=8, text=True)
                 if result.returncode == 0:
                     try:
@@ -602,9 +712,16 @@ def anatomy_upsert_for_payload(payload: dict[str, Any]) -> None:
         return
 
 
-def fetch_session_start_snapshot(payload: dict[str, Any]) -> tuple[str | None, str | None, dict[str, int]]:
-    """Best-effort: call `memory_tool.py load --anatomy --json` and return
+def fetch_session_start_snapshot(
+    payload: dict[str, Any],
+    *,
+    include_anatomy: bool = False,
+) -> tuple[str | None, str | None, dict[str, int]]:
+    """Best-effort: call `memory_tool.py load --json` and return
     (preference_markdown, anatomy_markdown, stats_deltas) for SessionStart.
+
+    Anatomy is opt-in through hook config; when disabled, the call intentionally
+    omits ``--anatomy`` so startup avoids the extra lookup and token injection.
 
     ``stats_deltas`` is an empty dict on failure / no anatomy; otherwise it
     contains the counters this call earned (e.g. anatomy_attached_count=1,
@@ -623,10 +740,10 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> tuple[str | None, s
             _memory_tool_path(),
             "load",
             "--config", config,
-            "--anatomy",
-            "--cwd", cwd,
             "--json",
         ]
+        if include_anatomy:
+            cmd[5:5] = ["--anatomy", "--cwd", cwd]
         result = subprocess.run(cmd, capture_output=True, timeout=20, text=True)
         if result.returncode != 0:
             return None, None, deltas
@@ -638,6 +755,8 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> tuple[str | None, s
                 preference_md = render_preference_summary(
                     [entry for entry in preferences if isinstance(entry, str)]
                 )
+        if not include_anatomy:
+            return preference_md, None, deltas
         anatomy = data.get("anatomy") if isinstance(data, dict) else None
         if not isinstance(anatomy, dict):
             return preference_md, None, deltas
@@ -851,11 +970,59 @@ def silent_summary_write(payload: dict[str, Any], state: dict[str, Any], last_me
         return False
 
 
+def archive_session_pointer(
+    payload: dict[str, Any],
+    host: str,
+    state: dict[str, Any],
+    current_turns: int,
+) -> bool:
+    """Append a cold session pointer to <namespace>/sessions/index.jsonl.
+
+    This intentionally does not copy transcript contents or load them back into
+    future prompts. It gives maintainers a low-token way to find the raw host
+    transcript later when they explicitly need it.
+    """
+    try:
+        settings = hook_settings().get("session_archive", {})
+        if not settings.get("enabled"):
+            return False
+        primary = _primary_scope()
+        if not primary:
+            return False
+        scoped, _machine_id = primary
+        sessions_dir = scoped / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
+        now = _dt.datetime.now().astimezone()
+        record: dict[str, Any] = {
+            "ts": now.isoformat(timespec="seconds"),
+            "date": now.date().isoformat(),
+            "host": host,
+            "session_id": payload.get("session_id") or payload.get("sessionId"),
+            "turn_id": payload.get("turn_id") or payload.get("turnId"),
+            "transcript_path": transcript_path,
+            "cwd": payload.get("cwd") or os.getcwd(),
+            "git_branch": payload.get("git_branch") or payload.get("gitBranch"),
+            "human_turns": current_turns,
+            "mode": settings.get("mode") or "pointer",
+        }
+        if settings.get("index_events"):
+            record["important_events"] = list(state.get("important_events") or [])[-20:]
+        index_path = sessions_dir / "index.jsonl"
+        with index_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        bump_stats({"session_archive_indexed": 1})
+        return True
+    except Exception:
+        return False
+
+
 def run(host: str) -> int:
     payload = load_payload()
     event = event_name(payload)
     state = load_state(payload, host)
     current_turn = turn_key(payload)
+    settings = hook_settings()
 
     if event == "SessionStart":
         state.setdefault("turn", current_turn)
@@ -863,7 +1030,11 @@ def run(host: str) -> int:
         state.setdefault("important_events", [])
         save_state(payload, host, state)
         reminder = memory_protocol_reminder()
-        preference_md, anatomy_md, anatomy_deltas = fetch_session_start_snapshot(payload)
+        anatomy_settings = settings["anatomy"]
+        preference_md, anatomy_md, anatomy_deltas = fetch_session_start_snapshot(
+            payload,
+            include_anatomy=bool(anatomy_settings["session_start_attach"]),
+        )
         distill_md, distill_deltas = fetch_distillation_candidates()
         sections = [reminder]
         if preference_md:
@@ -906,8 +1077,12 @@ def run(host: str) -> int:
         save_state(payload, host, state)
         # Best-effort anatomy refresh for write/edit tools. Always last so
         # state persistence is never blocked by an anatomy subprocess.
-        if event == "PostToolUse":
-            anatomy_upsert_for_payload(payload)
+        anatomy_settings = settings["anatomy"]
+        if event == "PostToolUse" and anatomy_settings["post_tool_upsert"]:
+            anatomy_upsert_for_payload(
+                payload,
+                auto_register=bool(anatomy_settings["auto_register"]),
+            )
         return 0
 
     if event in {"Stop", "SubagentStop"}:
@@ -932,6 +1107,7 @@ def run(host: str) -> int:
             state["memory_written"] = True
             state["last_save_turn"] = current_turns
             save_state(payload, host, state)
+            archive_session_pointer(payload, host, state, current_turns)
             print("{}")
             return 0
 
@@ -942,14 +1118,25 @@ def run(host: str) -> int:
 
         last_save_turn = int(state.get("last_save_turn") or 0)
         delta = max(0, current_turns - last_save_turn)
-        threshold_reached = is_substantial and delta >= STOP_DETAIL_TURN_INTERVAL
+        logging_settings = settings["logging"]
+        hard_gate_settings = logging_settings["hard_gate"]
+        detail_interval = int(logging_settings["detail_turn_interval"])
+        threshold_reached = (
+            bool(hard_gate_settings["important_interval"])
+            and is_substantial
+            and delta >= detail_interval
+        )
 
         # Hard gate fires when:
-        #   (a) the user explicitly mentioned memory keywords this turn, OR
-        #   (b) the throttling threshold is reached (every N=8 user turns of
+        #   (a) the user explicitly mentioned memory keywords this turn and
+        #       logging.hard_gate.memory_prompt is enabled, OR
+        #   (b) the throttling threshold is reached (default every N=20 turns of
         #       substantive work).
         # `memory_written` short-circuits both — no need to gate twice.
-        should_gate = (prompt_mentions_memory or threshold_reached) and not state.get("memory_written")
+        should_gate = (
+            (bool(hard_gate_settings["memory_prompt"]) and prompt_mentions_memory)
+            or threshold_reached
+        ) and not state.get("memory_written")
 
         if should_gate:
             save_state(payload, host, state)
@@ -975,6 +1162,7 @@ def run(host: str) -> int:
         summary_count = int(state.get("summary_append_count") or 0)
         wrote_summary = False
         if (
+            logging_settings["silent_summary"] and
             is_substantial
             and current_turns > 0
             and current_turns != last_summary_turn
@@ -987,6 +1175,7 @@ def run(host: str) -> int:
                 wrote_summary = True
 
         save_state(payload, host, state)
+        archive_session_pointer(payload, host, state, current_turns)
         deltas = {"stop_throttled_passthrough": 1}
         if wrote_summary:
             deltas["log_entries_auto"] = 1

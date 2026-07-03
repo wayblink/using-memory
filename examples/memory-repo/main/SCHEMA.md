@@ -22,6 +22,9 @@
 `<namespace>/log/YYYY-MM-DD.jsonl`
 - Append-only operation logs in newline-delimited JSON. Each line is a self-contained JSON object with local-timezone ISO `ts` including an offset, `date`, `tag`, `level`, `source`, `text`, and optional `confidence`, `files`, `project`, `topic`. Use `scripts/memory_tool.py write-log` to append. Keeping records structured makes `search`, `maintain`, `stats`, and `load` reliable without index builds.
 
+`<namespace>/sessions/index.jsonl`
+- Optional cold session pointer index. Written only when `session_archive.enabled: true`; each line points at a host transcript path with minimal metadata such as `session_id`, `cwd`, `human_turns`, and `important_events`. It is not part of automatic retrieval and should not replace structured operation logs.
+
 `<namespace>/anatomy/_index.json`
 - Registry of project roots that have anatomy snapshots, keyed by slug (lowercase `[a-z0-9._-]`, 1..64 chars). Slug collisions are surfaced at registration time and require explicit `--slug` to disambiguate.
 

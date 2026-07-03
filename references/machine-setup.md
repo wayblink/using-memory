@@ -42,6 +42,30 @@ This gives Claude Code the same skill instruction surface from its own skill tre
 ## Configuration
 The default config path is `~/.skills/using-memory/config.yaml`. Run `python3 scripts/memory_tool.py setup` to create it manually, or let `scripts/link.sh` / `scripts/install.sh` prompt during first-time setup. Override it with `USING_MEMORY_CONFIG` when a machine needs a different location. Keep config outside the memory repo so each machine can declare the local checkout path, namespace, machine ID, optional reference repos, and load priorities.
 
+Fresh setup writes the hook tuning fields below. Existing installs that do not contain these fields still get the same defaults from `memory_hook_common.py`; copy this block into `config.yaml` when you want explicit per-machine control:
+
+```yaml
+features:
+  anatomy:
+    enabled: false
+    session_start_attach: false
+    post_tool_upsert: false
+    auto_register: false
+
+logging:
+  silent_summary: false
+  detail_turn_interval: 20
+  hard_gate:
+    memory_prompt: true
+    important_interval: true
+
+session_archive:
+  enabled: false
+  mode: pointer
+  auto_load: false
+  index_events: true
+```
+
 ## Hook Enforcement
 
 Skill text improves routing, but hooks add a deterministic pre-final gate. The bundled hook scripts live in `scripts/hooks/`:
@@ -50,7 +74,7 @@ Skill text improves routing, but hooks add a deterministic pre-final gate. The b
 - `claude_memory_hook.py`: Claude Code command hook adapter.
 - `memory_hook_common.py`: shared routing and Stop-gate logic.
 
-The hook does not load memory on every turn. It only injects a short reminder when memory triggers are present, tracks operation-like tool events, and blocks `Stop` once when the turn appears to contain operation history but no memory write was observed. The continuation prompt tells the agent to write a comprehensive JSONL log entry before finalizing.
+The hook does not load memory on every turn. It injects a compact SessionStart reminder plus saved preference summary, injects a short reminder when memory triggers are present, tracks operation-like tool events, and blocks `Stop` only when the configured hard gate is reached and no memory write was observed. The continuation prompt tells the agent to write a comprehensive JSONL log entry before finalizing.
 
 The hook intentionally gates log writing, not long-term memory curation. Use `<namespace>/log/YYYY-MM-DD.jsonl` broadly for operation facts and key events; keep `<namespace>/MEMORY.md` limited to stable facts, confirmed decisions, and durable lessons.
 
@@ -198,11 +222,14 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 
 ### Hook behavior and limits
 
-- `SessionStart` and memory-relevant `UserPromptSubmit` add context reminding the agent to use the skill and to write operation logs broadly. SessionStart also injects a compact saved-preferences summary so host-level reply rules such as language preference are visible before the first answer.
+- `SessionStart` and memory-relevant `UserPromptSubmit` add context reminding the agent to use the skill. SessionStart also injects a compact saved-preferences summary so host-level reply rules such as language preference are visible before the first answer.
+- Anatomy SessionStart attach and PostToolUse upsert are disabled by default. Enable `features.anatomy.session_start_attach`, `features.anatomy.post_tool_upsert`, and optionally `features.anatomy.auto_register` only on machines where the snapshot cost is worth it.
 - `PostToolUse` and Claude's `PostToolBatch` mark the turn as log-worthy when commands, edits, builds, tests, commits, pushes, deployments, hook/config changes, failures, or fixes appear.
-- `Stop` is the enforcement point: when the main agent is about to finish, the hook returns `decision: "block"` once if the turn looks log-worthy and no `memory_tool.py write-log`, `write-memory`, `write-preference`, or `upsert-doc` was observed.
+- `Stop` is the enforcement point: when the main agent is about to finish, the hook returns `decision: "block"` if the configured memory-prompt gate or important-turn interval fires and no `memory_tool.py write-log`, `write-memory`, `write-preference`, or `upsert-doc` was observed. The default interval is 20 real human turns.
 - `stop_hook_active` is honored to prevent infinite loops after the agent continues from a Stop hook.
-- The hook does not automatically write to the memory repo. It forces the agent to perform the write so it can summarize accurately and include files, commit hashes, verification status, and unresolved risks.
+- Silent auto-summary writes are disabled by default. Set `logging.silent_summary: true` only when a machine deliberately wants best-effort summary logs on substantial pass-through turns.
+- Optional `session_archive.enabled: true` writes pointer records to `<namespace>/sessions/index.jsonl`; it does not copy transcript content and `session_archive.auto_load` defaults to false.
+- The hook normally does not automatically write operation summaries to the memory repo. It forces the agent to perform key writes so it can summarize accurately and include files, commit hashes, verification status, and unresolved risks.
 - The hook is heuristic. It reduces missed writes, but the final quality still depends on the agent using `scripts/memory_tool.py` with accurate content.
 
 ## Fresh-session smoke test
@@ -250,7 +277,7 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 1. On the new machine, `git clone` the same memory repo or `git pull` it if the repo already exists locally.
 2. On the new machine, `git clone` this `personal-skills` repo or pull the latest version that contains `using-memory`.
 3. Install the skill with `scripts/link.sh both` during development or `scripts/install.sh both` for copied installs; pass `codex` or `claude-code` when only one host is present.
-4. Create `~/.skills/using-memory/config.yaml` or set `USING_MEMORY_CONFIG` to a machine-local config file.
+4. Create `~/.skills/using-memory/config.yaml` or set `USING_MEMORY_CONFIG` to a machine-local config file. `scripts/memory_tool.py setup` and `examples/new-machine/config.template.yaml` include the conservative hook defaults; on older machines, copy the `features`, `logging`, and `session_archive` blocks from the template when you want the values visible.
 5. Point the primary root at the memory repo checkout, then set a stable `namespace` for this machine/user/environment. If omitted, namespace defaults to `main`.
 6. Edit `~/.codex/superpowers/GEMINI.md` and/or `~/.claude/CLAUDE.md` with the startup lines above.
 7. Wire the host hooks exactly as shown above. For Claude Code, make sure `SessionStart` uses `claude_session_start_hook.py`.
@@ -260,7 +287,7 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 - Start from `examples/new-machine/config.template.yaml` when creating `~/.skills/using-memory/config.yaml` on a fresh machine.
 - Copy `examples/new-machine/GEMINI.template.md` into `~/.codex/superpowers/GEMINI.md` if you want the minimal startup include block without retyping it.
 - Copy `examples/new-machine/CLAUDE.template.md` into `~/.claude/CLAUDE.md` if you want the minimal Claude Code startup include block without retyping it.
-- After any `git pull` that changes hook behavior, rerun `scripts/link.sh` or `scripts/install.sh both` so installed host paths pick up new helper scripts before you restart Codex or Claude Code.
+- After any `git pull` that changes hook behavior, rerun `scripts/link.sh` or `scripts/install.sh both` so installed host paths pick up new helper scripts before you restart Codex or Claude Code. Also compare the local `config.yaml` with `examples/new-machine/config.template.yaml` for new opt-in fields.
 - Only change machine-local values such as `path`, `namespace`, `machine_id`, and whether a reference root should exist on this machine.
 
 ## Per-machine values only

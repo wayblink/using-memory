@@ -13,7 +13,7 @@ The project goal is to make agents load durable memory only when cross-session c
 | Time series (operation) | What happened, in order | `<namespace>/log/YYYY-MM-DD.jsonl` | Append-only, broad |
 | Cross-project knowledge | Stable facts / decisions / lessons | `<namespace>/MEMORY.md` | Curated, narrow |
 | Stable preferences | User-level habits / rules | `<namespace>/PREFERENCES.md` | Curated, very narrow |
-| Project snapshot (anatomy) | What a project *looks like right now* | `<namespace>/anatomy/<slug>.{json,md}` | Auto-refreshed on writes |
+| Project snapshot (anatomy) | What a project *looks like right now* | `<namespace>/anatomy/<slug>.{json,md}` | Opt-in auto-refresh; manual commands always available |
 
 The log answers *what did I do*; anatomy answers *in what shape did I do it*. They are linked via `[[anatomy:<slug>/<rel>]]` references emitted automatically when `write-log --files` matches a registered project.
 
@@ -46,7 +46,7 @@ Layer responsibilities:
 - `<namespace>/docs/`: structured documents such as wiki, SOP, todo, plan, and project notes.
 - `<namespace>/docs/index.json`: an index for `<namespace>/docs/*.md`, including title, type, tags, modified time, related projects, and other metadata.
 - `<namespace>/log/`: date-based working notes, same-day context, and operation history.
-- `<namespace>/anatomy/`: project snapshots. JSON is the source of truth (`<slug>.json` per project plus an `_index.json` registry); `<slug>.md` is auto-rendered for humans and the SessionStart context injection.
+- `<namespace>/anatomy/`: project snapshots. JSON is the source of truth (`<slug>.json` per project plus an `_index.json` registry); `<slug>.md` is auto-rendered for humans and optional SessionStart context injection.
 - `<namespace>/STATS.json`: machine-local event counters maintained by the hooks and write-* commands. Never auto-loaded; intentionally not synced to reference roots (per-machine counts only).
 
 `namespace` is a single path segment under the memory root. It defaults to `main` when omitted. Use a stable value such as a user name, machine ID, server name, or environment name when multiple machines share one Git repo.
@@ -68,7 +68,7 @@ When retrieval is needed, the skill follows this macro load order:
 1. Read `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md` from every configured repo.
 2. Read `<namespace>/docs/index.json` from every repo, then load matching `<namespace>/docs/*.md` documents by index metadata, type, tag, project, or query.
 3. Read recent `<namespace>/log/` records from the primary repo. By default, only today and yesterday are loaded; larger date windows must be requested explicitly through CLI flags.
-4. With `load --anatomy`, attach the anatomy snapshot for the project whose root is the longest prefix of cwd. SessionStart hooks do this automatically.
+4. With `load --anatomy`, attach the anatomy snapshot for the project whose root is the longest prefix of cwd. SessionStart hooks do this only when `features.anatomy.session_start_attach` is enabled.
 
 `<namespace>/STATS.json` is never part of this snapshot; it is read on demand by `status`.
 
@@ -80,7 +80,7 @@ Writes are routed by information type:
 - Stable facts, confirmed decisions, and long-term lessons go to `<namespace>/MEMORY.md`.
 - Wiki, SOP, todo, plan, and project notes go to `<namespace>/docs/*.md`, with `<namespace>/docs/index.json` updated at the same time.
 - Same-day process notes, operation history, temporary context, and unconfirmed information usually go to `<namespace>/log/YYYY-MM-DD.jsonl`.
-- Project file snapshots go to `<namespace>/anatomy/<slug>.json` via `anatomy-register` (cheap pointer) plus the incremental PostToolUse hook. `anatomy-scan` is an opt-in heavy operation for full project maps.
+- Project file snapshots go to `<namespace>/anatomy/<slug>.json` via `anatomy-register` (cheap pointer) plus the optional incremental PostToolUse hook. `anatomy-scan` is an opt-in heavy operation for full project maps.
 
 Open issues, temporary assumptions, and unconfirmed plans are not written directly to `<namespace>/MEMORY.md` by default.
 
@@ -121,7 +121,7 @@ python3 scripts/memory_tool.py anatomy-set spark src/api.py \
   --desc "JWT auth gateway. Trust boundary."                               # pin a critical-file description
 ```
 
-After `anatomy-register`, no `<slug>.json` exists yet. PostToolUse will create it on the first `Write` / `Edit` against the project. SessionStart auto-attach still works: it returns the registered root (without files) and the standard memory-protocol reminder.
+After `anatomy-register`, no `<slug>.json` exists yet. If `features.anatomy.post_tool_upsert` is enabled, PostToolUse will create it on the first `Write` / `Edit` against the project. If `features.anatomy.session_start_attach` is enabled, SessionStart attach returns the registered root (without files) and the standard memory-protocol reminder.
 
 ### Opt-in full scan
 
@@ -134,17 +134,17 @@ python3 scripts/memory_tool.py anatomy-show spark-ann                      # ren
 
 Registration is explicit on purpose: `cd ~/Downloads` should not silently create a snapshot, and slug collisions are surfaced at registration time so they cannot drift. Same root + same slug is idempotent; conflicting slug requires explicit `--slug` to disambiguate.
 
-### Auto-attach on SessionStart
+### Optional attach on SessionStart
 
 ```bash
 python3 scripts/memory_tool.py load --anatomy --cwd ~/yard/spark-ann/src
 ```
 
-The bundled hook calls this on every SessionStart and appends two compact blocks to the model's context: a high-priority preference summary distilled from `<namespace>/PREFERENCES.md`, plus the rendered anatomy (capped at ~2000 tokens, falling back to a top-level directory summary above the cap). When cwd is inside an unregistered git repo, it emits an anatomy hint suggesting `anatomy-register`. Otherwise only the reminder + preferences block are injected.
+By default, the bundled hook does not attach anatomy on SessionStart. It injects the memory-protocol reminder plus a compact saved-preferences summary distilled from `<namespace>/PREFERENCES.md`. Set `features.anatomy.session_start_attach: true` to append rendered anatomy as well (capped at ~2000 tokens, falling back to a top-level directory summary above the cap). When that option is enabled and cwd is inside an unregistered git repo, the hook emits an anatomy hint suggesting `anatomy-register`.
 
 ### Incremental upkeep
 
-The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations and calls `anatomy-upsert-file` for each touched path. This is the primary way the snapshot grows. `desc_source: user` entries (set via `anatomy-set`) are preserved through every refresh — only tokens / mtime / kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot.
+When `features.anatomy.post_tool_upsert: true`, the PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations and calls `anatomy-upsert-file` for each touched path. Set `features.anatomy.auto_register: true` to allow those upserts to register eligible git projects automatically. `desc_source: user` entries (set via `anatomy-set`) are preserved through every refresh — only tokens / mtime / kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot.
 
 Run `memory_tool.py maintain` periodically for full reconciliation: it reports `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not in snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed). Right after registration-only setup, `new_files` will be large by design — do not run `anatomy-scan` just to clear it.
 
@@ -163,8 +163,8 @@ python3 scripts/memory_tool.py status --json     # raw dict
 
 The dashboard surfaces two diagnostic ratios:
 
-- `anatomy_hit_rate = anatomy_attached_count / sessions` — low values mean cwd rarely lands inside a registered project; consider running `anatomy-register` on more roots.
-- `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `STOP_DETAIL_TURN_INTERVAL`); near-zero values mean silent summaries are doing the work.
+- `anatomy_hit_rate = anatomy_attached_count / sessions` — meaningful only when SessionStart anatomy attach is enabled; low values mean cwd rarely lands inside a registered project.
+- `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `logging.detail_turn_interval`); near-zero values mean the hook is mostly passing through.
 
 Both are diagnostic, not performance claims — the system has no real-API token visibility.
 
@@ -212,6 +212,32 @@ python3 scripts/memory_tool.py setup --path ~/.memories --namespace main --machi
 python3 scripts/memory_tool.py setup --path ~/.memories --remote git@github.com:you/memories.git --namespace main --machine-id local-main
 ```
 
+Fresh setup writes conservative hook defaults into `config.yaml`:
+
+```yaml
+features:
+  anatomy:
+    enabled: false
+    session_start_attach: false
+    post_tool_upsert: false
+    auto_register: false
+
+logging:
+  silent_summary: false
+  detail_turn_interval: 20
+  hard_gate:
+    memory_prompt: true
+    important_interval: true
+
+session_archive:
+  enabled: false
+  mode: pointer
+  auto_load: false
+  index_events: true
+```
+
+These defaults keep startup lean: saved preferences still inject on `SessionStart`, but anatomy snapshots, silent auto-summaries, and session pointer archives are opt-in. Existing installs inherit the same defaults even if these fields are absent; copy the block from `examples/config.example.yaml` when you want explicit per-machine tuning.
+
 ## Configuration
 
 `memory_tool.py` resolves config in this order:
@@ -251,11 +277,11 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 
 | Event | Action |
 |---|---|
-| **SessionStart** | Inject memory-protocol reminder + compact preference summary from `<namespace>/PREFERENCES.md` + anatomy snapshot for cwd (or one-line hint when cwd is inside an unregistered git repo). |
+| **SessionStart** | Inject memory-protocol reminder + compact preference summary from `<namespace>/PREFERENCES.md`. Also inject anatomy snapshot/hint only when `features.anatomy.session_start_attach: true`. |
 | **UserPromptSubmit** | Set `prompt_mentions_memory` if the prompt contains memory keywords; emit reminder when set. Session-lifetime counters are not reset. |
-| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For write/edit-style tools, also call `anatomy-upsert-file` on every touched path (best-effort, 8 s timeout). |
-| **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final message contains a memory-write call, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL: when `prompt_mentions_memory` OR `delta >= STOP_DETAIL_TURN_INTERVAL` (default `8`), BLOCK with a short reason asking the model to write a detail-level log. Other substantial turns get a silent `level=summary tag=progress source=auto` log entry (deduped per turn, capped at 200 per session). |
-| **PreCompact** | Unconditional BLOCK with a short structured reason: dump current task / unfinished subgoals / key identifiers / open risks before the context window shrinks. `stop_hook_active` / `precompact_hook_active` flags short-circuit to `{}` to prevent loops. |
+| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For write/edit-style PostToolUse calls, call `anatomy-upsert-file` only when `features.anatomy.post_tool_upsert: true` (best-effort, 8 s timeout). |
+| **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final message contains a memory-write call, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL: when configured memory-prompt gating is active or `delta >= logging.detail_turn_interval` (default `20`), BLOCK with a short reason asking the model to write a detail-level log. Silent `level=summary tag=progress source=auto` appends happen only when `logging.silent_summary: true`. If `session_archive.enabled: true`, successful Stop pass-through appends a pointer record to `<namespace>/sessions/index.jsonl`. |
+| **PreCompact** | No-op. Previous BLOCK behavior could hang context compaction; leftover hook wiring returns `{}`. |
 
 Block reasons are intentionally short (~200 chars) — they are a *trigger* for the model to call `write-log`, not a place to replay the model's own tool history.
 

@@ -62,7 +62,7 @@ The skill stores four orthogonal kinds of context. Pick the right one when readi
 | **Time series (operation)** | What happened, in order | `<namespace>/log/YYYY-MM-DD.jsonl` | Append-only, broad |
 | **Cross-project knowledge** | Stable facts / decisions / lessons | `<namespace>/MEMORY.md` | Curated, narrow |
 | **Stable preferences** | User-level habits / rules | `<namespace>/PREFERENCES.md` | Curated, very narrow |
-| **Project snapshot (anatomy)** | What a project *looks like right now* | `<namespace>/anatomy/<slug>.{json,md}` | Auto-refreshed on writes |
+| **Project snapshot (anatomy)** | What a project *looks like right now* | `<namespace>/anatomy/<slug>.{json,md}` | Manual by default; hook auto-refresh is opt-in |
 
 The log answers "what did I do"; anatomy answers "in what shape did I do it." The two are linked via `[[anatomy:<slug>/<rel>]]` references emitted automatically when `write-log --files` matches a registered project.
 
@@ -175,10 +175,10 @@ Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executi
 - `write-memory`: append one curated `<namespace>/MEMORY.md` entry. Required: `--config`, `--date`, `--tag`, `--text`; `write-memory` accepts only `fact`, `decision`, and `lesson`.
 - `write-preference`: append one stable `<namespace>/PREFERENCES.md` entry. Required: `--config`, `--text`.
 - `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--doc`, plus `--text` OR `--text-stdin`. Optional with auto-fallback: `--config` (env / default yaml), `--title` (first H1 in text → slug-derived), `--doc-type` (defaults to `wiki`; common: `wiki`, `lesson`, `troubleshooting`, `decision-record`, `runbook`, `SOP`, `project`), `--modified` (defaults to today). Optional metadata: `--project`, `--doc-tag`, `--summary`. Optional backlinks: `--link-log '[[log:YYYY-MM-DD#L<n>]]'` (repeatable; appends/merges a `## Related log entries` section, deduped). The distillation pipeline emits one `--link-log` per source entry so promoted log entries can be filtered out on the next distill pass.
-- `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Cheap: writes a pointer into `_index.json` only and does **not** scan files. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent. The snapshot fills lazily via PostToolUse `anatomy-upsert-file` — only run `anatomy-scan` when you explicitly want a full project map.
+- `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Cheap: writes a pointer into `_index.json` only and does **not** scan files. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent. The snapshot can fill lazily via PostToolUse `anatomy-upsert-file` only when `features.anatomy.post_tool_upsert` is enabled; otherwise use manual `anatomy-upsert-file` / `anatomy-scan` as needed.
 - `anatomy-scan <slug|root>`: full re-scan of a registered project. Opt-in heavy operation: walks every indexable file under the root and writes `<slug>.json` / `<slug>.md`. Preserves `desc_source=user` entries (refreshes their tokens/mtime/kind, does not overwrite their desc). Avoid running it on projects with large vendored / thirdparty trees — those bloat the snapshot to tens of MB.
 - `anatomy-set <slug|root> <relpath> --desc TEXT`: manually set or refine one file's description. Marks `desc_source=user` so future scans don't overwrite it.
-- `anatomy-upsert-file <abs-path>`: refresh or remove the anatomy entry for one file. Used by the PostToolUse hook for incremental maintenance; safe to call manually too. Silently no-ops on files outside every registered project. Add `--auto-register` to also register the enclosing repo root when the file lives inside an eligible-but-unregistered project (`.git` + project marker); the hook always passes this flag.
+- `anatomy-upsert-file <abs-path>`: refresh or remove the anatomy entry for one file. Used by the PostToolUse hook only when `features.anatomy.post_tool_upsert` is enabled; safe to call manually too. Silently no-ops on files outside every registered project. Add `--auto-register` to also register the enclosing repo root when the file lives inside an eligible-but-unregistered project (`.git` + project marker); the hook passes this flag only when `features.anatomy.auto_register` is enabled.
 
 ## Anatomy
 
@@ -186,16 +186,16 @@ Anatomy is the project-snapshot dimension. It lives at `<namespace>/anatomy/{_in
 
 Use it to answer "what does this project contain?" without paying for a full re-read each session.
 
-### Default growth path: register, then let it fill incrementally
+### Growth path: register, then optionally let it fill incrementally
 
-Anatomy is built **lazily by default**. The intended lifecycle is:
+Anatomy is built lazily. Hook-driven lazy fill is opt-in; the intended lifecycle is:
 
-1. **Registration** — either via `anatomy-register <root>` manually, or **automatically** on the first PostToolUse Write/Edit inside an eligible project (`.git` ancestor + at least one project marker file like `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `CMakeLists.txt`, `setup.py`, `pom.xml`, `build.gradle[.kts]`, `Gemfile`, `composer.json`, `Makefile`, `Pipfile`, `requirements.txt`). Either path writes a single pointer into `_index.json`. No file scan happens here.
-2. The PostToolUse hook calls `anatomy-upsert-file --auto-register` on every `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create`. The snapshot grows to reflect the files you actually touched. On the first such edit in an eligible-but-unregistered project, the hook registers the repo root inline and proceeds with the upsert in the same call.
+1. **Registration** — manually via `anatomy-register <root>`, or automatically only when both `features.anatomy.post_tool_upsert` and `features.anatomy.auto_register` are enabled and the first PostToolUse Write/Edit is inside an eligible project (`.git` ancestor + at least one project marker file like `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `CMakeLists.txt`, `setup.py`, `pom.xml`, `build.gradle[.kts]`, `Gemfile`, `composer.json`, `Makefile`, `Pipfile`, `requirements.txt`). Either path writes a single pointer into `_index.json`. No file scan happens here.
+2. When `features.anatomy.post_tool_upsert` is enabled, the PostToolUse hook calls `anatomy-upsert-file` on every `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create`. The snapshot grows to reflect the files you actually touched. On the first such edit in an eligible-but-unregistered project, inline repo registration happens only when `features.anatomy.auto_register` is enabled.
 3. `anatomy-set <slug> <relpath> --desc "..."` to pin a short description on load-bearing files (trust boundaries, build entrypoints, config schemas). These are preserved through future scans.
 4. `anatomy-scan <slug>` only when you explicitly want a project-wide map — e.g., onboarding a new repo, prepping a refactor, or producing an audit. **Skip this for projects with large vendored / build / thirdparty trees** (`ep/`, `vendor/`, generated `dist/` siblings, etc.) — they bloat the snapshot to tens of MB and slow every subsequent `upsert-file`.
 
-Treat `anatomy-scan` as an opt-in heavy operation, not part of registration. A registered-but-unscanned project still works: `load --anatomy` returns the registered root without files, the SessionStart hook still injects the standard reminder, and PostToolUse upserts start populating files on the first edit (an empty snapshot shell is created inline when needed).
+Treat `anatomy-scan` as an opt-in heavy operation, not part of registration. A registered-but-unscanned project still works: `load --anatomy` returns the registered root without files, the SessionStart hook still injects the standard reminder, and PostToolUse upserts start populating files on the first edit only when `features.anatomy.post_tool_upsert` is enabled (an empty snapshot shell is created inline when needed).
 
 ### Registration is automatic when safe, explicit otherwise
 
@@ -205,13 +205,13 @@ Slug derivation: the base slug is the repo root's basename. If that slug is alre
 
 `anatomy-register` remains available for projects without a marker, for projects you want to opt into ahead of any write, and for picking a custom slug.
 
-### SessionStart auto-attach
+### SessionStart optional attach
 
-The Claude Code / Codex hook calls `load --anatomy --cwd <session cwd>` on every SessionStart. When cwd is inside a registered project, the rendered anatomy markdown (capped at ~2000 tokens, falling back to a top-level directory summary above the cap) is appended to the SessionStart additionalContext. When cwd is in an unregistered git repo that has a project marker, the hook injects a multi-line actionable hint: detected repo root, suggested slug (auto-disambiguated against existing entries), and a paste-ready `anatomy-register` command. When cwd is in a git repo without any project marker, the hook injects a softer note explaining no marker was found and pointing at manual registration. When cwd is anywhere else, only the standard memory-protocol reminder is sent.
+The Claude Code / Codex hook calls plain `load --json` on every SessionStart to inject the memory reminder and compact saved-preferences summary. It calls `load --anatomy --cwd <session cwd>` only when `features.anatomy.session_start_attach` is enabled. With that option enabled, when cwd is inside a registered project, the rendered anatomy markdown (capped at ~2000 tokens, falling back to a top-level directory summary above the cap) is appended to the SessionStart additionalContext. When cwd is in an unregistered git repo that has a project marker, the hook injects a multi-line actionable hint: detected repo root, suggested slug (auto-disambiguated against existing entries), and a paste-ready `anatomy-register` command. When cwd is in a git repo without any project marker, the hook injects a softer note explaining no marker was found and pointing at manual registration. When cwd is anywhere else, only the standard memory-protocol reminder and preference summary are sent.
 
 ### Incremental maintenance
 
-The PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations, extracts the touched file path(s), and calls `anatomy-upsert-file` for each. `desc_source=user` entries are preserved through every refresh — only tokens/mtime/kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot if previously indexed.
+When `features.anatomy.post_tool_upsert` is enabled, the PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations, extracts the touched file path(s), and calls `anatomy-upsert-file` for each. `desc_source=user` entries are preserved through every refresh — only tokens/mtime/kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot if previously indexed.
 
 For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed). Note that `new_files` after a registration-only setup will list every indexable file under the root — that is expected; do not interpret it as drift, and do not run `anatomy-scan` just to silence it.
 
@@ -297,7 +297,7 @@ Defaults are conservative: `--min-entries 3`, `--min-days 3`. Lower them to surf
 `<namespace>/STATS.json` is an event-driven counter file maintained by the hooks and the write-* commands. It contains real counts — no estimates, no synthetic "savings" numbers — for:
 
 - `sessions`, `anatomy_attached_count`, `anatomy_truncated_count`, `anatomy_hint_emitted`, `anatomy_attached_tokens_est` (rendered chars / 3.75), `anatomy_upserts`, `anatomy_auto_registered`
-- `log_entries_user` (write-log invocations whose `--source` is not `auto`), `log_entries_auto` (silent hook-driven summary appends)
+- `log_entries_user` (write-log invocations whose `--source` is not `auto`), `log_entries_auto` (silent hook-driven summary appends, only when `logging.silent_summary: true`)
 - `stop_blocks`, `stop_throttled_passthrough`, `precompact_blocks`
 - `cumulative_human_turns` (Stop hook accumulates real human-turn deltas across sessions; powers distillation triggers)
 - `last_distill_check_ts`, `last_distill_inject_ts`, `last_distill_inject_turn`, `last_promote_ts` (timestamps and turn checkpoints used by the distillation pipeline; see Distillation Pipeline above)
@@ -305,7 +305,7 @@ Defaults are conservative: `--min-entries 3`, `--min-days 3`. Lower them to surf
 `memory_tool.py status` prints these along with two diagnostic ratios:
 
 - `anatomy_hit_rate = anatomy_attached_count / sessions` — low values mean cwd rarely lands inside a registered project; consider running `anatomy-register` on more roots.
-- `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `STOP_DETAIL_TURN_INTERVAL` in the hook); near-zero values mean silent summaries are doing all the work.
+- `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `logging.detail_turn_interval` or narrowing `logging.hard_gate`); near-zero values mean the hook is mostly passing through.
 
 Both ratios are diagnostic, not performance claims. The counters never assert "X% token savings" because the system has no real-API token visibility — it only knows what it injected and what it blocked.
 
@@ -315,17 +315,17 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 
 | Event | Action |
 |---|---|
-| **SessionStart** | Inject memory-protocol reminder + anatomy snapshot for cwd (or hint when cwd is in unregistered git repo) + distillation candidates when due (see Distillation Pipeline). |
+| **SessionStart** | Inject memory-protocol reminder + compact saved-preferences summary + distillation candidates when due (see Distillation Pipeline). Inject anatomy snapshot/hint only when `features.anatomy.session_start_attach: true`. |
 | **UserPromptSubmit** | Set per-turn flag `prompt_mentions_memory` based on memory keyword regex; emit reminder when set. Does NOT reset session-lifetime counters. |
-| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For PostToolUse with a write/edit-style tool, additionally call `anatomy-upsert-file --auto-register` on each touched path (best-effort, 8s timeout, silent on failure). When the file is inside an eligible-but-unregistered project (`.git` + project marker), the subprocess auto-registers the repo root inline before upserting. |
-| **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final assistant message itself contains a memory write, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL (filtering out `tool_result` lists and synthetic `<system-reminder>` / `<command-message>` / `Stop hook feedback:` content), and accumulate the delta into `cumulative_human_turns` (idempotent). When `prompt_mentions_memory` OR `delta = current_turns - last_save_turn ≥ 8` AND `not memory_written`, BLOCK with the standard write-gate reason — and append distillation candidates to that reason when due. Otherwise pass through and (best-effort) append a `level=summary tag=progress source=auto` log entry capped at one per human turn and 200 per session. |
+| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For PostToolUse with a write/edit-style tool, call `anatomy-upsert-file` only when `features.anatomy.post_tool_upsert: true`; pass `--auto-register` only when `features.anatomy.auto_register: true`. |
+| **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final assistant message itself contains a memory write, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL (filtering out `tool_result` lists and synthetic `<system-reminder>` / `<command-message>` / `Stop hook feedback:` content), and accumulate the delta into `cumulative_human_turns` (idempotent). When the configured memory-prompt hard gate fires OR `delta = current_turns - last_save_turn ≥ logging.detail_turn_interval` (default 20) AND `not memory_written`, BLOCK with the standard write-gate reason — and append distillation candidates to that reason when due. Otherwise pass through. Silent `level=summary tag=progress source=auto` appends happen only when `logging.silent_summary: true`; optional `session_archive.enabled: true` writes a cold pointer to `<namespace>/sessions/index.jsonl`. |
 | **PreCompact** | Disabled. Previous versions BLOCKED compact to force a write-log/write-memory flush; this was observed to hang the compact pipeline and has been removed. The handler now returns `{}` unconditionally and the hook is unwired from `settings.json`. |
 
-The throttle threshold is `STOP_DETAIL_TURN_INTERVAL = 8` (per-turn level=summary appends are silent; once-per-eight detail blocks force a structured write).
+The default throttle threshold is `logging.detail_turn_interval = 20`. Hook-driven silent summaries are off by default; enable `logging.silent_summary` only when the extra auto log volume is intentional.
 
 ## Write Strategy
 
-At the end of each turn, make one write decision. Default toward writing a log entry when the turn performed work or changed state; do not apply heavy judgment filters to operation history.
+At the end of each turn, make one write decision. Default toward skipping pure chatter and trivial reads, but write a log entry for key operation history that should survive restart. Do not mirror every tool call mechanically.
 
 - `skip`: no information worth recording.
 - `log_detail`: complete operation record with full details written to `<namespace>/log/*.jsonl` via `write-log`.
@@ -333,7 +333,7 @@ At the end of each turn, make one write decision. Default toward writing a log e
 - `write_doc`: mature knowledge or workflow written to `<namespace>/docs/*.md` via `upsert-doc`.
 - `write_memory`: stable facts or confirmed decisions written to `<namespace>/MEMORY.md` via `write-memory`.
 
-For `<namespace>/log/*.jsonl`, prefer recording over skipping when there was a concrete operation, state change, verification, issue, fix, decision, commit, push, build, deployment, hook change, config change, or user-confirmed workflow event. The log is the continuity ledger and should be comprehensive enough to reconstruct what happened after restart.
+For `<namespace>/log/*.jsonl`, prefer recording over skipping when there was a key concrete operation, state change, verification, issue, fix, decision, commit, push, build, deployment, hook change, config change, or user-confirmed workflow event. The log is the continuity ledger and should be comprehensive enough to reconstruct what happened after restart, but it should not become a per-tool transcript.
 
 Use `skip` mainly for pure greetings, purely conversational turns with no reusable context, trivial reads that produced no decision or state change, or repeated identical tool activity with no new information.
 
@@ -350,10 +350,11 @@ Routing:
 
 Never write:
 
-- raw per-turn transcripts
+- raw per-tool transcripts
 - one JSONL entry for every tool call as a mechanical mirror
 - full temporary command output when a concise result summary is enough
 - unverified assumptions as durable memory
+- session transcript contents by default; optional `session_archive.enabled` stores pointer records only and does not auto-load them
 - open questions directly into `<namespace>/MEMORY.md`
 
 ## Maintenance Rules

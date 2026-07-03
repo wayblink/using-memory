@@ -13,5 +13,25 @@ defaults:
   read_yesterday: true
   load_docs_on_demand: true
 
+features:
+  anatomy:
+    enabled: false
+    session_start_attach: false
+    post_tool_upsert: false
+    auto_register: false
+
+logging:
+  silent_summary: false
+  detail_turn_interval: 20
+  hard_gate:
+    memory_prompt: true
+    important_interval: true
+
+session_archive:
+  enabled: false
+  mode: pointer
+  auto_load: false
+  index_events: true
+
 # This config lives outside the memory repo and records this machine's namespace and checkout path.
 # If namespace is omitted, using-memory defaults it to main.

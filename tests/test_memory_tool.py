@@ -1571,6 +1571,11 @@ class MemorySetupTests(unittest.TestCase):
             self.assertIn(f"path: {result['memory_root']}", text)
             self.assertIn("namespace: work", text)
             self.assertIn("machine_id: laptop", text)
+            self.assertIn("features:", text)
+            self.assertIn("anatomy:", text)
+            self.assertIn("silent_summary: false", text)
+            self.assertIn("detail_turn_interval: 20", text)
+            self.assertIn("session_archive:", text)
 
     def test_setup_clones_remote_git_repo_when_path_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

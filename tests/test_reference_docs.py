@@ -52,6 +52,7 @@ class ReferenceDocTests(unittest.TestCase):
             "<namespace>/anatomy/",
             "<namespace>/STATS.json",
             "<namespace>/log/",
+            "<namespace>/sessions/index.jsonl",
         ]
 
         for snippet in required_snippets:
@@ -86,6 +87,8 @@ class ReferenceDocTests(unittest.TestCase):
                 "      coding.md",
                 "    log/",
                 "      2026-04-13.jsonl",
+                "    sessions/",
+                "      index.jsonl",
                 "    anatomy/",
                 "      _index.json",
                 "      spark-ann.json",
@@ -108,6 +111,7 @@ class ReferenceDocTests(unittest.TestCase):
             "`<namespace>/MEMORY.md`",
             "`<namespace>/PREFERENCES.md`",
             "`<namespace>/log/`",
+            "`<namespace>/sessions/index.jsonl`",
             "`<namespace>/docs/`",
             "`<namespace>/docs/index.json`",
             "`<namespace>/anatomy/`",

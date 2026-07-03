@@ -14,9 +14,14 @@ class ExampleTests(unittest.TestCase):
             "writable: true",
             "namespace: main",
             "priority:",
+            "features:",
+            "anatomy:",
+            "enabled: false",
+            "silent_summary: false",
+            "detail_turn_interval: 20",
+            "session_archive:",
         ]:
             self.assertIn(needle, text)
-        self.assertNotIn("archive", text)
 
     def test_new_machine_templates_match_expected_layout(self):
         config_text = (ROOT / "examples/new-machine/config.template.yaml").read_text(
@@ -37,6 +42,13 @@ class ExampleTests(unittest.TestCase):
             "namespace: main",
             "machine_id: local-main",
             "priority: 100",
+            "features:",
+            "anatomy:",
+            "enabled: false",
+            "silent_summary: false",
+            "detail_turn_interval: 20",
+            "session_archive:",
+            "mode: pointer",
             "~/.skills/using-memory/config.yaml",
         ]:
             with self.subTest(needle=needle):
@@ -61,6 +73,7 @@ class ExampleTests(unittest.TestCase):
             "main/STATS.json",
             "main/docs/index.json",
             "main/docs/workflow.md",
+            "main/sessions/index.jsonl",
             "main/anatomy/_index.json",
             "main/anatomy/spark-ann.json",
             "main/anatomy/spark-ann.md",

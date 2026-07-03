@@ -86,8 +86,8 @@ class SkillDocTests(unittest.TestCase):
         self.assertIn("Distill useful patterns from log entries into curated long-term files during light maintenance moments.", text)
         self.assertIn("Only the local primary repo is writable by default", text)
         self.assertIn("Log entries from other namespaces are ignored by default", text)
-        self.assertIn("Default toward writing a log entry when the turn performed work or changed state", text)
-        self.assertIn("concrete operation, state change, verification, issue, fix, decision, commit, push, build, deployment, hook change, config change", text)
+        self.assertIn("write a log entry for key operation history that should survive restart", text)
+        self.assertIn("key concrete operation, state change, verification, issue, fix, decision, commit, push, build, deployment, hook change, config change", text)
 
         for needle in [
             "## Skill Position",

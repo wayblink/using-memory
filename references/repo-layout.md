@@ -18,6 +18,8 @@ memory-repo/
       coding.md
     log/
       2026-04-13.jsonl
+    sessions/
+      index.jsonl
     anatomy/
       _index.json
       spark-ann.json
@@ -41,9 +43,10 @@ This tree keeps every memory file under one namespace directory. The repo root i
 - `<namespace>/MEMORY.md`: stable facts, verified decisions, and key lessons only; it no longer acts as a topic document index.
 - `<namespace>/PREFERENCES.md`: communication and working preferences that help agents adjust tone, pace, and format.
 - `<namespace>/log/`: newline-delimited JSON (one entry per line), optimized for append-only context, search, and structured queries. Legacy `.md` log files may exist but are no longer written to.
+- `<namespace>/sessions/index.jsonl`: optional cold session pointer index written only when `session_archive.enabled: true`. Each line points at a host transcript path plus minimal metadata; it is never auto-loaded into SessionStart context.
 - `<namespace>/docs/`: on-demand indexed documents such as `workflow.md`, `coding.md`, and other core knowledge.
 - `<namespace>/docs/index.json`: document index with each document's `title`, `type`, `modified`, `projects`, `tags`, and `path`; loaders browse this index before selecting Markdown bodies. Stable `type` values include `wiki`, `SOP`, `todo`, and `plan`.
-- `<namespace>/anatomy/`: project file-index snapshots. `_index.json` lists registered project roots by slug (cheap pointer, written by `anatomy-register`); `<slug>.json` is the per-file source of truth (`desc`, `desc_source`, `tokens_est`, `kind`, `mtime`) and only exists after the first PostToolUse `anatomy-upsert-file` or an explicit `anatomy-scan`. `<slug>.md` is the auto-rendered view used by `anatomy-show` and SessionStart context injection. The snapshot is built lazily: register cheaply, let incremental upserts fill it, and only run `anatomy-scan` when a full project map is actually needed.
+- `<namespace>/anatomy/`: project file-index snapshots. `_index.json` lists registered project roots by slug (cheap pointer, written by `anatomy-register`); `<slug>.json` is the per-file source of truth (`desc`, `desc_source`, `tokens_est`, `kind`, `mtime`) and only exists after a manual or hook-driven `anatomy-upsert-file`, or an explicit `anatomy-scan`. `<slug>.md` is the auto-rendered view used by `anatomy-show` and optional SessionStart context injection. The snapshot is built lazily: register cheaply, optionally let incremental upserts fill it, and only run `anatomy-scan` when a full project map is actually needed.
 - `<namespace>/STATS.json`: machine-local event counters maintained by hooks and write-* commands. Read by `memory_tool.py status`; never auto-loaded into a session snapshot. Intentionally not synced to reference roots because counts are per-machine.
 
 ## Log JSONL Schema
