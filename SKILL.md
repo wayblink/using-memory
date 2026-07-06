@@ -51,20 +51,18 @@ description: Memory protocol for persisted cross-session context and operation c
 - `log_entries`
 - `doc_hits`
 - `sources`
-- `anatomy` (only when `load --anatomy` is set; see Anatomy below)
 
 ## Memory Dimensions
 
-The skill stores four orthogonal kinds of context. Pick the right one when reading or writing:
+The skill stores three orthogonal kinds of context. Pick the right one when reading or writing:
 
 | Axis | What | File | Lifecycle |
 |---|---|---|---|
 | **Time series (operation)** | What happened, in order | `<namespace>/log/YYYY-MM-DD.jsonl` | Append-only, broad |
 | **Cross-project knowledge** | Stable facts / decisions / lessons | `<namespace>/MEMORY.md` | Curated, narrow |
 | **Stable preferences** | User-level habits / rules | `<namespace>/PREFERENCES.md` | Curated, very narrow |
-| **Project snapshot (anatomy)** | What a project *looks like right now* | `<namespace>/anatomy/<slug>.{json,md}` | Manual by default; hook auto-refresh is opt-in |
 
-The log answers "what did I do"; anatomy answers "in what shape did I do it." The two are linked via `[[anatomy:<slug>/<rel>]]` references emitted automatically when `write-log --files` matches a registered project.
+The log answers "what did I do". Project structure snapshots (anatomy) have been split out into a separate skill, `using-anatomy`; see that skill for the project-snapshot dimension.
 
 ## Log JSONL Format
 
@@ -86,8 +84,6 @@ Each `<namespace>/log/YYYY-MM-DD.jsonl` file is newline-delimited JSON with one 
 | `files` | Optional list of related file paths |
 | `project` | Optional axis. Lowercase `[a-z0-9._-]`, 1..64 chars. Auto-routed from cwd or `--files` if omitted. Filterable via `search/load --project`. |
 | `topic` | Optional axis. Same shape as project. Auto-routed from text keywords + tag if omitted. Filterable via `search/load --topic`. |
-
-Within a `text` body, references like `[[anatomy:<slug>/<rel>]]` are emitted automatically when `--files` matches a registered project root, and search/load surface the matching anatomy snapshot under `anatomy_links` for each hit.
 
 ## Log Entry Body Schema
 
@@ -128,13 +124,12 @@ Use `scripts/memory_tool.py` when the host can run local scripts (run with `pyth
 
 ### Read
 
-- `load` — read the memory snapshot. Selectors for date / log window, docs filters (`--doc`/`--doc-type`/`--project`/`--topic`/`--doc-query`), and `--anatomy --cwd PATH`. Returns `log_entries` as parsed JSON.
+- `load` — read the memory snapshot. Selectors for date / log window and docs filters (`--doc`/`--doc-type`/`--project`/`--topic`/`--doc-query`). Returns `log_entries` as parsed JSON.
 - `search <query>` — full-text search across `docs/*.md`, `MEMORY.md`, and the namespace log. `--project` / `--topic` narrow scope (to log-only when either is set).
-- `maintain` — scan log for stale `files` refs + corrupt lines, repair `docs/index.json`, audit anatomy drift. `--distill` and `--promote TOPIC[/FAMILY]` drive the distillation pipeline (both read-only).
+- `maintain` — scan log for stale `files` refs + corrupt lines, repair `docs/index.json`. `--distill` and `--promote TOPIC[/FAMILY]` drive the distillation pipeline (both read-only).
 - `stats` — aggregate tag counts across log + `MEMORY.md`.
-- `status` — lifetime dashboard from `STATS.json` + anatomy index.
+- `status` — lifetime dashboard from `STATS.json`.
 - `export` — Markdown summary to stdout or `--dest FILE`.
-- `anatomy-list` / `anatomy-show <slug|root>` — list registered projects / print one rendered snapshot.
 
 ### Write
 
@@ -142,25 +137,6 @@ Use `scripts/memory_tool.py` when the host can run local scripts (run with `pyth
 - `write-memory` — append one curated `MEMORY.md` entry. Tags limited to `fact`, `decision`, `lesson`.
 - `write-preference` — append one stable `PREFERENCES.md` entry. Required: `--text`.
 - `upsert-doc` — write one `docs/*.md` + update `index.json`. Required: `--doc` plus `--text` / `--text-stdin`. `--link-log '[[log:YYYY-MM-DD#L<n>]]'` merges backlinks (repeatable).
-- `anatomy-register <root> [--slug NAME]` — register a project root (pointer only, no scan).
-- `anatomy-scan <slug|root>` — full re-scan (opt-in heavy; skip large vendored trees).
-- `anatomy-set <slug|root> <relpath> --desc TEXT` — pin a user description on one file.
-- `anatomy-upsert-file <abs-path>` — refresh/remove one file's entry (hook-driven; `--auto-register` opt-in).
-
-## Anatomy
-
-> **DEPRECATED.** Anatomy is frozen and no longer developed. Existing snapshots and `anatomy-*` commands still work (and print a deprecation notice), but do not build new workflows on it — it is off by default (`features.anatomy.*` default False). Prefer log/docs/memory for durable project context.
-
-Anatomy is the project-snapshot dimension at `<namespace>/anatomy/{_index.json, <slug>.json, <slug>.md}` (JSON is the source of truth; the `.md` is auto-rendered; each file entry stores `desc / desc_source (auto|user|empty) / tokens_est / kind / mtime`). It answers "what does this project contain?" without a full re-read each session.
-
-Core discipline:
-
-- **`anatomy-register` is cheap** — writes a pointer only, no file scan. Registration is manual, or automatic on the first edit inside a `.git` repo that has a project marker when both `features.anatomy.auto_register` and `post_tool_upsert` are enabled.
-- **`anatomy-scan` is an opt-in heavy operation** — it walks every indexable file. Skip it on projects with large vendored / build / thirdparty trees; they bloat the snapshot to tens of MB.
-- A registered-but-unscanned project still works: it fills lazily via PostToolUse `anatomy-upsert-file` (when enabled), or you pin load-bearing files with `anatomy-set`.
-- `desc_source=user` descriptions are preserved through every scan/upsert.
-
-Full details — growth-path lifecycle, the auto-registration gate + slug derivation, SessionStart attach behaviour, incremental maintenance and `new_files` drift — are in `references/anatomy.md`.
 
 ## Distillation Pipeline
 
@@ -184,18 +160,17 @@ Full details — the tag-family table, backlink semantics, hook internals, subag
 
 `<namespace>/STATS.json` is an event-driven counter file maintained by the hooks and the write-* commands. It contains real counts — no estimates, no synthetic "savings" numbers — for:
 
-- `sessions`, `anatomy_attached_count`, `anatomy_truncated_count`, `anatomy_hint_emitted`, `anatomy_attached_tokens_est` (rendered chars / 3.75), `anatomy_upserts`, `anatomy_auto_registered`
+- `sessions`
 - `log_entries_user` (write-log invocations whose `--source` is not `auto`), `log_entries_auto` (silent hook-driven summary appends, only when `logging.silent_summary: true`)
 - `stop_blocks`, `stop_throttled_passthrough`, `precompact_blocks`
 - `cumulative_human_turns` (Stop hook accumulates real human-turn deltas across sessions; powers distillation triggers)
 - `last_distill_check_ts`, `last_distill_inject_ts`, `last_distill_inject_turn`, `last_promote_ts` (timestamps and turn checkpoints used by the distillation pipeline; see Distillation Pipeline above)
 
-`memory_tool.py status` prints these along with two diagnostic ratios:
+`memory_tool.py status` prints these along with a diagnostic ratio:
 
-- `anatomy_hit_rate = anatomy_attached_count / sessions` — low values mean cwd rarely lands inside a registered project; consider running `anatomy-register` on more roots.
 - `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `logging.detail_turn_interval` or narrowing `logging.hard_gate`); near-zero values mean the hook is mostly passing through.
 
-Both ratios are diagnostic, not performance claims. The counters never assert "X% token savings" because the system has no real-API token visibility — it only knows what it injected and what it blocked.
+The ratio is diagnostic, not a performance claim. The counters never assert "X% token savings" because the system has no real-API token visibility — it only knows what it injected and what it blocked.
 
 ## Hook Behaviour
 
@@ -203,9 +178,9 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 
 | Event | Action |
 |---|---|
-| **SessionStart** | Inject memory-protocol reminder + compact saved-preferences summary + distillation candidates when due (see Distillation Pipeline). Inject anatomy snapshot/hint only when `features.anatomy.session_start_attach: true`. |
+| **SessionStart** | Inject memory-protocol reminder + compact saved-preferences summary + distillation candidates when due (see Distillation Pipeline). |
 | **UserPromptSubmit** | Set per-turn flag `prompt_mentions_memory` based on memory keyword regex; emit reminder when set. Does NOT reset session-lifetime counters. |
-| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For PostToolUse with a write/edit-style tool, call `anatomy-upsert-file` only when `features.anatomy.post_tool_upsert: true`; pass `--auto-register` only when `features.anatomy.auto_register: true`. |
+| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. |
 | **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final assistant message itself contains a memory write, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL (filtering out `tool_result` lists and synthetic `<system-reminder>` / `<command-message>` / `Stop hook feedback:` content), and accumulate the delta into `cumulative_human_turns` (idempotent). When the configured memory-prompt hard gate fires OR `delta = current_turns - last_save_turn ≥ logging.detail_turn_interval` (default 20) AND `not memory_written`, BLOCK with the standard write-gate reason — and append distillation candidates to that reason when due. Otherwise pass through. Silent `level=summary tag=progress source=auto` appends happen only when `logging.silent_summary: true`; optional `session_archive.enabled: true` writes a cold pointer to `<namespace>/sessions/index.jsonl`. |
 | **PreCompact** | Disabled. Previous versions BLOCKED compact to force a write-log/write-memory flush; this was observed to hang the compact pipeline and has been removed. The handler now returns `{}` unconditionally and the hook is unwired from `settings.json`. |
 
@@ -247,7 +222,7 @@ Never write:
 
 ## Maintenance Rules
 
-- `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, repair missing `<namespace>/docs/index.json` entries, and audit anatomy (`stale_files` / `new_files` per project + `broken_log_refs` for dead `[[anatomy:...]]` citations).
+- `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, and repair missing `<namespace>/docs/index.json` entries.
 - `search` / `stats` / `export` are available at any time for quick overview without modifying anything.
 - Distill useful patterns from log entries into curated long-term files during light maintenance moments. The automated path is `maintain --distill` -> `maintain --promote <topic>` -> subagent-driven `upsert-doc`; see "Distillation Pipeline" above for the two decision gates and trigger conditions.
 - Keep wording agent-agnostic so this skill can be used by both Codex and Claude Code without edits.
@@ -255,7 +230,6 @@ Never write:
 ## References
 
 - `references/cli-reference.md`: full `memory_tool.py` flag reference for every read/write command.
-- `references/anatomy.md`: anatomy growth-path lifecycle, auto-registration gate + slug derivation, SessionStart attach, incremental maintenance.
 - `references/distillation.md`: distillation tag-family table, backlink semantics, hook trigger internals, subagent prompt template, tuning constants.
 - `references/log-entry-examples.md`: full worked good/bad log-entry body examples.
 - `references/repo-layout.md`: read when discussing memory repo structure, file responsibilities, document metadata, or tag conventions.

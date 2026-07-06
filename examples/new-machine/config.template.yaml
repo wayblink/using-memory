@@ -16,13 +16,6 @@ defaults:
   read_yesterday: true
   load_docs_on_demand: true
 
-features:
-  anatomy:
-    enabled: false
-    session_start_attach: false
-    post_tool_upsert: false
-    auto_register: false
-
 logging:
   silent_summary: false
   detail_turn_interval: 20

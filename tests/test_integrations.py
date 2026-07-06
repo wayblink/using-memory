@@ -110,6 +110,5 @@ class IntegrationDocTests(unittest.TestCase):
             "/docs/<rel>/download",
             "/memory/download",
             "/preferences/download",
-            "/anatomy/<slug>/download?format=json|md",
         ]:
             self.assertIn(needle, text)

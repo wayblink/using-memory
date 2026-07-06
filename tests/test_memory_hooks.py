@@ -202,64 +202,6 @@ class MemoryHookTests(unittest.TestCase):
             self.assertIn("不要使用日语", hook_output["additionalContext"])
             self.assertNotIn("## Anatomy", hook_output["additionalContext"])
 
-    def test_post_tool_use_does_not_upsert_anatomy_by_default(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            config_path, _memory_root, scoped = self.write_memory_config(tmp_path)
-            project = tmp_path / "project"
-            project.mkdir()
-            (project / ".git").mkdir()
-            (project / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
-            target = project / "demo.py"
-
-            self.run_hook(
-                CODEX_HOOK,
-                {
-                    "session_id": "abc",
-                    "turn_id": "t1",
-                    "hook_event_name": "PostToolUse",
-                    "tool_name": "Write",
-                    "tool_input": {"file_path": str(target), "content": "print('hi')\n"},
-                },
-                tmp_path,
-                extra_env={"USING_MEMORY_CONFIG": str(config_path)},
-            )
-
-            self.assertFalse((scoped / "anatomy" / "_index.json").exists())
-
-    def test_post_tool_use_upserts_anatomy_when_enabled(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            config_path, _memory_root, scoped = self.write_memory_config(
-                tmp_path,
-                extra_config=(
-                    "features:\n"
-                    "  anatomy:\n"
-                    "    enabled: true\n"
-                ),
-            )
-            project = tmp_path / "project"
-            project.mkdir()
-            (project / ".git").mkdir()
-            (project / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
-            target = project / "demo.py"
-            target.write_text("print('hi')\n", encoding="utf-8")
-
-            self.run_hook(
-                CODEX_HOOK,
-                {
-                    "session_id": "abc",
-                    "turn_id": "t1",
-                    "hook_event_name": "PostToolUse",
-                    "tool_name": "Write",
-                    "tool_input": {"file_path": str(target), "content": "print('hi')\n"},
-                },
-                tmp_path,
-                extra_env={"USING_MEMORY_CONFIG": str(config_path)},
-            )
-
-            self.assertTrue((scoped / "anatomy" / "_index.json").exists())
-
     def test_stop_does_not_write_silent_summary_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

@@ -120,7 +120,7 @@ class MemoryAdapter:
         Default adapter: returns self.config_path unchanged. Alternate-namespace
         adapter: writes a temp config (once) with ``namespace`` rewritten on
         every root. ``writable`` is left untouched because several read-only
-        do_* paths (do_status, do_anatomy_list, do_maintain --distill) call
+        do_* paths (do_status, do_maintain --distill) call
         ``load_primary_for_write`` internally and require ``writable: true``
         on the primary root even though they don't actually mutate state.
         Write-gating happens one layer up via ``_require_writable()``.
@@ -186,9 +186,7 @@ class MemoryAdapter:
         doc_type: str | None = None,
         doc_tags: list[str] | None = None,
         doc_query: str | None = None,
-        anatomy: bool = False,
         cwd: str | None = None,
-        anatomy_max_tokens: int | None = None,
     ) -> dict:
         ns = self._ns(
             date=date,
@@ -203,9 +201,7 @@ class MemoryAdapter:
             doc_type=doc_type,
             doc_tag=doc_tags or [],
             doc_query=doc_query,
-            anatomy=anatomy,
             cwd=cwd,
-            anatomy_max_tokens=anatomy_max_tokens,
         )
         return self._mt.do_load(ns)
 
@@ -232,15 +228,12 @@ class MemoryAdapter:
         )
         return self._mt.do_search(ns)
 
-    def anatomy_list(self) -> dict:
-        return self._mt.do_anatomy_list(self._ns(json=True))
-
     def maintain(self) -> dict:
         """Run the full maintain audit (no --distill, no --promote).
 
         Returns the structured report (stale files, corrupt jsonl lines, doc
-        index repairs, anatomy drift). Requires the default writable namespace
-        because do_maintain calls load_primary_for_write internally.
+        index repairs). Requires the default writable namespace because
+        do_maintain calls load_primary_for_write internally.
         """
         self._require_writable()
         ns = self._ns(
@@ -266,25 +259,6 @@ class MemoryAdapter:
             json=True,
         )
         return self._mt.do_maintain(ns)
-
-    def anatomy_show(self, slug: str) -> dict | None:
-        """Return the structured anatomy JSON for one project.
-
-        memory_tool.do_anatomy_show returns the rendered markdown text only
-        (slug / md_path / content), which is fine for SessionStart attach but
-        useless for the web UI's file table. We read the .json source of
-        truth directly so routes can render rows with desc / kind / tokens.
-        """
-        root = self.primary_root()
-        if root is None:
-            return None
-        json_path = root / "anatomy" / f"{slug}.json"
-        if not json_path.exists():
-            return None
-        try:
-            return json.loads(json_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
 
     def namespace_file_path(self, relative: str) -> Path | None:
         """Return a safe absolute path for a namespace-scoped file."""
@@ -333,12 +307,6 @@ class MemoryAdapter:
             if candidate.exists() and candidate.is_file():
                 return candidate
         return None
-
-    def anatomy_file_path(self, slug: str, fmt: str = "json") -> Path | None:
-        fmt = (fmt or "").strip().lower()
-        if fmt not in {"json", "md"}:
-            return None
-        return self.namespace_file_path(f"anatomy/{slug}.{fmt}")
 
     # --- Write operations ---------------------------------------------------
     #
@@ -720,7 +688,7 @@ def _fallback_type(ext: str) -> str:
 # any of them; the default — read from config — is writable, the rest are not.
 
 
-_NAMESPACE_MARKERS = ("MEMORY.md", "PREFERENCES.md", "log", "docs", "anatomy")
+_NAMESPACE_MARKERS = ("MEMORY.md", "PREFERENCES.md", "log", "docs")
 
 
 def _looks_like_namespace_dir(p: Path) -> bool:

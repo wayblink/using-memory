@@ -298,7 +298,7 @@ html[data-width-mode="wide"] .content {
   gap: 12px;
   margin-bottom: 28px;
 }
-/* Fixed 4-col variant for the compact lifetime + anatomy rows */
+/* Fixed 4-col variant for the compact lifetime stat rows */
 .stat-grid-4 {
   grid-template-columns: repeat(4, 1fr);
 }
@@ -561,27 +561,6 @@ html[data-width-mode="wide"] .markdown {
   color: var(--text-muted);
   margin-top: 2px;
 }
-
-/* Anatomy */
-.file-tree {
-  font-family: var(--mono);
-  font-size: 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.file-row {
-  display: grid;
-  grid-template-columns: 1.6fr 3fr 80px 80px;
-  gap: 12px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.file-row:last-child { border-bottom: none; }
-.file-row:nth-child(even) { background: var(--bg-soft); }
-.file-row .rel { color: var(--text); }
-.file-row .desc { color: var(--text-soft); white-space: normal; font-family: var(--sans); }
-.file-row .kind { color: var(--text-muted); }
-.file-row .tokens { color: var(--text-muted); text-align: right; }
 
 .warning {
   border: 1px solid #f6c89f;
@@ -989,30 +968,6 @@ mark {
   padding: 20px 24px;
   background: linear-gradient(135deg, #f5fbff 0%, var(--bg) 60%);
 }
-
-/* Anatomy block — visually groups the 4 anatomy stat cards (incl. the
-   savings popover card) and the registered-projects list, without a heavy
-   outer border. Internal cards use their own borders for definition. */
-.anatomy-block {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.anatomy-block .stat-grid {
-  margin: 0;
-}
-.anatomy-block .anatomy-projects {
-  margin: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 8px 12px;
-}
-.anatomy-block .anatomy-projects li {
-  border-bottom: 1px solid var(--border);
-  padding: 8px 4px;
-}
-.anatomy-block .anatomy-projects li:last-child { border-bottom: none; }
 
 /* Savings card variant with ? popover */
 .stat-savings .value {

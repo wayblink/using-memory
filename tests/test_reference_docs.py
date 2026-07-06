@@ -49,7 +49,6 @@ class ReferenceDocTests(unittest.TestCase):
             "<namespace>/MEMORY.md",
             "<namespace>/PREFERENCES.md",
             "<namespace>/docs/index.json",
-            "<namespace>/anatomy/",
             "<namespace>/STATS.json",
             "<namespace>/log/",
             "<namespace>/sessions/index.jsonl",
@@ -89,10 +88,6 @@ class ReferenceDocTests(unittest.TestCase):
                 "      2026-04-13.jsonl",
                 "    sessions/",
                 "      index.jsonl",
-                "    anatomy/",
-                "      _index.json",
-                "      spark-ann.json",
-                "      spark-ann.md",
             ]
         )
         self.assertEqual(
@@ -114,7 +109,6 @@ class ReferenceDocTests(unittest.TestCase):
             "`<namespace>/sessions/index.jsonl`",
             "`<namespace>/docs/`",
             "`<namespace>/docs/index.json`",
-            "`<namespace>/anatomy/`",
             "`<namespace>/STATS.json`",
         ]:
             with self.subTest(resource=resource):
@@ -176,7 +170,6 @@ class ReferenceDocTests(unittest.TestCase):
             "durable_memory",
             "doc_hits",
             "sources",
-            "anatomy",
             "`level`",
             "skip",
             "log_detail",

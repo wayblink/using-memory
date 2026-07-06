@@ -81,11 +81,7 @@ class SkillDocTests(unittest.TestCase):
             "`--log-days`",
             "`--log-query`",
             "`--doc` / `--doc-type` / `--doc-tag` / `--project` / `--topic` / `--doc-query`",
-            "`--anatomy`",
             "`status`",
-            "`anatomy-list`",
-            "`anatomy-register",
-            "`anatomy-scan",
         ]:
             with self.subTest(command=command):
                 self.assertIn(command, combined)
@@ -100,7 +96,6 @@ class SkillDocTests(unittest.TestCase):
             "## Config Resolution",
             "## Session Snapshot",
             "## Memory Dimensions",
-            "## Anatomy",
             "## Health Dashboard",
             "## Hook Behaviour",
             "references/repo-layout.md",
@@ -116,7 +111,6 @@ class SkillDocTests(unittest.TestCase):
             "log_entries",
             "doc_hits",
             "sources",
-            "anatomy",
             "skip",
             "log_detail",
             "log_summary",

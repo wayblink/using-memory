@@ -2,7 +2,7 @@
 
 Local web browser + lightweight editor for the [using-memory](..) skill.
 Browse and edit log entries, docs (markdown + HTML), `MEMORY.md`,
-`PREFERENCES.md`, anatomy snapshots, download underlying files, and run full-text search across them.
+`PREFERENCES.md`, download underlying files, and run full-text search across them.
 Bilingual UI (English / Chinese).
 
 ## Install
@@ -43,7 +43,7 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 
 | Path | What |
 |---|---|
-| `/` | Dashboard — STATS.json counters, ratios, anatomy index, **estimated tokens kept out of context** |
+| `/` | Dashboard — STATS.json counters, ratios, **estimated tokens kept out of context** |
 | `/logs` | JSONL log entries, markdown-rendered, filters: date / days / tag / level / source / project / topic / text |
 | `/search?q=…` | Full-text across docs, `MEMORY.md`, and the log window. Each hit is a clickable card |
 | `/docs` | Every `.md` and `.html` under `<ns>/docs/`, with type / format / project / tag / indexed / title filters |
@@ -59,9 +59,6 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 | `/preferences` | `PREFERENCES.md` rendered + Append-preference form |
 | `/preferences/download` | Download `PREFERENCES.md` |
 | `POST /preferences/append` | Append via `memory_tool.write-preference` |
-| `/anatomy` | Registered anatomy projects |
-| `/anatomy/<slug>` | File-level snapshot for one project (reads `<ns>/anatomy/<slug>.json` directly) |
-| `/anatomy/<slug>/download?format=json|md` | Download one anatomy snapshot file |
 | `/lang/{en,zh}` | Set language cookie + redirect back |
 | `/favicon.ico` · `/static/favicon.svg` | SVG favicon (also referenced via `<link rel="icon">`) |
 
@@ -97,8 +94,8 @@ Bullets, code spans, fenced code, links all render normally.
 ## Editing
 
 Three forms wrap the underlying `memory_tool.py` write commands. All
-flow through the adapter (no subprocess), so `STATS.json` counters,
-anatomy backlinks, and `docs/index.json` stay consistent with the CLI:
+flow through the adapter (no subprocess), so `STATS.json` counters
+and `docs/index.json` stay consistent with the CLI:
 
 - **MEMORY.md** → `write-memory`. Tag restricted to `fact` / `decision`
   / `lesson` (the only values `memory_tool` accepts).
@@ -123,17 +120,16 @@ translated; only UI chrome.
 
 ## Dashboard
 
-- **Lifetime counters** (12 cards): sessions, cumulative turns, log
-  entries total / user / auto, MEMORY entries, anatomy projects /
-  attached / upserts, stop blocks / passthroughs, PreCompact saves.
+- **Lifetime counters**: sessions, cumulative turns, log
+  entries total / user / auto, MEMORY entries, stop blocks /
+  passthroughs, PreCompact saves.
 - **Estimated tokens kept out of context** (rough): sums
-  `anatomy_attached_tokens_est` + `log_entries_auto × 400` + `stop_blocks × 200`.
+  `log_entries_auto × 400` + `stop_blocks × 200`.
   Each component is shown with its input counter and heuristic factor.
   Disclaimer makes clear the skill has no real API token visibility.
 - **Tag charts**: log tags (blue) and MEMORY.md tags (orange) sorted
   by count, rendered as horizontal bars. Log-tag rows are clickable —
   they jump to `/logs?days=180&tag=<tag>`.
-- **Anatomy projects** list at the bottom.
 
 ## Architecture
 
@@ -149,7 +145,7 @@ memory_web.app       ── FastAPI factory; lang middleware; /lang/{code};
                        /favicon.ico; static mount; router mounts
         ▲
 memory_web.routes.*  ── one router per page (dashboard, logs, search,
-                       docs, memory, preferences, anatomy)
+                       docs, memory, preferences)
         ▲
 templates/*.html     ── Jinja2, all UI strings via t('key')
 static/style.css     ── single stylesheet, no JS framework
@@ -160,9 +156,7 @@ Implementation notes:
 
 - FastAPI's auto-generated `/docs` Swagger UI is disabled
   (`docs_url=None`) so our docs browser owns that path.
-- The adapter loads `scripts/memory_tool.py` once per process. Anatomy
-  detail reads `<ns>/anatomy/<slug>.json` directly because
-  `do_anatomy_show` only returns rendered markdown.
+- The adapter loads `scripts/memory_tool.py` once per process.
 - `do_search`'s hits use `source` values `docs` / `MEMORY.md` / `log`;
   the route normalizes them via a `source_map` into the template's
   `docs` / `memory` / `log` buckets.

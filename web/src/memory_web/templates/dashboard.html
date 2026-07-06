@@ -47,9 +47,7 @@
       {{ t('dashboard.maintain.summary',
             stale=maintenance.last_summary.get('stale', 0),
             corrupt=maintenance.last_summary.get('corrupt', 0),
-            repaired=maintenance.last_summary.get('repaired', 0),
-            broken=maintenance.last_summary.get('broken_log_refs', 0),
-            drift=maintenance.last_summary.get('anatomy_projects_with_drift', 0)) }}
+            repaired=maintenance.last_summary.get('repaired', 0)) }}
     </div>
   {% endif %}
   {% if maintenance.last_status == 'error' and maintenance.last_error %}
@@ -149,24 +147,7 @@
   </section>
 </div>
 
-<h2 class="section-label" style="margin-top:28px;">{{ t('dashboard.anatomy_section') }}</h2>
-<div class="anatomy-block">
-  <section class="stat-grid">
-    <div class="stat">
-      <div class="label">{{ t('dashboard.card.anatomy_projects') }}</div>
-      <div class="value">{{ anatomy_count }}</div>
-      <div class="hint">{{ t('dashboard.card.anatomy_projects.hint') }}</div>
-    </div>
-    <div class="stat">
-      <div class="label">{{ t('dashboard.card.anatomy_attached') }}</div>
-      <div class="value">{{ lifetime.get('anatomy_attached_count', 0) }}</div>
-      <div class="hint">{{ t('dashboard.card.anatomy_attached.hint', pct='%.0f' % ((ratios.get('anatomy_hit_rate') or 0) * 100)) }}</div>
-    </div>
-    <div class="stat">
-      <div class="label">{{ t('dashboard.card.anatomy_upserts') }}</div>
-      <div class="value">{{ lifetime.get('anatomy_upserts', 0) }}</div>
-      <div class="hint">{{ t('dashboard.card.anatomy_upserts.hint') }}</div>
-    </div>
+<section class="stat-grid">
     <div class="stat stat-savings">
       <details class="stat-help">
         <summary aria-label="show breakdown" title="{{ t('dashboard.savings.title') }}">
@@ -180,13 +161,6 @@
           <div class="popover-title">{{ t('dashboard.savings.title') }}</div>
           <p class="savings-disclaimer small">{{ t('dashboard.savings.disclaimer') }}</p>
           <div class="savings-rows">
-            <div class="savings-row">
-              <div class="savings-row-head">
-                <span class="savings-row-label">{{ t('dashboard.savings.anatomy') }}</span>
-                <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.anatomy) }}</span>
-              </div>
-              <div class="small savings-row-hint">{{ t('dashboard.savings.anatomy.hint') }}</div>
-            </div>
             <div class="savings-row">
               <div class="savings-row-head">
                 <span class="savings-row-label">{{ t('dashboard.savings.auto_summary') }}</span>
@@ -209,18 +183,4 @@
       <div class="hint">{{ t('dashboard.card.savings.hint') }}</div>
     </div>
   </section>
-
-  {% if anatomy_projects %}
-  <ul class="docs-list anatomy-projects">
-    {% for p in anatomy_projects %}
-      <li>
-        <div class="title"><a href="/anatomy/{{ p.slug }}">{{ p.slug }}</a></div>
-        <div class="meta">{{ p.root }} · {{ p.files }} files · {{ p.tokens_est }} tokens · scanned {{ p.scanned_at or '(not scanned)' }}</div>
-      </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <div class="empty">{{ t('dashboard.empty.anatomy') }}</div>
-  {% endif %}
-</div>
 {% endblock %}

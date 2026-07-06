@@ -45,13 +45,6 @@ The default config path is `~/.skills/using-memory/config.yaml`. Run `python3 sc
 Fresh setup writes the hook tuning fields below. Existing installs that do not contain these fields still get the same defaults from `memory_hook_common.py`; copy this block into `config.yaml` when you want explicit per-machine control:
 
 ```yaml
-features:
-  anatomy:
-    enabled: false
-    session_start_attach: false
-    post_tool_upsert: false
-    auto_register: false
-
 logging:
   silent_summary: false
   detail_turn_interval: 20
@@ -223,7 +216,6 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 ### Hook behavior and limits
 
 - `SessionStart` and memory-relevant `UserPromptSubmit` add context reminding the agent to use the skill. SessionStart also injects a compact saved-preferences summary so host-level reply rules such as language preference are visible before the first answer.
-- Anatomy SessionStart attach and PostToolUse upsert are disabled by default. Enable `features.anatomy.session_start_attach`, `features.anatomy.post_tool_upsert`, and optionally `features.anatomy.auto_register` only on machines where the snapshot cost is worth it.
 - `PostToolUse` and Claude's `PostToolBatch` mark the turn as log-worthy when commands, edits, builds, tests, commits, pushes, deployments, hook/config changes, failures, or fixes appear.
 - `Stop` is the enforcement point: when the main agent is about to finish, the hook returns `decision: "block"` if the configured memory-prompt gate or important-turn interval fires and no `memory_tool.py write-log`, `write-memory`, `write-preference`, or `upsert-doc` was observed. The default interval is 20 real human turns.
 - `stop_hook_active` is honored to prevent infinite loops after the agent continues from a Stop hook.

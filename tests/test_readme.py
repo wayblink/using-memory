@@ -13,7 +13,6 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn("memory_roots:", text)
         self.assertIn("role: primary", text)
         # V2.0+ layers
-        self.assertIn("<namespace>/anatomy/", text)
         self.assertIn("<namespace>/STATS.json", text)
         # Legacy local/ files were removed in V2.3; the README must not
         # advertise them anymore.
@@ -59,12 +58,6 @@ class ReadmeTests(unittest.TestCase):
             "write-memory",
             "write-preference",
             "upsert-doc",
-            "anatomy-register",
-            "anatomy-scan",
-            "anatomy-show",
-            "anatomy-set",
-            "anatomy-list",
-            "anatomy-upsert-file",
         ]:
             with self.subTest(command=command):
                 self.assertIn(f"`{command}`", text)

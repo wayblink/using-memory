@@ -24,7 +24,6 @@ class MemoryWebDownloadTests(unittest.TestCase):
         self.memory_root = base / "memories"
         ns_root = self.memory_root / "main"
         (ns_root / "docs").mkdir(parents=True)
-        (ns_root / "anatomy").mkdir(parents=True)
         (ns_root / "log").mkdir()
 
         (ns_root / "MEMORY.md").write_text(
@@ -41,14 +40,6 @@ class MemoryWebDownloadTests(unittest.TestCase):
         )
         (ns_root / "docs" / "index.json").write_text(
             '{"version":1,"documents":[{"path":"workflow.md","title":"Workflow","type":"wiki","created":"2026-06-20","modified":"2026-06-29","projects":[],"tags":[],"summary":"doc"}]}\n',
-            encoding="utf-8",
-        )
-        (ns_root / "anatomy" / "demo.json").write_text(
-            '{"root":"/tmp/demo","scanned_at":"2026-06-29T10:00:00+08:00","totals":{"files":1,"tokens_est":10},"files":{"src/app.py":{"desc":"entry","kind":"code","tokens_est":10}}}\n',
-            encoding="utf-8",
-        )
-        (ns_root / "anatomy" / "demo.md").write_text(
-            "# Anatomy demo\n\n- src/app.py\n",
             encoding="utf-8",
         )
 
@@ -101,17 +92,6 @@ class MemoryWebDownloadTests(unittest.TestCase):
         self.assertEqual(pref_resp.status_code, 200)
         self.assertIn('attachment; filename="PREFERENCES.md"', pref_resp.headers.get("content-disposition", ""))
         self.assertIn("Prefer file downloads", pref_resp.text)
-
-    def test_anatomy_download_supports_both_formats(self):
-        json_resp = self.client.get("/anatomy/demo/download?format=json")
-        self.assertEqual(json_resp.status_code, 200)
-        self.assertIn('attachment; filename="demo.json"', json_resp.headers.get("content-disposition", ""))
-        self.assertIn('"root":"/tmp/demo"', json_resp.text)
-
-        md_resp = self.client.get("/anatomy/demo/download?format=md")
-        self.assertEqual(md_resp.status_code, 200)
-        self.assertIn('attachment; filename="demo.md"', md_resp.headers.get("content-disposition", ""))
-        self.assertIn("# Anatomy demo", md_resp.text)
 
     def test_doc_download_rejects_path_traversal(self):
         resp = self.client.get("/docs/../../secret/download")

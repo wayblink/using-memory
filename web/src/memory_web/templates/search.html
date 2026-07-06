@@ -77,14 +77,6 @@
             {% if h.get('snippet') %}
               <pre class="search-snippet">{{ h.snippet }}</pre>
             {% endif %}
-            {% if h.get('anatomy_links') %}
-              <div class="small" style="margin-top:6px;">
-                <strong>anatomy:</strong>
-                {% for link in h.anatomy_links %}
-                  <span class="tag" title="{{ link.desc }}">{{ link.slug }}/{{ link.rel }}</span>
-                {% endfor %}
-              </div>
-            {% endif %}
           </article>
         </a>
       {% endfor %}

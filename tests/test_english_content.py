@@ -19,6 +19,8 @@ EXEMPT_DIR_PARTS = {
     ".mypy_cache",
     "node_modules",
     "egg-info",
+    "tmp",
+    "output",
 }
 
 # Files/subtrees that legitimately contain non-English text. The English-only

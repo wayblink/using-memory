@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from .adapter import MemoryAdapter, NamespaceRegistry
 from .i18n import COOKIE_NAME, SUPPORTED, lang_context, resolve_lang
 from .maintenance import MaintenanceScheduler, read_interval_from_env
-from .routes import admin, anatomy, dashboard, docs, downloads, logs, memory, preferences, search
+from .routes import admin, dashboard, docs, downloads, logs, memory, preferences, search
 
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -22,16 +22,15 @@ _PKG_DIR = Path(__file__).resolve().parent
 NAMESPACE_COOKIE = "memory_web_ns"
 
 # Section roots that are guaranteed to render without entity lookup, so they
-# stay valid after switching namespaces. Anything deeper (``/docs/<slug>``,
-# ``/anatomy/<slug>``) is collapsed to its section root because the slug
-# usually does not exist in the sibling namespace.
+# stay valid after switching namespaces. Anything deeper (``/docs/<slug>``)
+# is collapsed to its section root because the slug usually does not exist in
+# the sibling namespace.
 _NAMESPACE_SAFE_ROOTS = frozenset({
     "/",
     "/docs",
     "/logs",
     "/memory",
     "/preferences",
-    "/anatomy",
     "/search",
 })
 
@@ -222,7 +221,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
     app.include_router(docs.router)
     app.include_router(memory.router)
     app.include_router(preferences.router)
-    app.include_router(anatomy.router)
     app.include_router(admin.router)
 
     return app
