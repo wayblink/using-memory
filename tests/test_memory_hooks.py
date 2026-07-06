@@ -79,6 +79,29 @@ class MemoryHookTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout or "{}")
 
+    def test_run_swallows_unexpected_errors_and_never_blocks(self):
+        # A memory hook must never block or disrupt the host session. Even if an
+        # internal step raises an unexpected (non-OSError) exception, run() must
+        # emit an empty JSON object and exit 0 rather than propagate a traceback.
+        import io
+        import contextlib
+        import importlib.util
+        from unittest import mock
+
+        spec = importlib.util.spec_from_file_location(
+            "memory_hook_common_under_test",
+            ROOT / "scripts" / "hooks" / "memory_hook_common.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        buf = io.StringIO()
+        with mock.patch.object(mod, "load_payload", side_effect=RuntimeError("boom")):
+            with contextlib.redirect_stdout(buf):
+                rc = mod.run("generic")
+        self.assertEqual(rc, 0)
+        self.assertEqual(buf.getvalue().strip(), "{}")
+
     def test_codex_stop_blocks_when_operation_has_no_memory_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_dir = Path(tmp)

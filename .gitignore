@@ -34,3 +34,10 @@ htmlcov/
 
 # Playwright MCP scratch (browser snapshots, console logs)
 .playwright-mcp/
+
+# Generated screenshots (root-level UI captures)
+/*.png
+
+# Scratch / generated output dirs
+/output/
+/tmp/

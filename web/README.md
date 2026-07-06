@@ -3,7 +3,7 @@
 Local web browser + lightweight editor for the [using-memory](..) skill.
 Browse and edit log entries, docs (markdown + HTML), `MEMORY.md`,
 `PREFERENCES.md`, anatomy snapshots, download underlying files, and run full-text search across them.
-Bilingual UI (English / 中文).
+Bilingual UI (English / Chinese).
 
 ## Install
 

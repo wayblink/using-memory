@@ -106,8 +106,14 @@ def load_state(payload: dict[str, Any], host: str) -> dict[str, Any]:
 
 
 def save_state(payload: dict[str, Any], host: str, state: dict[str, Any]) -> None:
-    path = state_path(payload, host)
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        path = state_path(payload, host)
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        # Best-effort: a failed state write (disk full, permissions, etc.) must
+        # not break the hook. Counters may drift for this fire, but the session
+        # is never disrupted. The top-level guard in run() is the final catch.
+        pass
 
 
 def stringify(value: Any, limit: int = 4000) -> str:
@@ -1017,7 +1023,7 @@ def archive_session_pointer(
         return False
 
 
-def run(host: str) -> int:
+def _run_impl(host: str) -> int:
     payload = load_payload()
     event = event_name(payload)
     state = load_state(payload, host)
@@ -1192,6 +1198,24 @@ def run(host: str) -> int:
 
     print("{}")
     return 0
+
+
+def run(host: str) -> int:
+    """Top-level hook entrypoint.
+
+    Wraps the real handler so that ANY unhandled exception is swallowed and the
+    hook still emits an empty JSON object with exit code 0. A memory hook must
+    never block or disrupt the host session: a non-zero exit or a traceback on
+    stdout/stderr can be interpreted by Claude Code as a Stop-hook block reason.
+    """
+    try:
+        return _run_impl(host)
+    except Exception:
+        try:
+            print("{}")
+        except Exception:
+            pass
+        return 0
 
 
 if __name__ == "__main__":

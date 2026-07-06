@@ -118,179 +118,67 @@ For `note`, `lesson`, `fact`, `insight`, `pattern`, `context`: structure is reco
 - Prefer absolute paths in `files` when the entry references files outside the memory repo.
 - `files` is for `maintain` stale-detection and grep indexing; it does not replace listing paths inline in the body.
 
-### Good example
+### Examples
 
-```text
-## Spark Java 17 image build pushed to dev branch, registry push blocked
-
-Context
-- Triggered by user request 2026-05-13: produce a Java 17 Spark image consumable by Kyuubi prod and DolphinScheduler.
-- Branch: spark-3.5.7-java17-image-c93fa99e, base commit c93fa99e8254. Continues the 2026-05-13 12:53 build log entry.
-
-Operations
-- Edited `/data/workspace/spark/pom.xml` and `/data/workspace/spark/assembly/pom.xml`: set `java.version=17`, removed legacy `--add-opens` entries.
-- Ran `/data/workspace/spark/build-spark-image-local.sh` after `export SPARK_HOME=/data/workspace/spark/dist` to stop `docker-image-tool` from picking up `/opt/spark` from the host.
-- Built images `hub.i.basemind.com/spark/spark:3.5.7-STEP-rc2-c93fa99e8254-java17` (b2015d776c99, 1.47GB) and `spark-py:<same tag>` (d211d518df6c, 1.54GB).
-- Committed and pushed at 178c3a2b2d on origin/spark-3.5.7-java17-image-c93fa99e.
-
-Verification
-- Local smoke: Ubuntu 22.04 jammy, Java 17.0.18, Spark 3.5.7-STEP-rc2, PySpark import OK, SparkPi OK.
-- Registry push: BLOCKED. `hub.i.basemind.com/spark/{spark,spark-py}` → 401 unauthorized; `registry.platform.shaipower.com/spark/*` → denied; `hub.i.basemind.com/wanganyang/*` project does not exist.
-- Kyuubi prod baseline still alive: beeline `jdbc:hive2://10.130.33.104:10009/default`, `SELECT 1` → 1, app `spark-2c2f46fe193841378c26a7a6eb3772a5`.
-- Prod validation of the new image: NOT RUN, image is not yet pushable.
-
-Decisions / Open
-- Need a writable registry path before prod can pull the new image. Ask user: which `hub.i.basemind.com` namespace has push rights for this account; or stand up a personal Harbor project.
-- Until then, image lives only on the local host.
-```
-
-### Bad example — do not write entries that look like this
-
-```text
-Built local Java17 Spark image; smoke passed; not pushed yet.
-```
-
-This skips Context, hides which paths were touched, omits commit SHA, omits the failure mode (`not pushed yet` does not say why), and is unreproducible. A future session must re-investigate from scratch.
+A full worked example (well-formed Spark image build with a blocked registry push) plus the flat one-liner it replaces are in `references/log-entry-examples.md`. Do not write flat one-liners like `Built local Java17 Spark image; smoke passed; not pushed yet.` — they skip Context, hide which paths were touched, omit the commit SHA and the real failure mode, and force a future session to re-investigate from scratch.
 
 ## Memory Tool Commands
 
-Use `scripts/memory_tool.py` when the host can run local scripts. Prefer executing it directly or with `python3`; do not assume a `python` shim exists.
+Use `scripts/memory_tool.py` when the host can run local scripts (run with `python3`; do not assume a `python` shim). Every command takes `--config` (or falls back to `USING_MEMORY_CONFIG` / the default yaml). **Full flag reference: `references/cli-reference.md`** — read it when you need exact selectors.
 
 ### Read
 
-- `load`: read memory snapshot. Key selectors: `--config`, `--date`, `--json`, `--log-from` + `--log-to`, `--log-days`, `--log-query`, `--doc` / `--doc-type` / `--doc-tag` / `--project` / `--topic` / `--doc-query`, `--anatomy` / `--cwd PATH` / `--anatomy-max-tokens N`. Returns `log_entries` as a parsed JSON list from the primary repo's configured namespace log. With `--anatomy`, also returns an `anatomy` block matched against cwd.
-- `search <query>`: full-text search across `<namespace>/docs/*.md`, `<namespace>/MEMORY.md`, and the configured namespace log. Docs and memory cover primary plus reference roots; log covers the primary root's configured namespace only. Flags: `--config`, `--log-days N`, `--no-docs`, `--no-memory`, `--no-log`, `--project` / `--topic` (repeatable; same axis is OR, different axes are AND; **scope reduces to log-only when either is set**), `--json`. Hits whose text contains `[[anatomy:slug/rel]]` references include an `anatomy_links` field with the resolved snapshot description.
-- `maintain`: default mode scans the configured namespace log for stale `files` references and corrupt JSON lines, repairs missing `<namespace>/docs/index.json` entries, and audits anatomy projects (per-project `stale_files` / `new_files` drift, plus `broken_log_refs` for `[[anatomy:...]]` citations whose targets no longer exist). Generated doc entries use minimal metadata only: title from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Flags: `--config`, `--json`.
-  - `maintain --distill`: read-only bucket analysis for the log-to-doc distillation pipeline. Groups unpromoted log entries by `(topic, tag-family)`, filters by `--min-entries` (default 3) and `--min-days` (default 3), scores, and returns candidate buckets ready for synthesis into a doc. Updates `last_distill_check_ts` only — never writes log or docs. See "Distillation Pipeline" below.
-  - `maintain --promote TOPIC[/FAMILY]`: read-only synthesis of one bucket. Re-reads the full source-entry bodies, attaches the suggested `--doc / --doc-type / --project` and full `--link-log` ref list, and prints a structured prompt suitable for a subagent to read, decide, and (on yes) call `upsert-doc`. Never writes docs itself.
-- `stats`: aggregate tag counts across the configured namespace log and `<namespace>/MEMORY.md`. Flags: `--config`, `--json`.
-- `status`: lifetime dashboard. Reads `<namespace>/STATS.json` (real event counters incremented by hooks and write-* commands — never estimated) plus the anatomy index, prints session counts / anatomy attaches / log writes / hook blocks / hook passthroughs plus two diagnostic ratios (`anatomy_hit_rate`, `stop_block_ratio`). Flags: `--config`, `--json` (raw dict instead of dashboard).
-- `export`: format a Markdown summary; stdout by default or `--dest FILE` to append. Flags: `--config`, `--dest`, `--json`.
-- `anatomy-list`: list registered anatomy projects with file/token counts. Flags: `--config`, `--json`.
-- `anatomy-show <slug|root>`: print the rendered anatomy markdown for a project. Errors if the project has not been scanned yet.
+- `load` — read the memory snapshot. Selectors for date / log window, docs filters (`--doc`/`--doc-type`/`--project`/`--topic`/`--doc-query`), and `--anatomy --cwd PATH`. Returns `log_entries` as parsed JSON.
+- `search <query>` — full-text search across `docs/*.md`, `MEMORY.md`, and the namespace log. `--project` / `--topic` narrow scope (to log-only when either is set).
+- `maintain` — scan log for stale `files` refs + corrupt lines, repair `docs/index.json`, audit anatomy drift. `--distill` and `--promote TOPIC[/FAMILY]` drive the distillation pipeline (both read-only).
+- `stats` — aggregate tag counts across log + `MEMORY.md`.
+- `status` — lifetime dashboard from `STATS.json` + anatomy index.
+- `export` — Markdown summary to stdout or `--dest FILE`.
+- `anatomy-list` / `anatomy-show <slug|root>` — list registered projects / print one rendered snapshot.
 
 ### Write
 
-- `write-log`: append one primary JSONL entry. Required: `--config`, `--date`, `--tag`, `--text`. Optional: `--level detail|summary`, `--confidence 1-10`, `--source TEXT`, `--files path1 --files path2`, `--project SLUG`, `--topic SLUG`, `--cwd PATH` (override auto-routing context). When `--project` / `--topic` are omitted, they are auto-routed: project from cwd → registered anatomy slug, falling back to first matching `--files`; topic from text keywords (with `commit` / `deploy` / `release` / `build` / `test` tags short-circuiting to themselves). Allowed tags: `operation`, `progress`, `milestone`, `state`, `result`, `output`, `verification`, `issue`, `debug`, `error`, `fix`, `decision`, `analysis`, `consideration`, `build`, `deploy`, `release`, `commit`, `test`, `benchmark`, `lesson`, `fact`, `pattern`, `insight`, `note`, `context`.
-- `write-memory`: append one curated `<namespace>/MEMORY.md` entry. Required: `--config`, `--date`, `--tag`, `--text`; `write-memory` accepts only `fact`, `decision`, and `lesson`.
-- `write-preference`: append one stable `<namespace>/PREFERENCES.md` entry. Required: `--config`, `--text`.
-- `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--doc`, plus `--text` OR `--text-stdin`. Optional with auto-fallback: `--config` (env / default yaml), `--title` (first H1 in text → slug-derived), `--doc-type` (defaults to `wiki`; common: `wiki`, `lesson`, `troubleshooting`, `decision-record`, `runbook`, `SOP`, `project`), `--modified` (defaults to today). Optional metadata: `--project`, `--doc-tag`, `--summary`. Optional backlinks: `--link-log '[[log:YYYY-MM-DD#L<n>]]'` (repeatable; appends/merges a `## Related log entries` section, deduped). The distillation pipeline emits one `--link-log` per source entry so promoted log entries can be filtered out on the next distill pass.
-- `anatomy-register <root> [--slug NAME]`: register a project root for anatomy snapshots. Cheap: writes a pointer into `_index.json` only and does **not** scan files. Slug must be unique; conflicts error out and require explicit `--slug`. Same root re-registered with the same slug is idempotent. The snapshot can fill lazily via PostToolUse `anatomy-upsert-file` only when `features.anatomy.post_tool_upsert` is enabled; otherwise use manual `anatomy-upsert-file` / `anatomy-scan` as needed.
-- `anatomy-scan <slug|root>`: full re-scan of a registered project. Opt-in heavy operation: walks every indexable file under the root and writes `<slug>.json` / `<slug>.md`. Preserves `desc_source=user` entries (refreshes their tokens/mtime/kind, does not overwrite their desc). Avoid running it on projects with large vendored / thirdparty trees — those bloat the snapshot to tens of MB.
-- `anatomy-set <slug|root> <relpath> --desc TEXT`: manually set or refine one file's description. Marks `desc_source=user` so future scans don't overwrite it.
-- `anatomy-upsert-file <abs-path>`: refresh or remove the anatomy entry for one file. Used by the PostToolUse hook only when `features.anatomy.post_tool_upsert` is enabled; safe to call manually too. Silently no-ops on files outside every registered project. Add `--auto-register` to also register the enclosing repo root when the file lives inside an eligible-but-unregistered project (`.git` + project marker); the hook passes this flag only when `features.anatomy.auto_register` is enabled.
+- `write-log` — append one JSONL log entry. Required: `--date --tag --text`. `--project` / `--topic` auto-route from cwd/files/text when omitted. Allowed tags listed in "Log JSONL Format".
+- `write-memory` — append one curated `MEMORY.md` entry. Tags limited to `fact`, `decision`, `lesson`.
+- `write-preference` — append one stable `PREFERENCES.md` entry. Required: `--text`.
+- `upsert-doc` — write one `docs/*.md` + update `index.json`. Required: `--doc` plus `--text` / `--text-stdin`. `--link-log '[[log:YYYY-MM-DD#L<n>]]'` merges backlinks (repeatable).
+- `anatomy-register <root> [--slug NAME]` — register a project root (pointer only, no scan).
+- `anatomy-scan <slug|root>` — full re-scan (opt-in heavy; skip large vendored trees).
+- `anatomy-set <slug|root> <relpath> --desc TEXT` — pin a user description on one file.
+- `anatomy-upsert-file <abs-path>` — refresh/remove one file's entry (hook-driven; `--auto-register` opt-in).
 
 ## Anatomy
 
-Anatomy is the project-snapshot dimension. It lives at `<namespace>/anatomy/{_index.json, <slug>.json, <slug>.md}` (JSON is the source of truth; the `.md` is auto-rendered). Each file entry stores `desc / desc_source (auto|user|empty) / tokens_est / kind / mtime`.
+> **DEPRECATED.** Anatomy is frozen and no longer developed. Existing snapshots and `anatomy-*` commands still work (and print a deprecation notice), but do not build new workflows on it — it is off by default (`features.anatomy.*` default False). Prefer log/docs/memory for durable project context.
 
-Use it to answer "what does this project contain?" without paying for a full re-read each session.
+Anatomy is the project-snapshot dimension at `<namespace>/anatomy/{_index.json, <slug>.json, <slug>.md}` (JSON is the source of truth; the `.md` is auto-rendered; each file entry stores `desc / desc_source (auto|user|empty) / tokens_est / kind / mtime`). It answers "what does this project contain?" without a full re-read each session.
 
-### Growth path: register, then optionally let it fill incrementally
+Core discipline:
 
-Anatomy is built lazily. Hook-driven lazy fill is opt-in; the intended lifecycle is:
+- **`anatomy-register` is cheap** — writes a pointer only, no file scan. Registration is manual, or automatic on the first edit inside a `.git` repo that has a project marker when both `features.anatomy.auto_register` and `post_tool_upsert` are enabled.
+- **`anatomy-scan` is an opt-in heavy operation** — it walks every indexable file. Skip it on projects with large vendored / build / thirdparty trees; they bloat the snapshot to tens of MB.
+- A registered-but-unscanned project still works: it fills lazily via PostToolUse `anatomy-upsert-file` (when enabled), or you pin load-bearing files with `anatomy-set`.
+- `desc_source=user` descriptions are preserved through every scan/upsert.
 
-1. **Registration** — manually via `anatomy-register <root>`, or automatically only when both `features.anatomy.post_tool_upsert` and `features.anatomy.auto_register` are enabled and the first PostToolUse Write/Edit is inside an eligible project (`.git` ancestor + at least one project marker file like `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `CMakeLists.txt`, `setup.py`, `pom.xml`, `build.gradle[.kts]`, `Gemfile`, `composer.json`, `Makefile`, `Pipfile`, `requirements.txt`). Either path writes a single pointer into `_index.json`. No file scan happens here.
-2. When `features.anatomy.post_tool_upsert` is enabled, the PostToolUse hook calls `anatomy-upsert-file` on every `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create`. The snapshot grows to reflect the files you actually touched. On the first such edit in an eligible-but-unregistered project, inline repo registration happens only when `features.anatomy.auto_register` is enabled.
-3. `anatomy-set <slug> <relpath> --desc "..."` to pin a short description on load-bearing files (trust boundaries, build entrypoints, config schemas). These are preserved through future scans.
-4. `anatomy-scan <slug>` only when you explicitly want a project-wide map — e.g., onboarding a new repo, prepping a refactor, or producing an audit. **Skip this for projects with large vendored / build / thirdparty trees** (`ep/`, `vendor/`, generated `dist/` siblings, etc.) — they bloat the snapshot to tens of MB and slow every subsequent `upsert-file`.
-
-Treat `anatomy-scan` as an opt-in heavy operation, not part of registration. A registered-but-unscanned project still works: `load --anatomy` returns the registered root without files, the SessionStart hook still injects the standard reminder, and PostToolUse upserts start populating files on the first edit only when `features.anatomy.post_tool_upsert` is enabled (an empty snapshot shell is created inline when needed).
-
-### Registration is automatic when safe, explicit otherwise
-
-Auto-registration fires only when the file being touched lives inside a `.git` repo **and** some directory between the file and the `.git` ancestor contains a recognized project marker file. This gate keeps random directories (`~/Downloads`, scratch dirs, plain text notes under `~/notes`) out of the index — they have no marker and so never auto-register. Monorepos are handled by registering the `.git` directory (repo root) as a single slug, not the marker's parent; a marker found inside `services/api/` still registers the whole repo.
-
-Slug derivation: the base slug is the repo root's basename. If that slug is already registered to a **different** root, the auto-registration path tries up to two levels of path-segment disambiguation (`parent-base`, then `grandparent-parent-base`). If all three candidates collide, auto-registration is skipped and the SessionStart hint surfaces the conflict so the user can pick a unique slug with explicit `--slug`. Idempotent: the same root re-encountered later returns the existing slug without rewriting the index.
-
-`anatomy-register` remains available for projects without a marker, for projects you want to opt into ahead of any write, and for picking a custom slug.
-
-### SessionStart optional attach
-
-The Claude Code / Codex hook calls plain `load --json` on every SessionStart to inject the memory reminder and compact saved-preferences summary. It calls `load --anatomy --cwd <session cwd>` only when `features.anatomy.session_start_attach` is enabled. With that option enabled, when cwd is inside a registered project, the rendered anatomy markdown (capped at ~2000 tokens, falling back to a top-level directory summary above the cap) is appended to the SessionStart additionalContext. When cwd is in an unregistered git repo that has a project marker, the hook injects a multi-line actionable hint: detected repo root, suggested slug (auto-disambiguated against existing entries), and a paste-ready `anatomy-register` command. When cwd is in a git repo without any project marker, the hook injects a softer note explaining no marker was found and pointing at manual registration. When cwd is anywhere else, only the standard memory-protocol reminder and preference summary are sent.
-
-### Incremental maintenance
-
-When `features.anatomy.post_tool_upsert` is enabled, the PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations, extracts the touched file path(s), and calls `anatomy-upsert-file` for each. `desc_source=user` entries are preserved through every refresh — only tokens/mtime/kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot if previously indexed.
-
-For full reconciliation, run `memory_tool.py maintain` periodically: it surfaces `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed). Note that `new_files` after a registration-only setup will list every indexable file under the root — that is expected; do not interpret it as drift, and do not run `anatomy-scan` just to silence it.
+Full details — growth-path lifecycle, the auto-registration gate + slug derivation, SessionStart attach behaviour, incremental maintenance and `new_files` drift — are in `references/anatomy.md`.
 
 ## Distillation Pipeline
 
-A three-stage, two-gate pipeline turns repeated log buckets into curated docs. The pipeline is the only path that writes new docs from log activity, and every stage stays read-only until the very last call. The two gates ensure that no rule, hook, or subprocess can land a doc on its own — at least two LLM-in-the-loop decisions stand between a candidate bucket and a `docs/*.md` file.
-
-### Stages
+A three-stage, two-gate pipeline turns repeated log buckets into curated docs — the only path that writes new docs from log activity. Every stage stays read-only until the final `upsert-doc`, and two LLM-in-the-loop gates stand between a candidate bucket and a `docs/*.md` file.
 
 ```
-log/*.jsonl  --[1] distill-->  candidate buckets  --[2] promote-->  prompt  --[3] upsert-doc-->  docs/*.md
-                                       ^                                ^                          ^
-                                  hook injects                   subagent reads                 only writer
-                                                                  & decides
+log/*.jsonl --[1] distill--> candidate buckets --[2] promote--> prompt --[3] upsert-doc--> docs/*.md
 ```
 
-1. **distill** (`maintain --distill`): read-only bucket analysis. Groups log entries by `(topic, tag-family)`, filters by `--min-entries` and `--min-days`, scores, and returns candidates. Updates `last_distill_check_ts` only.
-2. **promote** (`maintain --promote TOPIC[/FAMILY]`): read-only synthesis prompt. Re-reads source entries in full, attaches suggested upsert-doc parameters, and emits structured markdown for a subagent. Never writes.
-3. **upsert-doc** (`upsert-doc --doc <slug> --text-stdin --link-log <ref> ...`): the **only** stage that touches `docs/`. Writes the synthesized body, updates `index.json`, and merges `[[log:YYYY-MM-DD#L<n>]]` backlinks into a `## Related log entries` section.
+1. **distill** (`maintain --distill`) — group log entries by `(topic, tag-family)`, filter by `--min-entries`/`--min-days`, return candidates. Read-only.
+2. **promote** (`maintain --promote TOPIC[/FAMILY]`) — re-read source entries in full, emit a structured synthesis prompt for a subagent. Read-only.
+3. **upsert-doc** — the only stage that writes `docs/`; merges `[[log:YYYY-MM-DD#L<n>]]` backlinks into a `## Related log entries` section.
 
-### Two decision gates
+Two gates: **Gate A** (the main-session model decides whether to delegate a hook-injected candidate) and **Gate B** (the subagent decides whether the synthesized doc actually coheres before calling `upsert-doc`, else writes nothing). The hook never calls `upsert-doc` directly. A log entry already cited by a `[[log:date#L<n>]]` backlink is excluded from future buckets, so nothing is promoted twice.
 
-- **Gate A — should this bucket be promoted?** The main-session model reads the candidate list (injected by the SessionStart / Stop hook) and decides whether to delegate. The cost of saying "not now" is one hook-injected reminder per ~100 turns; the cost of saying "yes" is spawning a subagent. The cheap default is to skip when the current task is unrelated.
-- **Gate B — does the synthesized doc deserve to land?** The subagent reads the full prompt (5–30 KB of source text), decides whether the bucket actually coheres, and on yes calls `upsert-doc`. On no it returns a one-line summary explaining the mismatch and writes nothing. This catches buckets that look related by topic but turn out to be three different things sharing a label.
+Trigger: SessionStart / Stop hooks run the cheap read-only `maintain --distill --json` and inject a candidate summary when `cumulative_human_turns` has advanced ≥100 since the last inject or ≥1 day has passed. Delegate promotion via `Agent(subagent_type="general-purpose")` so the 5–30 KB source payload stays out of the main session.
 
-`docs/` cannot be written without passing both gates. The hook never calls `upsert-doc` directly; it can only inject candidates.
-
-### Tag families
-
-`distill` collapses the 26 log tags into 4 doc-shaped families. Tags not listed are skipped on purpose (noise-prone or already covered):
-
-| Family | Tags | Suggested doc-type |
-|---|---|---|
-| `lesson` | `lesson`, `pattern`, `insight`, `fact` | `lesson` |
-| `troubleshooting` | `fix`, `debug`, `error` | `troubleshooting` |
-| `decision` | `decision`, `analysis`, `consideration` | `decision-record` |
-| `runbook` | `operation`, `build`, `deploy`, `commit`, `release`, `verification` | `runbook` |
-
-When an entry lacks a `topic` field (older logs pre-date auto-routing), distill applies the same regex inference `write-log` would have used at creation time, so historical data isn't permanently invisible.
-
-### Backlinks: `[[log:YYYY-MM-DD#L<n>]]`
-
-Every doc body emitted by promote / synthesized by a subagent should cite its source log entries with `[[log:YYYY-MM-DD#L<n>]]`. The `<n>` is the 1-based line number inside the JSONL file. `upsert-doc --link-log` accepts these refs (repeatable) and merges them into a `## Related log entries` section. The merge is dedup-safe; calling upsert-doc again on the same doc with overlapping refs leaves a clean union.
-
-The distillation filter uses backlinks as the source of truth for "already promoted." A log entry with at least one `[[log:date#L<n>]]` reference in any doc is excluded from future buckets — so the same lesson cannot be promoted twice unless the user explicitly removes the backlink.
-
-### Hook trigger
-
-Both SessionStart and Stop / SubagentStop hooks call `fetch_distillation_candidates()`, which:
-
-- Reads `cumulative_human_turns` (Stop hook accumulates real human-turn deltas across sessions, idempotent) and `last_distill_inject_ts` from STATS.json.
-- Triggers when **either** `cumulative_human_turns - last_distill_inject_turn >= 100` **or** `now - last_distill_inject_ts >= 1 day`.
-- Runs `maintain --distill --json` (read-only, milliseconds), and on candidates injects a compact summary into `additionalContext` (SessionStart) or appends it to the block reason (Stop).
-- Updates `last_distill_inject_ts` and `last_distill_inject_turn` whether or not buckets were found, so an empty state doesn't make every hook re-run the subprocess.
-
-The check is cheap (no docs, no log mutations) and runs every relevant hook; only the **inject** is throttled. This keeps SessionStart fast while ensuring long sessions still get a periodic nudge.
-
-### Subagent delegation
-
-A typical promote prompt is 5–30 KB. To keep the main session lean, **delegate via `Agent(subagent_type="general-purpose")`**:
-
-```
-Agent({
-  description: "Promote hooks/lesson bucket to doc",
-  subagent_type: "general-purpose",
-  prompt: """Run `memory_tool.py maintain --promote hooks/lesson`. Read the source
-            entries, decide whether the material coheres (return only a one-line
-            summary if not). On yes, synthesize one doc body matching the
-            doc-type shape and call `upsert-doc --doc <slug> --text-stdin
-            --doc-type <type> --link-log <ref> ...`. Return only the final
-            slug + a one-sentence summary."""
-})
-```
-
-The subagent's isolated context window absorbs the source-entry payload; the main session sees only the final outcome.
-
-### Tuning
-
-Defaults are conservative: `--min-entries 3`, `--min-days 3`. Lower them to surface earlier candidates (`maintain --distill --min-entries 2 --min-days 1`); raise them to filter aggressively. The hook trigger uses `DISTILL_TURN_INTERVAL = 100` and `DISTILL_DAY_INTERVAL_SEC = 86400` in `memory_hook_common.py` — adjust those constants if a project's tempo demands more or less frequent injects.
+Full details — the tag-family table, backlink semantics, hook internals, subagent prompt template, and tuning constants — are in `references/distillation.md`.
 
 ## Health Dashboard (`status`)
 
@@ -366,6 +254,10 @@ Never write:
 
 ## References
 
+- `references/cli-reference.md`: full `memory_tool.py` flag reference for every read/write command.
+- `references/anatomy.md`: anatomy growth-path lifecycle, auto-registration gate + slug derivation, SessionStart attach, incremental maintenance.
+- `references/distillation.md`: distillation tag-family table, backlink semantics, hook trigger internals, subagent prompt template, tuning constants.
+- `references/log-entry-examples.md`: full worked good/bad log-entry body examples.
 - `references/repo-layout.md`: read when discussing memory repo structure, file responsibilities, document metadata, or tag conventions.
 - `references/startup-and-write-rules.md`: read when discussing retrieval triggers, load order, docs index matching, write routing, distillation, or failure behavior.
 - `references/machine-setup.md`: read when installing on a new machine, exposing the skill to Codex or Claude Code, debugging config, or running smoke tests.

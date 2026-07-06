@@ -9,6 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 class SkillDocTests(unittest.TestCase):
     def test_skill_frontmatter_and_retrieval_contract(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        # After the SKILL.md slimming, CLI-flag details legitimately moved into
+        # references/cli-reference.md. Flag-level assertions are checked against
+        # the union of SKILL.md and the reference docs it links to, so that
+        # content living in a linked reference does not count as missing.
+        cli_ref = (ROOT / "references" / "cli-reference.md").read_text(encoding="utf-8")
+        combined = text + "\n\n" + cli_ref
 
         match = re.match(r"\A---\n(.*?)\n---\n", text, flags=re.DOTALL)
         self.assertIsNotNone(match, "SKILL.md must start with a valid YAML frontmatter block")
@@ -39,7 +45,7 @@ class SkillDocTests(unittest.TestCase):
         self.assertIn("scripts/memory_tool.py write-preference", text)
         self.assertIn("scripts/memory_tool.py write-memory", text)
         self.assertIn("scripts/memory_tool.py upsert-doc", text)
-        self.assertIn("write-memory` accepts only `fact`, `decision`, and `lesson`", text)
+        self.assertIn("write-memory` accepts only `fact`, `decision`, and `lesson`", combined)
         self.assertIn(
             "Open issues",
             text,
@@ -82,7 +88,7 @@ class SkillDocTests(unittest.TestCase):
             "`anatomy-scan",
         ]:
             with self.subTest(command=command):
-                self.assertIn(command, text)
+                self.assertIn(command, combined)
         self.assertIn("Distill useful patterns from log entries into curated long-term files during light maintenance moments.", text)
         self.assertIn("Only the local primary repo is writable by default", text)
         self.assertIn("Log entries from other namespaces are ignored by default", text)
