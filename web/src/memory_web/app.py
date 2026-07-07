@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -83,6 +84,26 @@ def _read_skill_version() -> str:
 SKILL_VERSION = _read_skill_version()
 
 
+def _remote_api_token(adapter: MemoryAdapter) -> str | None:
+    mt = adapter._mt
+    config = mt.load_config(
+        Path(adapter.config_path) if adapter.config_path else None,
+        os.environ.get("USING_MEMORY_CONFIG"),
+    )
+    remote = mt.remote_api_from_config(config)
+    return remote.get("token") if remote else None
+
+
+def _is_loopback_request(request: Request) -> bool:
+    candidates = []
+    if request.client and request.client.host:
+        candidates.append(request.client.host)
+    host = request.headers.get("host", "")
+    if host:
+        candidates.append(host.rsplit(":", 1)[0].strip("[]"))
+    return any(host in {"127.0.0.1", "localhost", "::1"} for host in candidates)
+
+
 def _namespace_context(request: Request) -> dict:
     """Surface the active namespace + sibling list to every template.
 
@@ -122,6 +143,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     app.state.namespaces = registry
     app.state.templates = TEMPLATES
     app.state.skill_version = SKILL_VERSION
+    app.state.api_token = _remote_api_token(adapter)
 
     interval_min = read_interval_from_env()
     scheduler = MaintenanceScheduler(adapter, interval_minutes=interval_min)
@@ -157,6 +179,15 @@ def create_app(config_path: str | None = None) -> FastAPI:
         )
         request.state.adapter = registry.resolve(ns_name)
         request.state.namespaces = registry.available()
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def require_api_token(request: Request, call_next):
+        token = app.state.api_token
+        if token and request.url.path.startswith("/api/v1") and not _is_loopback_request(request):
+            expected = f"Bearer {token}"
+            if request.headers.get("authorization") != expected:
+                return JSONResponse({"detail": "unauthorized"}, status_code=401)
         return await call_next(request)
 
     @app.get("/lang/{code}", name="set_lang")

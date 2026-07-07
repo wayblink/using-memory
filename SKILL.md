@@ -43,6 +43,7 @@ description: Memory protocol for persisted cross-session context and operation c
 - If it is unset, try `~/.skills/using-memory/config.yaml`.
 - If config is missing, enter no-memory mode: do not block the session, add a warning that setup is needed, and disable automatic writes by default.
 - If the user is installing, reinstalling, debugging setup, or explicitly expects a setup prompt, tell them to run `umem setup`. That command prompts for memory path, optional remote Git repo URL, namespace, and machine ID. If a remote Git repo is provided it clones or pulls first; otherwise it initializes a local Git repo and prints the later remote-creation command.
+- Top-level config `remote: {endpoint, token}` is the optional HTTP API backend for command forwarding. It is separate from `memory_roots[*].remote`, which is Git remote metadata written by setup.
 - Do not assume package-manager style skill installation executes `scripts/install.sh`; many installers only copy the skill directory. In that case, run `umem setup` manually after install.
 
 ## Session Snapshot
@@ -121,6 +122,8 @@ A full worked example (well-formed Spark image build with a blocked registry pus
 ## Memory Tool Commands
 
 Invoke as `umem <command>` (installed to `~/.local/bin` by `scripts/install.sh`; equivalent to `python3 <skill>/scripts/memory_tool.py <command>`). Every command takes `--config` (or falls back to `USING_MEMORY_CONFIG` / the default yaml) and supports `--json`. The list below is the entry point — **when unsure of a command's flags, run `umem <command> --help`**; full flag reference also in `references/cli-reference.md`.
+
+When top-level `remote.endpoint` is configured, `load`, `search`, `write-log`, `write-memory`, `write-preference`, and `upsert-doc` first call `/api/v1` on that endpoint. Connection failures, timeouts, and HTTP 5xx responses fall back to local files with a warning; HTTP 4xx responses are command errors. `remote.token`, when present, is sent as a bearer token.
 
 ### Read
 

@@ -2,6 +2,8 @@
 
 Full flag reference for `scripts/memory_tool.py`. SKILL.md keeps a one-line summary per command; read this file when you need the exact selectors/flags. Prefer executing it directly or with `python3`; do not assume a `python` shim exists.
 
+If top-level config `remote.endpoint` is set, `load`, `search`, `write-log`, `write-memory`, `write-preference`, and `upsert-doc` forward to the web app's `/api/v1` endpoints before touching local files. `remote.token` is sent as `Authorization: Bearer <token>`. Connection failures, timeouts, and HTTP 5xx responses fall back to local execution with a warning; HTTP 4xx responses are surfaced as command errors.
+
 ## Read
 
 - `load`: read memory snapshot. Key selectors: `--config`, `--date`, `--json`, `--log-from` + `--log-to`, `--log-days`, `--log-query`, `--doc` / `--doc-type` / `--doc-tag` / `--project` / `--topic` / `--doc-query`. Returns `log_entries` as a parsed JSON list from the primary repo's configured namespace log.

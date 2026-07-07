@@ -223,6 +223,16 @@ defaults:
 
 Here `path` is the memory root that contains the `main/` namespace directory.
 
+Optional API remote:
+
+```yaml
+remote:
+  endpoint: http://127.0.0.1:8765
+  token: change-me
+```
+
+When top-level `remote.endpoint` is configured, `umem load`, `umem search`, `umem write-log`, `umem write-memory`, `umem write-preference`, and `umem upsert-doc` first call the web app's `/api/v1/*` endpoints. `remote.token` is sent as `Authorization: Bearer <token>`. Connection failures, timeouts, and HTTP 5xx responses fall back to the local file backend with a stderr warning; HTTP 4xx responses are treated as command errors. This top-level API remote is separate from `umem setup --remote`, which is still the Git remote URL for syncing the memory repo.
+
 Python dependencies are listed in [requirements.txt](requirements.txt). The current CLI needs `PyYAML` to parse local config.
 
 ## Hook Behaviour
@@ -292,7 +302,7 @@ python3 -m unittest discover -s tests -v
 
 ## Web browser (optional)
 
-`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. Read-only in v0.1 — every dimension is viewable (dashboard, logs, search, docs incl. `.md` and `.html`, MEMORY, PREFERENCES) but writes still go through `memory_tool.py`.
+`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. It also exposes `/api/v1` for command-level remote access: POST `log`, `memory`, `preference`, and `doc`; GET `load`, `search`, and `health`. If top-level `remote.token` is configured, non-loopback `/api/v1` clients must send `Authorization: Bearer <token>`; loopback calls remain usable for local development.
 
 ```bash
 cd web

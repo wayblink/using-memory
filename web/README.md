@@ -26,13 +26,17 @@ CDN at runtime.
 memory-web                       # http://127.0.0.1:8765
 memory-web --open                # also opens a browser tab
 memory-web --port 9000
-memory-web --host 0.0.0.0        # expose on LAN (no auth — use with care)
+memory-web --host 0.0.0.0        # expose on LAN; set remote.token for /api/v1 auth
 memory-web --config /path/to/config.yaml
 ```
 
 The app reads from the same `~/.skills/using-memory/config.yaml` (or
 `USING_MEMORY_CONFIG`) that `memory_tool.py` uses, and operates on the
 configured primary repo + namespace.
+
+If the config has top-level `remote.token`, non-loopback `/api/v1` requests
+must send `Authorization: Bearer <token>`. Loopback clients are exempt so local
+CLI forwarding remains frictionless.
 
 The version pill in the sidebar reads from `<repo>/version.txt` (the
 skill's source of truth). The probe falls back to common skill install
@@ -59,6 +63,9 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 | `/preferences` | `PREFERENCES.md` rendered + Append-preference form |
 | `/preferences/download` | Download `PREFERENCES.md` |
 | `POST /preferences/append` | Append via `memory_tool.write-preference` |
+| `/api/v1/health` | JSON health endpoint for remote CLI forwarding |
+| `GET /api/v1/load`, `GET /api/v1/search` | JSON read endpoints matching the CLI read commands |
+| `POST /api/v1/log`, `POST /api/v1/memory`, `POST /api/v1/preference`, `POST /api/v1/doc` | JSON write endpoints matching the CLI write commands |
 | `/lang/{en,zh}` | Set language cookie + redirect back |
 | `/favicon.ico` · `/static/favicon.svg` | SVG favicon (also referenced via `<link rel="icon">`) |
 
@@ -142,7 +149,8 @@ memory_web.i18n      ── STRINGS dict (en + zh), Translator, lang_context
                        Jinja2 context_processor
         ▲
 memory_web.app       ── FastAPI factory; lang middleware; /lang/{code};
-                       /favicon.ico; static mount; router mounts
+                       /favicon.ico; /api/v1 auth middleware; static mount;
+                       router mounts
         ▲
 memory_web.routes.*  ── one router per page (dashboard, logs, search,
                        docs, memory, preferences)

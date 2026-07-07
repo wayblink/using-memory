@@ -12,7 +12,7 @@ All write handlers surface ``MemoryToolError`` (validation failures) as HTTP
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ..adapter import MemoryToolError
@@ -48,6 +48,7 @@ class DocIn(BaseModel):
     text: str
     title: str | None = None
     doc_type: str | None = None
+    created: str | None = None
     modified: str | None = None
     projects: list[str] | None = None
     doc_tags: list[str] | None = None
@@ -100,19 +101,33 @@ def api_upsert_doc(payload: DocIn, request: Request):
     a = _adapter(request)
     return _guard(lambda: a.upsert_doc(
         doc=payload.doc, text=payload.text, title=payload.title, doc_type=payload.doc_type,
-        modified=payload.modified, projects=payload.projects, doc_tags=payload.doc_tags,
-        summary=payload.summary, link_logs=payload.link_logs,
+        created=payload.created, modified=payload.modified, projects=payload.projects,
+        doc_tags=payload.doc_tags, summary=payload.summary, link_logs=payload.link_logs,
     ))
 
 
 @router.get("/load")
 def api_load(request: Request, date: str | None = None, log_days: int | None = None,
-             log_query: str | None = None):
+             log_from: str | None = None, log_to: str | None = None,
+             log_query: str | None = None, project: list[str] | None = Query(default=None),
+             topic: list[str] | None = Query(default=None), doc: str | None = None,
+             doc_type: str | None = None, doc_tag: list[str] | None = Query(default=None),
+             doc_query: str | None = None):
     a = _adapter(request)
-    return _guard(lambda: a.load(date=date, log_days=log_days, log_query=log_query))
+    return _guard(lambda: a.load(
+        date=date, log_from=log_from, log_to=log_to, log_days=log_days,
+        log_query=log_query, projects=project, topics=topic, doc=doc,
+        doc_type=doc_type, doc_tags=doc_tag, doc_query=doc_query,
+    ))
 
 
 @router.get("/search")
-def api_search(request: Request, q: str, log_days: int = 30):
+def api_search(request: Request, q: str, log_days: int = 30, no_docs: bool = False,
+               no_memory: bool = False, no_log: bool = False,
+               project: list[str] | None = Query(default=None),
+               topic: list[str] | None = Query(default=None)):
     a = _adapter(request)
-    return _guard(lambda: a.search(query=q, log_days=log_days))
+    return _guard(lambda: a.search(
+        query=q, log_days=log_days, no_docs=no_docs, no_memory=no_memory,
+        no_log=no_log, projects=project, topics=topic,
+    ))
