@@ -70,6 +70,18 @@ LOG_TAGS = {
 }
 
 
+def _cli_error(msg: str, hint: str | None = None):
+    """Print an agent-friendly CLI error to stderr and exit 2.
+
+    One-line problem + optional hint (correct usage / allowed values) so a
+    caller can self-correct in a single retry.
+    """
+    sys.stderr.write(f"error: {msg}\n")
+    if hint:
+        sys.stderr.write(hint.rstrip("\n") + "\n")
+    sys.exit(2)
+
+
 def parse_iso_date(raw: str | None, label: str) -> date:
     try:
         return date.fromisoformat(raw or "")
@@ -781,8 +793,10 @@ def do_write_log(args: argparse.Namespace) -> dict:
     when = parse_iso_date(args.date, "--date")
     tag = (args.tag or "").lower()
     if tag not in LOG_TAGS:
-        sys.stderr.write(f"invalid tag '{args.tag}'; allowed: {', '.join(sorted(LOG_TAGS))}\n")
-        sys.exit(2)
+        _cli_error(
+            f"invalid --tag '{args.tag}'",
+            hint=f"allowed tags: {', '.join(sorted(LOG_TAGS))}\n(see: umem write-log --help)",
+        )
     level = args.level
     confidence = args.confidence if args.confidence else None
     source = args.source if args.source else None
@@ -2345,8 +2359,18 @@ def cmd_status(sub: argparse._SubParsersAction) -> None:
 
 
 def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(description="using-memory CLI")
-    sub = parser.add_subparsers(dest="cmd")
+    parser = argparse.ArgumentParser(
+        prog="umem",
+        description=(
+            "using-memory CLI — persisted cross-session memory "
+            "(operation log / docs / MEMORY / preferences)."
+        ),
+        epilog=(
+            "Run 'umem <command> --help' for a command's flags and examples. "
+            "'umem' is equivalent to 'python3 <skill>/scripts/memory_tool.py'."
+        ),
+    )
+    sub = parser.add_subparsers(dest="cmd", metavar="<command>")
     cmd_load(sub)
     cmd_setup(sub)
     cmd_search(sub)

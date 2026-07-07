@@ -23,26 +23,22 @@ class ReadmeTests(unittest.TestCase):
         self.assertNotIn("local/<machine-id>/", text)
         self.assertNotIn("namespaces/", text)
 
-    def test_readme_commands_match_cli_flags(self):
-        text = (ROOT / "README.md").read_text(encoding="utf-8")
+    def test_readme_lists_commands(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for cmd in ["umem load", "umem search", "umem write-log", "umem write-memory",
+                    "umem write-preference", "umem upsert-doc", "umem status"]:
+            with self.subTest(cmd=cmd):
+                self.assertIn(cmd, readme)
+        # Flag details live in `umem <cmd> --help` and references/cli-reference.md,
+        # intentionally not duplicated in the README.
+        self.assertIn("--help", readme)
+        self.assertIn("cli-reference.md", readme)
 
-        for required in [
-            "write-preference \\\n  --config",
-            "write-memory \\\n  --config",
-            "write-memory \\\n  --config",
-            "--date 2026-05-06",
-            "--tag fact",
-            "upsert-doc \\\n  --config",
-            "--doc project-alpha",
-            "--doc-type project",
-            "--doc-tag planning",
-            "write-log \\\n  --config",
-        ]:
-            with self.subTest(required=required):
-                self.assertIn(required, text)
-
-        self.assertNotRegex(text, re.compile(r"(^|\n)\s*--type\s"))
-        self.assertNotRegex(text, re.compile(r"\b--tag planning\b"))
+    def test_cli_reference_documents_flags(self):
+        ref = (ROOT / "references" / "cli-reference.md").read_text(encoding="utf-8")
+        for needle in ["--date", "--tag", "--doc-type", "--doc-tag", "--project", "--topic"]:
+            with self.subTest(needle=needle):
+                self.assertIn(needle, ref)
 
     def test_readme_command_overview_lists_all_cli_commands(self):
         text = (ROOT / "README.md").read_text(encoding="utf-8")
