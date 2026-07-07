@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 
@@ -41,17 +41,4 @@ def doc_download(request: Request, slug: str) -> FileResponse:
     path = adapter.resolve_doc_path(slug)
     if path is None:
         raise HTTPException(status_code=404, detail=f"doc not found: {slug}")
-    return _attachment(path, path.name)
-
-
-@router.get("/anatomy/{slug}/download", name="anatomy_download")
-def anatomy_download(
-    request: Request,
-    slug: str,
-    format: str = Query("json"),
-) -> FileResponse:
-    adapter = request.state.adapter
-    path = adapter.anatomy_file_path(slug, format)
-    if path is None:
-        raise HTTPException(status_code=404, detail=f"anatomy file not found: {slug}.{format}")
     return _attachment(path, path.name)

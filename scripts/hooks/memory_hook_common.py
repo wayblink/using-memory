@@ -106,8 +106,14 @@ def load_state(payload: dict[str, Any], host: str) -> dict[str, Any]:
 
 
 def save_state(payload: dict[str, Any], host: str, state: dict[str, Any]) -> None:
-    path = state_path(payload, host)
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        path = state_path(payload, host)
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        # Best-effort: a failed state write (disk full, permissions, etc.) must
+        # not break the hook. Counters may drift for this fire, but the session
+        # is never disrupted. The top-level guard in run() is the final catch.
+        pass
 
 
 def stringify(value: Any, limit: int = 4000) -> str:
@@ -470,13 +476,6 @@ def hook_settings() -> dict[str, Any]:
     cfg = _read_memory_config()
     features_cfg = _as_dict(cfg.get("features"))
 
-    raw_anatomy_cfg = features_cfg.get("anatomy")
-    if isinstance(raw_anatomy_cfg, bool):
-        anatomy_cfg: dict[str, Any] = {"enabled": raw_anatomy_cfg}
-    else:
-        anatomy_cfg = _as_dict(raw_anatomy_cfg)
-    anatomy_enabled = _as_bool(anatomy_cfg.get("enabled"), False)
-
     logging_cfg = _as_dict(cfg.get("logging"))
     hard_gate_cfg = _as_dict(logging_cfg.get("hard_gate"))
 
@@ -486,18 +485,6 @@ def hook_settings() -> dict[str, Any]:
         archive_mode = "pointer"
 
     return {
-        "anatomy": {
-            "enabled": anatomy_enabled,
-            "session_start_attach": _as_bool(
-                anatomy_cfg.get("session_start_attach"),
-                anatomy_enabled,
-            ),
-            "post_tool_upsert": _as_bool(
-                anatomy_cfg.get("post_tool_upsert"),
-                anatomy_enabled,
-            ),
-            "auto_register": _as_bool(anatomy_cfg.get("auto_register"), anatomy_enabled),
-        },
         "logging": {
             "silent_summary": _as_bool(logging_cfg.get("silent_summary"), False),
             "detail_turn_interval": _as_int(
@@ -627,114 +614,19 @@ def bump_stats(deltas: dict[str, Any], sets: dict[str, Any] | None = None) -> No
         return
 
 
-# Tool names that produce or modify a file we want to refresh in anatomy.
-_ANATOMY_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Create"}
 
 
-def _extract_written_paths(payload: dict[str, Any]) -> list[str]:
-    """Pull file paths out of a PostToolUse payload for anatomy upsert.
-
-    Looks at payload.tool_name + payload.tool_input. Returns absolute path
-    strings only when the tool was a write/edit-style operation. Returns []
-    for read-style tools so we don't waste a subprocess on every Bash call.
-    """
-    tool_name = str(payload.get("tool_name") or "").strip()
-    if tool_name not in _ANATOMY_WRITE_TOOLS:
-        return []
-    ti = payload.get("tool_input")
-    if not isinstance(ti, dict):
-        return []
-    paths: list[str] = []
-    fp = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
-    if isinstance(fp, str) and fp:
-        paths.append(fp)
-    # MultiEdit may stash a list of edits — each entry shares the same file_path,
-    # so the top-level file_path above is enough. Defensive: also check edits[].
-    edits = ti.get("edits")
-    if isinstance(edits, list):
-        for edit in edits:
-            if isinstance(edit, dict):
-                p = edit.get("file_path") or edit.get("path")
-                if isinstance(p, str) and p and p not in paths:
-                    paths.append(p)
-    return paths
 
 
-def anatomy_upsert_for_payload(payload: dict[str, Any], *, auto_register: bool = False) -> None:
-    """Best-effort: call `memory_tool.py anatomy-upsert-file <path>` for every
-    file written/edited by this tool call. Silent on failure — anatomy drift
-    is recoverable via `anatomy-scan`, blocking hooks on this is not.
-
-    Counts each subprocess that returned action=updated|removed into
-    anatomy_upserts so the dashboard can show incremental maintenance volume.
-    """
-    try:
-        paths = _extract_written_paths(payload)
-        if not paths:
-            return
-        config = _resolve_memory_config()
-        if not config:
-            return
-        upserts = 0
-        auto_registered = 0
-        for raw in paths:
-            try:
-                cmd = [
-                    sys.executable or "python3",
-                    _memory_tool_path(),
-                    "anatomy-upsert-file",
-                    "--config", config,
-                    raw,
-                    "--json",
-                ]
-                if auto_register:
-                    cmd.insert(-1, "--auto-register")
-                result = subprocess.run(cmd, capture_output=True, timeout=8, text=True)
-                if result.returncode == 0:
-                    try:
-                        data = json.loads(result.stdout or "{}")
-                        if data.get("changed"):
-                            upserts += 1
-                        if data.get("auto_registered"):
-                            auto_registered += 1
-                    except json.JSONDecodeError:
-                        pass
-            except Exception:
-                continue
-        deltas: dict[str, int] = {}
-        if upserts:
-            deltas["anatomy_upserts"] = upserts
-        if auto_registered:
-            deltas["anatomy_auto_registered"] = auto_registered
-        if deltas:
-            bump_stats(deltas)
-    except Exception:
-        return
 
 
-def fetch_session_start_snapshot(
-    payload: dict[str, Any],
-    *,
-    include_anatomy: bool = False,
-) -> tuple[str | None, str | None, dict[str, int]]:
-    """Best-effort: call `memory_tool.py load --json` and return
-    (preference_markdown, anatomy_markdown, stats_deltas) for SessionStart.
-
-    Anatomy is opt-in through hook config; when disabled, the call intentionally
-    omits ``--anatomy`` so startup avoids the extra lookup and token injection.
-
-    ``stats_deltas`` is an empty dict on failure / no anatomy; otherwise it
-    contains the counters this call earned (e.g. anatomy_attached_count=1,
-    anatomy_attached_tokens_est=N, anatomy_truncated_count=1,
-    anatomy_hint_emitted=1). Caller funnels it into bump_stats so the
-    counters reflect what actually happened.
-    """
-    deltas: dict[str, int] = {}
+def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
+    """Best-effort: call `memory_tool.py load --json` and return the rendered
+    saved-preferences summary markdown for SessionStart (or None on failure)."""
     try:
         config = _resolve_memory_config()
         if not config:
-            return None, None, deltas
-        cwd = payload.get("cwd") or os.getcwd()
+            return None
         cmd = [
             sys.executable or "python3",
             _memory_tool_path(),
@@ -742,48 +634,19 @@ def fetch_session_start_snapshot(
             "--config", config,
             "--json",
         ]
-        if include_anatomy:
-            cmd[5:5] = ["--anatomy", "--cwd", cwd]
         result = subprocess.run(cmd, capture_output=True, timeout=20, text=True)
         if result.returncode != 0:
-            return None, None, deltas
+            return None
         data = json.loads(result.stdout or "{}")
-        preference_md = None
         if isinstance(data, dict):
             preferences = data.get("preferences")
             if isinstance(preferences, list):
-                preference_md = render_preference_summary(
+                return render_preference_summary(
                     [entry for entry in preferences if isinstance(entry, str)]
                 )
-        if not include_anatomy:
-            return preference_md, None, deltas
-        anatomy = data.get("anatomy") if isinstance(data, dict) else None
-        if not isinstance(anatomy, dict):
-            return preference_md, None, deltas
-        if anatomy.get("matched"):
-            content = anatomy.get("content") or ""
-            warning = anatomy.get("warning") or ""
-            if content:
-                deltas["anatomy_attached_count"] = 1
-                # ``content`` is already capped by load --anatomy-max-tokens.
-                # We record the rendered char count over the estimator ratio
-                # (~3.75 chars/token mixed) so the dashboard shows a real
-                # number, not the per-call cap.
-                deltas["anatomy_attached_tokens_est"] = max(1, int(len(content) / 3.75 + 0.5))
-                if anatomy.get("truncated"):
-                    deltas["anatomy_truncated_count"] = 1
-                return preference_md, content, deltas
-            if warning:
-                deltas["anatomy_attached_count"] = 1  # matched but unscanned still counts as an attach attempt
-                return preference_md, f"## Anatomy\n\n{warning}\n", deltas
-            return preference_md, None, deltas
-        hint = anatomy.get("hint")
-        if hint:
-            deltas["anatomy_hint_emitted"] = 1
-            return preference_md, f"## Anatomy hint\n\n{hint}\n", deltas
-        return preference_md, None, deltas
+        return None
     except Exception:
-        return None, None, deltas
+        return None
 
 
 def fetch_distillation_candidates() -> tuple[str | None, dict[str, int]]:
@@ -1017,7 +880,7 @@ def archive_session_pointer(
         return False
 
 
-def run(host: str) -> int:
+def _run_impl(host: str) -> int:
     payload = load_payload()
     event = event_name(payload)
     state = load_state(payload, host)
@@ -1030,21 +893,15 @@ def run(host: str) -> int:
         state.setdefault("important_events", [])
         save_state(payload, host, state)
         reminder = memory_protocol_reminder()
-        anatomy_settings = settings["anatomy"]
-        preference_md, anatomy_md, anatomy_deltas = fetch_session_start_snapshot(
-            payload,
-            include_anatomy=bool(anatomy_settings["session_start_attach"]),
-        )
+        preference_md = fetch_session_start_snapshot(payload)
         distill_md, distill_deltas = fetch_distillation_candidates()
         sections = [reminder]
         if preference_md:
             sections.append(preference_md)
-        if anatomy_md:
-            sections.append(anatomy_md)
         if distill_md:
             sections.append(distill_md)
         context_text = "\n\n---\n\n".join(sections)
-        bump_stats({"sessions": 1, **anatomy_deltas})
+        bump_stats({"sessions": 1})
         # distill_deltas carries either nothing, or the magic _set_* keys
         # signalling we just injected (or just confirmed-no-buckets).
         _apply_distill_inject_stats(distill_deltas)
@@ -1075,14 +932,6 @@ def run(host: str) -> int:
                 events.append(summary)
             state["important_events"] = events[-20:]
         save_state(payload, host, state)
-        # Best-effort anatomy refresh for write/edit tools. Always last so
-        # state persistence is never blocked by an anatomy subprocess.
-        anatomy_settings = settings["anatomy"]
-        if event == "PostToolUse" and anatomy_settings["post_tool_upsert"]:
-            anatomy_upsert_for_payload(
-                payload,
-                auto_register=bool(anatomy_settings["auto_register"]),
-            )
         return 0
 
     if event in {"Stop", "SubagentStop"}:
@@ -1192,6 +1041,24 @@ def run(host: str) -> int:
 
     print("{}")
     return 0
+
+
+def run(host: str) -> int:
+    """Top-level hook entrypoint.
+
+    Wraps the real handler so that ANY unhandled exception is swallowed and the
+    hook still emits an empty JSON object with exit code 0. A memory hook must
+    never block or disrupt the host session: a non-zero exit or a traceback on
+    stdout/stderr can be interpreted by Claude Code as a Stop-hook block reason.
+    """
+    try:
+        return _run_impl(host)
+    except Exception:
+        try:
+            print("{}")
+        except Exception:
+            pass
+        return 0
 
 
 if __name__ == "__main__":

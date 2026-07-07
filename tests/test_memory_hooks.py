@@ -79,6 +79,29 @@ class MemoryHookTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout or "{}")
 
+    def test_run_swallows_unexpected_errors_and_never_blocks(self):
+        # A memory hook must never block or disrupt the host session. Even if an
+        # internal step raises an unexpected (non-OSError) exception, run() must
+        # emit an empty JSON object and exit 0 rather than propagate a traceback.
+        import io
+        import contextlib
+        import importlib.util
+        from unittest import mock
+
+        spec = importlib.util.spec_from_file_location(
+            "memory_hook_common_under_test",
+            ROOT / "scripts" / "hooks" / "memory_hook_common.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        buf = io.StringIO()
+        with mock.patch.object(mod, "load_payload", side_effect=RuntimeError("boom")):
+            with contextlib.redirect_stdout(buf):
+                rc = mod.run("generic")
+        self.assertEqual(rc, 0)
+        self.assertEqual(buf.getvalue().strip(), "{}")
+
     def test_codex_stop_blocks_when_operation_has_no_memory_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_dir = Path(tmp)
@@ -178,64 +201,6 @@ class MemoryHookTests(unittest.TestCase):
             self.assertIn("始终使用简体中文回复", hook_output["additionalContext"])
             self.assertIn("不要使用日语", hook_output["additionalContext"])
             self.assertNotIn("## Anatomy", hook_output["additionalContext"])
-
-    def test_post_tool_use_does_not_upsert_anatomy_by_default(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            config_path, _memory_root, scoped = self.write_memory_config(tmp_path)
-            project = tmp_path / "project"
-            project.mkdir()
-            (project / ".git").mkdir()
-            (project / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
-            target = project / "demo.py"
-
-            self.run_hook(
-                CODEX_HOOK,
-                {
-                    "session_id": "abc",
-                    "turn_id": "t1",
-                    "hook_event_name": "PostToolUse",
-                    "tool_name": "Write",
-                    "tool_input": {"file_path": str(target), "content": "print('hi')\n"},
-                },
-                tmp_path,
-                extra_env={"USING_MEMORY_CONFIG": str(config_path)},
-            )
-
-            self.assertFalse((scoped / "anatomy" / "_index.json").exists())
-
-    def test_post_tool_use_upserts_anatomy_when_enabled(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            config_path, _memory_root, scoped = self.write_memory_config(
-                tmp_path,
-                extra_config=(
-                    "features:\n"
-                    "  anatomy:\n"
-                    "    enabled: true\n"
-                ),
-            )
-            project = tmp_path / "project"
-            project.mkdir()
-            (project / ".git").mkdir()
-            (project / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
-            target = project / "demo.py"
-            target.write_text("print('hi')\n", encoding="utf-8")
-
-            self.run_hook(
-                CODEX_HOOK,
-                {
-                    "session_id": "abc",
-                    "turn_id": "t1",
-                    "hook_event_name": "PostToolUse",
-                    "tool_name": "Write",
-                    "tool_input": {"file_path": str(target), "content": "print('hi')\n"},
-                },
-                tmp_path,
-                extra_env={"USING_MEMORY_CONFIG": str(config_path)},
-            )
-
-            self.assertTrue((scoped / "anatomy" / "_index.json").exists())
 
     def test_stop_does_not_write_silent_summary_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

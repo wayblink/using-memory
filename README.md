@@ -1,21 +1,20 @@
 # using-memory
 
-`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory and operation history in a Git-managed Markdown repo, with every memory file scoped under a configured namespace. `scripts/memory_tool.py` provides loading, writing, document indexing, project anatomy snapshots, and a health dashboard.
+`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory and operation history in a Git-managed Markdown repo, with every memory file scoped under a configured namespace. `scripts/memory_tool.py` provides loading, writing, document indexing, and a health dashboard.
 
 The project goal is to make agents load durable memory only when cross-session context is useful, then route new information to the right place instead of mixing preferences, facts, temporary logs, and structured documents together.
 
 ## Memory Dimensions
 
-`using-memory` stores four orthogonal kinds of context:
+`using-memory` stores three orthogonal kinds of context:
 
 | Axis | What | File | Lifecycle |
 |---|---|---|---|
 | Time series (operation) | What happened, in order | `<namespace>/log/YYYY-MM-DD.jsonl` | Append-only, broad |
 | Cross-project knowledge | Stable facts / decisions / lessons | `<namespace>/MEMORY.md` | Curated, narrow |
 | Stable preferences | User-level habits / rules | `<namespace>/PREFERENCES.md` | Curated, very narrow |
-| Project snapshot (anatomy) | What a project *looks like right now* | `<namespace>/anatomy/<slug>.{json,md}` | Opt-in auto-refresh; manual commands always available |
 
-The log answers *what did I do*; anatomy answers *in what shape did I do it*. They are linked via `[[anatomy:<slug>/<rel>]]` references emitted automatically when `write-log --files` matches a registered project.
+The log answers *what did I do*. Project structure snapshots (anatomy) have been split out into a separate skill, `using-anatomy`; see that skill for the project-snapshot dimension.
 
 ## Memory Repo Layout
 
@@ -32,11 +31,7 @@ memory-repo/
     |   +-- project-alpha.md
     |   +-- writing-rules.md
     +-- log/
-    |   +-- 2026-05-06.jsonl
-    +-- anatomy/                   # project snapshots (V2.0+)
-        +-- _index.json
-        +-- spark-ann.json
-        +-- spark-ann.md
+        +-- 2026-05-06.jsonl
 ```
 
 Layer responsibilities:
@@ -46,7 +41,6 @@ Layer responsibilities:
 - `<namespace>/docs/`: structured documents such as wiki, SOP, todo, plan, and project notes.
 - `<namespace>/docs/index.json`: an index for `<namespace>/docs/*.md`, including title, type, tags, modified time, related projects, and other metadata.
 - `<namespace>/log/`: date-based working notes, same-day context, and operation history.
-- `<namespace>/anatomy/`: project snapshots. JSON is the source of truth (`<slug>.json` per project plus an `_index.json` registry); `<slug>.md` is auto-rendered for humans and optional SessionStart context injection.
 - `<namespace>/STATS.json`: machine-local event counters maintained by the hooks and write-* commands. Never auto-loaded; intentionally not synced to reference roots (per-machine counts only).
 
 `namespace` is a single path segment under the memory root. It defaults to `main` when omitted. Use a stable value such as a user name, machine ID, server name, or environment name when multiple machines share one Git repo.
@@ -68,7 +62,6 @@ When retrieval is needed, the skill follows this macro load order:
 1. Read `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md` from every configured repo.
 2. Read `<namespace>/docs/index.json` from every repo, then load matching `<namespace>/docs/*.md` documents by index metadata, type, tag, project, or query.
 3. Read recent `<namespace>/log/` records from the primary repo. By default, only today and yesterday are loaded; larger date windows must be requested explicitly through CLI flags.
-4. With `load --anatomy`, attach the anatomy snapshot for the project whose root is the longest prefix of cwd. SessionStart hooks do this only when `features.anatomy.session_start_attach` is enabled.
 
 `<namespace>/STATS.json` is never part of this snapshot; it is read on demand by `status`.
 
@@ -80,7 +73,6 @@ Writes are routed by information type:
 - Stable facts, confirmed decisions, and long-term lessons go to `<namespace>/MEMORY.md`.
 - Wiki, SOP, todo, plan, and project notes go to `<namespace>/docs/*.md`, with `<namespace>/docs/index.json` updated at the same time.
 - Same-day process notes, operation history, temporary context, and unconfirmed information usually go to `<namespace>/log/YYYY-MM-DD.jsonl`.
-- Project file snapshots go to `<namespace>/anatomy/<slug>.json` via `anatomy-register` (cheap pointer) plus the optional incremental PostToolUse hook. `anatomy-scan` is an opt-in heavy operation for full project maps.
 
 Open issues, temporary assumptions, and unconfirmed plans are not written directly to `<namespace>/MEMORY.md` by default.
 
@@ -90,8 +82,8 @@ JSONL logs are intentionally broader than durable memory. Record concrete operat
 
 JSONL log records have two optional metadata axes:
 
-- `project` — usually a registered anatomy slug. Auto-routed from cwd (longest-prefix match against `anatomy/_index.json`), falling back to the first `--files` path inside a registered project.
-- `topic` — auto-routed from text keywords (`hook`, `build`, `deploy`, `test`, `commit`, `anatomy`, …). The `commit` / `deploy` / `release` / `build` / `test` tags short-circuit to themselves.
+- `project` — a project slug. Auto-routed from cwd basename, falling back to the parent directory name of the first `--files` path.
+- `topic` — auto-routed from text keywords (`hook`, `build`, `deploy`, `test`, `commit`, …). The `commit` / `deploy` / `release` / `build` / `test` tags short-circuit to themselves.
 
 Both axes accept lowercase `[a-z0-9._-]`, 1..64 chars. Fields are only written when present (no null pollution of older entries).
 
@@ -107,52 +99,13 @@ Same axis repeats are OR, different axes AND. When `search` is called with eithe
 
 ## Anatomy (project snapshots)
 
-Anatomy is the *project* dimension: a small per-project file index with kind / token estimate / one-line description per source file. Use it when you want a project map without re-reading every file.
-
-Anatomy is built **lazily**. Registration is cheap (a pointer in `_index.json`); the snapshot fills incrementally as PostToolUse upserts files you actually edit. Run `anatomy-scan` only when you explicitly want a full project map.
-
-### Register (cheap) and let it fill incrementally
-
-```bash
-python3 scripts/memory_tool.py anatomy-register ~/yard/spark-ann          # slug defaults to basename; writes pointer only, no scan
-python3 scripts/memory_tool.py anatomy-register ~/yard/spark-ann --slug spark
-python3 scripts/memory_tool.py anatomy-list                                # registered projects
-python3 scripts/memory_tool.py anatomy-set spark src/api.py \
-  --desc "JWT auth gateway. Trust boundary."                               # pin a critical-file description
-```
-
-After `anatomy-register`, no `<slug>.json` exists yet. If `features.anatomy.post_tool_upsert` is enabled, PostToolUse will create it on the first `Write` / `Edit` against the project. If `features.anatomy.session_start_attach` is enabled, SessionStart attach returns the registered root (without files) and the standard memory-protocol reminder.
-
-### Opt-in full scan
-
-```bash
-python3 scripts/memory_tool.py anatomy-scan spark-ann                      # walks every indexable file, writes <slug>.json/.md
-python3 scripts/memory_tool.py anatomy-show spark-ann                      # render markdown
-```
-
-`anatomy-scan` is opt-in because it's expensive on large repos: a Spark-sized tree produces a multi-MB JSON and slows every subsequent `upsert-file`. Skip it for projects with large vendored / build / thirdparty subtrees (`ep/`, `vendor/`, generated `dist/` siblings) — incremental upserts already capture the files you actually touch.
-
-Registration is explicit on purpose: `cd ~/Downloads` should not silently create a snapshot, and slug collisions are surfaced at registration time so they cannot drift. Same root + same slug is idempotent; conflicting slug requires explicit `--slug` to disambiguate.
-
-### Optional attach on SessionStart
-
-```bash
-python3 scripts/memory_tool.py load --anatomy --cwd ~/yard/spark-ann/src
-```
-
-By default, the bundled hook does not attach anatomy on SessionStart. It injects the memory-protocol reminder plus a compact saved-preferences summary distilled from `<namespace>/PREFERENCES.md`. Set `features.anatomy.session_start_attach: true` to append rendered anatomy as well (capped at ~2000 tokens, falling back to a top-level directory summary above the cap). When that option is enabled and cwd is inside an unregistered git repo, the hook emits an anatomy hint suggesting `anatomy-register`.
-
-### Incremental upkeep
-
-When `features.anatomy.post_tool_upsert: true`, the PostToolUse hook detects `Write` / `Edit` / `MultiEdit` / `NotebookEdit` / `Create` tool invocations and calls `anatomy-upsert-file` for each touched path. Set `features.anatomy.auto_register: true` to allow those upserts to register eligible git projects automatically. `desc_source: user` entries (set via `anatomy-set`) are preserved through every refresh — only tokens / mtime / kind get updated. Files matching the skip set (lockfiles, binaries, `dist/`, `node_modules/`, `>2 MB`, etc.) are removed from the snapshot.
-
-Run `memory_tool.py maintain` periodically for full reconciliation: it reports `stale_files` (in snapshot, gone from disk), `new_files` (on disk but not in snapshot), and `broken_log_refs` (`[[anatomy:slug/rel]]` citations whose target was removed). Right after registration-only setup, `new_files` will be large by design — do not run `anatomy-scan` just to clear it.
+Anatomy — the per-project file-index dimension — has been split out into a separate skill, `using-anatomy`. See that skill for registration, snapshots, and the `anatomy-*` commands.
 
 ## Health Dashboard (`status` + `/memstatus`)
 
 `<namespace>/STATS.json` is an event-driven counter file. Counters are real events — no estimates, no synthetic "savings" numbers:
 
-- `sessions`, `anatomy_attached_count`, `anatomy_truncated_count`, `anatomy_hint_emitted`, `anatomy_attached_tokens_est`, `anatomy_upserts`
+- `sessions`
 - `log_entries_user`, `log_entries_auto`
 - `stop_blocks`, `stop_throttled_passthrough`, `precompact_blocks`
 
@@ -161,12 +114,11 @@ python3 scripts/memory_tool.py status            # human-readable dashboard
 python3 scripts/memory_tool.py status --json     # raw dict
 ```
 
-The dashboard surfaces two diagnostic ratios:
+The dashboard surfaces a diagnostic ratio:
 
-- `anatomy_hit_rate = anatomy_attached_count / sessions` — meaningful only when SessionStart anatomy attach is enabled; low values mean cwd rarely lands inside a registered project.
 - `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `logging.detail_turn_interval`); near-zero values mean the hook is mostly passing through.
 
-Both are diagnostic, not performance claims — the system has no real-API token visibility.
+This is diagnostic, not a performance claim — the system has no real-API token visibility.
 
 For Claude Code there is also a `/memstatus` slash command in `~/.claude/commands/memstatus.md` that runs the dashboard and asks the model to give a 3-part summary (what's happening / what the ratios mean / one concrete next action).
 
@@ -215,13 +167,6 @@ python3 scripts/memory_tool.py setup --path ~/.memories --remote git@github.com:
 Fresh setup writes conservative hook defaults into `config.yaml`:
 
 ```yaml
-features:
-  anatomy:
-    enabled: false
-    session_start_attach: false
-    post_tool_upsert: false
-    auto_register: false
-
 logging:
   silent_summary: false
   detail_turn_interval: 20
@@ -236,7 +181,7 @@ session_archive:
   index_events: true
 ```
 
-These defaults keep startup lean: saved preferences still inject on `SessionStart`, but anatomy snapshots, silent auto-summaries, and session pointer archives are opt-in. Existing installs inherit the same defaults even if these fields are absent; copy the block from `examples/config.example.yaml` when you want explicit per-machine tuning.
+These defaults keep startup lean: saved preferences still inject on `SessionStart`, but silent auto-summaries and session pointer archives are opt-in. Existing installs inherit the same defaults even if these fields are absent; copy the block from `examples/config.example.yaml` when you want explicit per-machine tuning.
 
 ## Configuration
 
@@ -277,9 +222,9 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 
 | Event | Action |
 |---|---|
-| **SessionStart** | Inject memory-protocol reminder + compact preference summary from `<namespace>/PREFERENCES.md`. Also inject anatomy snapshot/hint only when `features.anatomy.session_start_attach: true`. |
+| **SessionStart** | Inject memory-protocol reminder + compact preference summary from `<namespace>/PREFERENCES.md`. |
 | **UserPromptSubmit** | Set `prompt_mentions_memory` if the prompt contains memory keywords; emit reminder when set. Session-lifetime counters are not reset. |
-| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. For write/edit-style PostToolUse calls, call `anatomy-upsert-file` only when `features.anatomy.post_tool_upsert: true` (best-effort, 8 s timeout). |
+| **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. |
 | **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final message contains a memory-write call, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL: when configured memory-prompt gating is active or `delta >= logging.detail_turn_interval` (default `20`), BLOCK with a short reason asking the model to write a detail-level log. Silent `level=summary tag=progress source=auto` appends happen only when `logging.silent_summary: true`. If `session_archive.enabled: true`, successful Stop pass-through appends a pointer record to `<namespace>/sessions/index.jsonl`. |
 | **PreCompact** | No-op. Previous BLOCK behavior could hang context compaction; leftover hook wiring returns `{}`. |
 
@@ -310,17 +255,16 @@ python3 scripts/memory_tool.py --help
 
 Current commands:
 
-- `load`: load memory according to the skill rules. Flags include `--log-query`, `--project`, `--topic`, `--anatomy`, `--cwd`, `--anatomy-max-tokens`.
+- `load`: load memory according to the skill rules. Flags include `--log-query`, `--project`, `--topic`, `--cwd`.
 - `search`: full-text search across namespace docs, durable memory, and primary log JSONL. With `--project` / `--topic`, scope narrows to log-only.
-- `maintain`: check log JSONL health, repair missing `<namespace>/docs/index.json` entries, and audit anatomy projects (`stale_files`, `new_files`, `broken_log_refs`).
+- `maintain`: check log JSONL health and repair missing `<namespace>/docs/index.json` entries.
 - `stats`: summarize primary log JSONL and `<namespace>/MEMORY.md` tag counts.
-- `status`: dashboard for `<namespace>/STATS.json` lifetime counters and the registered anatomy projects.
+- `status`: dashboard for `<namespace>/STATS.json` lifetime counters.
 - `export`: export a Markdown memory summary.
 - `write-log`: append one log entry. Optional `--project` / `--topic` (auto-routed when omitted), `--cwd` to override auto-routing.
 - `write-memory`: append curated long-term memory to `<namespace>/MEMORY.md`.
 - `write-preference`: append a durable preference to `<namespace>/PREFERENCES.md`.
 - `upsert-doc`: create or update `<namespace>/docs/*.md` and maintain `<namespace>/docs/index.json`.
-- `anatomy-register`, `anatomy-scan`, `anatomy-show`, `anatomy-set`, `anatomy-list`, `anatomy-upsert-file`: project snapshot lifecycle.
 - `setup`: configure the memory repo path, optional remote Git repo, namespace, and machine ID.
 
 Load the default context:
@@ -329,12 +273,11 @@ Load the default context:
 python3 scripts/memory_tool.py load
 ```
 
-Load with axes and anatomy:
+Load with axes:
 
 ```bash
 python3 scripts/memory_tool.py load --project spark-ann
 python3 scripts/memory_tool.py load --project spark-ann --topic build
-python3 scripts/memory_tool.py load --anatomy --cwd ~/yard/spark-ann/src
 ```
 
 Load a larger log date range:
@@ -399,7 +342,7 @@ python3 scripts/memory_tool.py write-log \
   --source user
 ```
 
-Or pin axes explicitly and reference touched files (anatomy refs are auto-appended when files live inside a registered project):
+Or pin axes explicitly and reference touched files:
 
 ```bash
 python3 scripts/memory_tool.py write-log \
@@ -432,24 +375,13 @@ python3 scripts/memory_tool.py search "deploy" --no-docs --json
 python3 scripts/memory_tool.py search "regression" --project spark-ann
 ```
 
-Anatomy lifecycle:
-
-```bash
-python3 scripts/memory_tool.py anatomy-register ~/yard/spark-ann --slug spark
-python3 scripts/memory_tool.py anatomy-scan spark
-python3 scripts/memory_tool.py anatomy-show spark
-python3 scripts/memory_tool.py anatomy-set spark src/api.py --desc "JWT auth gateway"
-python3 scripts/memory_tool.py anatomy-list
-python3 scripts/memory_tool.py anatomy-upsert-file ~/yard/spark-ann/src/api.py
-```
-
 Run maintenance checks and repair missing docs index entries:
 
 ```bash
 python3 scripts/memory_tool.py maintain --config ~/.skills/using-memory/config.yaml
 ```
 
-When `maintain` indexes manually added docs, it creates minimal metadata only: `title` from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Use `upsert-doc` when you need precise document type, project, tag, or summary metadata. `maintain` also audits anatomy drift; the `anatomy` block in the result lists per-project `stale_files`, `new_files`, and any `broken_log_refs`.
+When `maintain` indexes manually added docs, it creates minimal metadata only: `title` from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Use `upsert-doc` when you need precise document type, project, tag, or summary metadata.
 
 Memory stats. Stats return a `scope` object and currently count the primary root only:
 
@@ -481,7 +413,7 @@ python3 -m unittest discover -s tests -v
 
 ## Web browser (optional)
 
-`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. Read-only in v0.1 — every dimension is viewable (dashboard, logs, search, docs incl. `.md` and `.html`, MEMORY, PREFERENCES, anatomy) but writes still go through `memory_tool.py`.
+`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. Read-only in v0.1 — every dimension is viewable (dashboard, logs, search, docs incl. `.md` and `.html`, MEMORY, PREFERENCES) but writes still go through `memory_tool.py`.
 
 ```bash
 cd web

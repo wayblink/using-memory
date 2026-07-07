@@ -25,15 +25,6 @@
 `<namespace>/sessions/index.jsonl`
 - Optional cold session pointer index. Written only when `session_archive.enabled: true`; each line points at a host transcript path with minimal metadata such as `session_id`, `cwd`, `human_turns`, and `important_events`. It is not part of automatic retrieval and should not replace structured operation logs.
 
-`<namespace>/anatomy/_index.json`
-- Registry of project roots that have anatomy snapshots, keyed by slug (lowercase `[a-z0-9._-]`, 1..64 chars). Slug collisions are surfaced at registration time and require explicit `--slug` to disambiguate.
-
-`<namespace>/anatomy/<slug>.json`
-- Source of truth for a project snapshot: `project`, `root`, `scanned_at`, `totals`, and per-file entries with `desc`, `desc_source` (`auto` / `user` / `empty`), `tokens_est`, `kind`, `mtime`. `desc_source: user` entries set via `anatomy-set` survive every future scan or PostToolUse upsert; only tokens / mtime / kind are refreshed.
-
-`<namespace>/anatomy/<slug>.md`
-- Auto-rendered from `<slug>.json`. Used by `anatomy-show` and by SessionStart context injection (capped at ~2000 tokens, fallback to a top-level directory summary above the cap).
-
 `<namespace>/STATS.json`
 - Machine-local event counter file. Maintained by hooks (`bump_stats`) and write-* commands. Counters are real events — not estimates. Never auto-loaded into a session snapshot; read by `memory_tool.py status`. Intentionally not synced to reference roots because counts are per-machine.
 
@@ -43,10 +34,8 @@ Allowed lightweight tags:
 
 Optional log axes (`project` / `topic`):
 - Lowercase `[a-z0-9._-]`, 1..64 chars; only written when present (no null pollution). Auto-routed by `write-log` from cwd / `--files` / text keywords when omitted, and filterable via `search/load --project --topic`.
-- Anatomy citations like `[[anatomy:<slug>/<rel>]]` are auto-appended to the log entry's `text` when `--files` lives inside a registered project; `search` resolves them and returns the snapshot description under `anatomy_links`.
 
 CLI write boundary:
 - `write-preference` appends stable preferences to `<namespace>/PREFERENCES.md`.
 - `write-memory` appends only `fact`, `decision`, or `lesson` entries to `<namespace>/MEMORY.md`.
 - `upsert-doc` writes `<namespace>/docs/*.md` and updates `<namespace>/docs/index.json` in the same operation.
-- `anatomy-register` / `-scan` / `-set` / `-upsert-file` maintain `<namespace>/anatomy/`. Anatomy is event-driven (PostToolUse hook) plus user-curated descriptions.

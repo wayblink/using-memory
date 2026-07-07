@@ -32,22 +32,10 @@ def _summarize(report: dict[str, Any]) -> dict[str, int]:
     stale = report.get("stale_files") or report.get("stale") or []
     corrupt = report.get("corrupt") or []
     repaired = report.get("repaired_index_entries") or report.get("repaired") or []
-    anatomy = report.get("anatomy") or {}
-    broken = report.get("broken_log_refs") or anatomy.get("broken_log_refs") or []
-    projects = anatomy.get("projects") if isinstance(anatomy, dict) else []
-    project_drift = 0
-    if isinstance(projects, list):
-        for proj in projects:
-            if not isinstance(proj, dict):
-                continue
-            if proj.get("stale_files") or proj.get("new_files"):
-                project_drift += 1
     return {
         "stale": len(stale) if isinstance(stale, list) else 0,
         "corrupt": len(corrupt) if isinstance(corrupt, list) else 0,
         "repaired": len(repaired) if isinstance(repaired, list) else 0,
-        "broken_log_refs": len(broken) if isinstance(broken, list) else 0,
-        "anatomy_projects_with_drift": project_drift,
     }
 
 
