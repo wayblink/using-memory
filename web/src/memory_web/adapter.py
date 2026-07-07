@@ -337,6 +337,36 @@ class MemoryAdapter:
         ns = self._ns(date=when_str, text=text, json=True)
         return self._call_capturing_exits(self._mt.do_write_preference, ns)
 
+    def write_log(
+        self,
+        *,
+        when: str | None,
+        tag: str,
+        text: str,
+        level: str = "detail",
+        confidence: int | None = None,
+        source: str | None = None,
+        files: list[str] | None = None,
+        project: str | None = None,
+        topic: str | None = None,
+    ) -> dict:
+        self._require_writable()
+        when_str = when or date.today().isoformat()
+        ns = self._ns(
+            date=when_str,
+            tag=tag,
+            text=text,
+            level=level,
+            confidence=confidence,
+            source=source,
+            files=files or [],
+            project=project,
+            topic=topic,
+            cwd=None,
+            json=True,
+        )
+        return self._call_capturing_exits(self._mt.do_write_log, ns)
+
     def upsert_doc(
         self,
         *,

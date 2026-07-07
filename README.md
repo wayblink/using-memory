@@ -1,6 +1,6 @@
 # using-memory
 
-`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory and operation history in a Git-managed Markdown repo, with every memory file scoped under a configured namespace. `scripts/memory_tool.py` provides loading, writing, document indexing, and a health dashboard.
+`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory and operation history in a Git-managed Markdown repo, with every memory file scoped under a configured namespace. The `umem` CLI (`scripts/memory_tool.py`) provides loading, writing, document indexing, and a health dashboard.
 
 The project goal is to make agents load durable memory only when cross-session context is useful, then route new information to the right place instead of mixing preferences, facts, temporary logs, and structured documents together.
 
@@ -90,9 +90,9 @@ Both axes accept lowercase `[a-z0-9._-]`, 1..64 chars. Fields are only written w
 Filter at retrieval time:
 
 ```bash
-python3 scripts/memory_tool.py load --project spark-ann
-python3 scripts/memory_tool.py load --project spark-ann --topic build
-python3 scripts/memory_tool.py search "regression" --project spark-ann
+umem load --project spark-ann
+umem load --project spark-ann --topic build
+umem search "regression" --project spark-ann
 ```
 
 Same axis repeats are OR, different axes AND. When `search` is called with either axis, scope auto-narrows to log-only (docs and MEMORY.md don't carry these fields yet).
@@ -110,8 +110,8 @@ Anatomy — the per-project file-index dimension — has been split out into a s
 - `stop_blocks`, `stop_throttled_passthrough`, `precompact_blocks`
 
 ```bash
-python3 scripts/memory_tool.py status            # human-readable dashboard
-python3 scripts/memory_tool.py status --json     # raw dict
+umem status            # human-readable dashboard
+umem status --json     # raw dict
 ```
 
 The dashboard surfaces a diagnostic ratio:
@@ -138,6 +138,23 @@ You can target a single host, or install by copying:
 ./scripts/install.sh both
 ```
 
+Use `link.sh codex` for day-to-day development: Codex reads this checkout through a symlink, so edits to `SKILL.md`, scripts, hooks, and docs are live after a new Codex session starts. Use `install.sh codex` for a copied install when you want Codex isolated from the working tree.
+
+To refresh an existing Codex development install:
+
+```bash
+./scripts/link.sh codex
+umem --help
+python3 ~/.codex/skills/using-memory/scripts/memory_tool.py load --json >/tmp/umem-load.json
+```
+
+To replace Codex with a copied install:
+
+```bash
+USING_MEMORY_INSTALL_FORCE=1 ./scripts/install.sh codex
+umem --help
+```
+
 `link.sh` refuses to replace an existing real directory; remove the old directory manually or use `install.sh` for a copied install. `install.sh` refuses to overwrite an existing destination unless `USING_MEMORY_INSTALL_FORCE=1` is set, and copied installs exclude development-only files such as `.git` and `tests/`.
 
 After installation, the skill usually lives at:
@@ -147,12 +164,21 @@ After installation, the skill usually lives at:
 ~/.claude/skills/using-memory/
 ```
 
+`install.sh` / `link.sh` also drop a `umem` command into `~/.local/bin` — a thin wrapper so you can run `umem <command>` instead of `python3 <skill>/scripts/memory_tool.py <command>`. Ensure `~/.local/bin` is on your `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"   # add to your shell profile if needed
+umem --help
+```
+
+Override the wrapper location with `UMEM_BIN_DIR`; the `python3 .../memory_tool.py` form always works as a fallback.
+
 ## First-time storage setup
 
 On first install or first link through this repo's `scripts/install.sh` or `scripts/link.sh`, the helper script checks for `~/.skills/using-memory/config.yaml` (or `USING_MEMORY_CONFIG`). If no config exists and the terminal is interactive, it starts:
 
 ```bash
-python3 scripts/memory_tool.py setup
+umem setup
 ```
 
 Some external skill installers only copy the skill directory and do not execute `scripts/install.sh`; after those installs, run the setup command manually. The setup prompt asks for the memory repo path, optional remote Git repo URL, namespace, and machine ID. When a remote URL is supplied, setup clones it into the requested path or pulls an existing Git checkout. When no remote URL is supplied, setup initializes a local Git repo, seeds the namespace layout, writes the config, and prints the follow-up command to add a remote later. Set `USING_MEMORY_SKIP_SETUP=1` to skip this prompt during automated installs.
@@ -160,8 +186,8 @@ Some external skill installers only copy the skill directory and do not execute 
 You can also run setup non-interactively:
 
 ```bash
-python3 scripts/memory_tool.py setup --path ~/.memories --namespace main --machine-id local-main
-python3 scripts/memory_tool.py setup --path ~/.memories --remote git@github.com:you/memories.git --namespace main --machine-id local-main
+umem setup --path ~/.memories --namespace main --machine-id local-main
+umem setup --path ~/.memories --remote git@github.com:you/memories.git --namespace main --machine-id local-main
 ```
 
 Fresh setup writes conservative hook defaults into `config.yaml`:
@@ -185,7 +211,7 @@ These defaults keep startup lean: saved preferences still inject on `SessionStar
 
 ## Configuration
 
-`memory_tool.py` resolves config in this order:
+`umem` resolves config in this order:
 
 1. File path from the `USING_MEMORY_CONFIG` environment variable.
 2. `~/.skills/using-memory/config.yaml`.
@@ -214,6 +240,16 @@ defaults:
 
 Here `path` is the memory root that contains the `main/` namespace directory.
 
+Optional API remote:
+
+```yaml
+remote:
+  endpoint: http://127.0.0.1:8765
+  token: change-me
+```
+
+When top-level `remote.endpoint` is configured, `umem load`, `umem search`, `umem write-log`, `umem write-memory`, `umem write-preference`, and `umem upsert-doc` first call the web app's `/api/v1/*` endpoints. `remote.token` is sent as `Authorization: Bearer <token>`. Connection failures, timeouts, and HTTP 5xx responses fall back to the local file backend with a stderr warning; HTTP 4xx responses are treated as command errors. This top-level API remote is separate from `umem setup --remote`, which is still the Git remote URL for syncing the memory repo.
+
 Python dependencies are listed in [requirements.txt](requirements.txt). The current CLI needs `PyYAML` to parse local config.
 
 ## Hook Behaviour
@@ -226,7 +262,7 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 | **UserPromptSubmit** | Set `prompt_mentions_memory` if the prompt contains memory keywords; emit reminder when set. Session-lifetime counters are not reset. |
 | **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. |
 | **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final message contains a memory-write call, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL: when configured memory-prompt gating is active or `delta >= logging.detail_turn_interval` (default `20`), BLOCK with a short reason asking the model to write a detail-level log. Silent `level=summary tag=progress source=auto` appends happen only when `logging.silent_summary: true`. If `session_archive.enabled: true`, successful Stop pass-through appends a pointer record to `<namespace>/sessions/index.jsonl`. |
-| **PreCompact** | No-op. Previous BLOCK behavior could hang context compaction; leftover hook wiring returns `{}`. |
+| **PreCompact** | Disabled. Previous BLOCK behavior could hang context compaction; do not wire it in new installs. If an older host still invokes it, the handler returns `{}`. |
 
 Block reasons are intentionally short (~200 chars) — they are a *trigger* for the model to call `write-log`, not a place to replay the model's own tool history.
 
@@ -237,9 +273,9 @@ For Codex, enable the hooks feature in `~/.codex/config.toml`:
 codex_hooks = true
 ```
 
-Then point `~/.codex/hooks.json` at `~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact`, and `Stop`.
+Then point `~/.codex/hooks.json` at `~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, and `Stop`. Do not add `PreCompact` on new installs; it is intentionally disabled.
 
-For Claude Code, point `SessionStart` at `~/.claude/skills/using-memory/scripts/hooks/claude_session_start_hook.py` so startup includes both `using-superpowers` and `using-memory`. Point `UserPromptSubmit`, `PostToolUse`, `PostToolBatch`, `ConfigChange`, `PreCompact`, and `Stop` at `~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py`.
+For Claude Code, point `SessionStart` at `~/.claude/skills/using-memory/scripts/hooks/claude_session_start_hook.py` so startup includes both `using-superpowers` and `using-memory`. Point `UserPromptSubmit`, `PostToolUse`, `PostToolBatch`, `ConfigChange`, and `Stop` at `~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py`. Do not add `PreCompact` on new installs.
 
 When you pull an update that changes hook behavior, rerun `./scripts/link.sh` or `./scripts/install.sh both` before restarting the host. Copied installs do not pick up new helper scripts until you reinstall.
 
@@ -247,173 +283,45 @@ See [references/machine-setup.md](references/machine-setup.md) for complete hook
 
 ## CLI Usage
 
-Show available commands:
+Invoke as `umem <command>` (installed to `~/.local/bin` by `scripts/install.sh`; equivalent to `python3 <skill>/scripts/memory_tool.py <command>`). Every command takes `--config` (env `USING_MEMORY_CONFIG`, or the default `~/.skills/using-memory/config.yaml`) and supports `--json`.
 
-```bash
-python3 scripts/memory_tool.py --help
-```
+**When unsure of a command's flags, run `umem <command> --help`.** The full flag reference also lives in [`references/cli-reference.md`](references/cli-reference.md) — flags and examples are intentionally not duplicated here.
 
-Current commands:
+### Read
 
-- `load`: load memory according to the skill rules. Flags include `--log-query`, `--project`, `--topic`, `--cwd`.
-- `search`: full-text search across namespace docs, durable memory, and primary log JSONL. With `--project` / `--topic`, scope narrows to log-only.
-- `maintain`: check log JSONL health and repair missing `<namespace>/docs/index.json` entries.
-- `stats`: summarize primary log JSONL and `<namespace>/MEMORY.md` tag counts.
-- `status`: dashboard for `<namespace>/STATS.json` lifetime counters.
-- `export`: export a Markdown memory summary.
-- `write-log`: append one log entry. Optional `--project` / `--topic` (auto-routed when omitted), `--cwd` to override auto-routing.
-- `write-memory`: append curated long-term memory to `<namespace>/MEMORY.md`.
-- `write-preference`: append a durable preference to `<namespace>/PREFERENCES.md`.
-- `upsert-doc`: create or update `<namespace>/docs/*.md` and maintain `<namespace>/docs/index.json`.
-- `setup`: configure the memory repo path, optional remote Git repo, namespace, and machine ID.
+| Command | What |
+|---|---|
+| `umem load` | Print the memory snapshot: preferences + durable memory + recent log window + matched docs. |
+| `umem search` | Full-text search (query as positional arg) across `docs/*.md`, `MEMORY.md`, and the namespace log. |
+| `umem maintain` | Repair `docs/index.json`, flag stale/corrupt log lines. `--distill` / `--promote TOPIC` drive the distillation pipeline (read-only). |
+| `umem stats` | Aggregate tag counts across the log + `MEMORY.md`. |
+| `umem status` | Lifetime hook/counter dashboard from `STATS.json`. |
+| `umem export` | Markdown summary to stdout or `--dest FILE`. |
 
-Load the default context:
+### Write
 
-```bash
-python3 scripts/memory_tool.py load
-```
+| Command | What |
+|---|---|
+| `umem write-log` | Append one JSONL operation-log entry. Required: `--date --tag --text`; `--project`/`--topic` auto-route from cwd/files/text when omitted. |
+| `umem write-memory` | Append one curated `MEMORY.md` entry (tags: `fact` / `decision` / `lesson`). |
+| `umem write-preference` | Append one stable `PREFERENCES.md` entry. Required: `--text`. |
+| `umem upsert-doc` | Write one `docs/*.md` + update `index.json`. Required: `--doc` plus `--text` / `--text-stdin`. |
+| `umem setup` | Write the machine-local config (path / namespace / machine-id / optional remote). |
 
-Load with axes:
-
-```bash
-python3 scripts/memory_tool.py load --project spark-ann
-python3 scripts/memory_tool.py load --project spark-ann --topic build
-```
-
-Load a larger log date range:
-
-```bash
-python3 scripts/memory_tool.py load --log-from 2026-05-01 --log-to 2026-05-06
-python3 scripts/memory_tool.py load --log-days 14
-python3 scripts/memory_tool.py load --log-days 30 --log-query "project alpha"
-```
-
-Filter docs by index metadata:
-
-```bash
-python3 scripts/memory_tool.py load --doc-type SOP
-python3 scripts/memory_tool.py load --doc-tag writing
-python3 scripts/memory_tool.py load --project project-alpha
-python3 scripts/memory_tool.py load --doc-query "deployment"
-```
-
-Write a durable preference:
-
-```bash
-python3 scripts/memory_tool.py write-preference \
-  --config ~/.skills/using-memory/config.yaml \
-  --text "User preference: answer direct questions concisely by default."
-```
-
-Write durable memory:
-
-```bash
-python3 scripts/memory_tool.py write-memory \
-  --config ~/.skills/using-memory/config.yaml \
-  --date 2026-05-06 \
-  --tag fact \
-  --text "The using-memory project uses <namespace>/docs/index.json as its structured document index."
-```
-
-Create or update a docs document:
-
-```bash
-python3 scripts/memory_tool.py upsert-doc \
-  --config ~/.skills/using-memory/config.yaml \
-  --doc project-alpha \
-  --title "Project Alpha" \
-  --doc-type project \
-  --modified 2026-05-06 \
-  --doc-tag planning \
-  --project project-alpha \
-  --text "Long-term Project Alpha notes."
-```
-
-Write a log entry (axes auto-routed when omitted):
-
-```bash
-python3 scripts/memory_tool.py write-log \
-  --config ~/.skills/using-memory/config.yaml \
-  --date 2026-05-06 \
-  --tag operation \
-  --level summary \
-  --text "Finished the initial using-memory README draft today." \
-  --confidence 8 \
-  --source user
-```
-
-Or pin axes explicitly and reference touched files:
-
-```bash
-python3 scripts/memory_tool.py write-log \
-  --config ~/.skills/using-memory/config.yaml \
-  --date 2026-05-06 \
-  --tag commit \
-  --project spark-ann \
-  --topic build \
-  --files /Users/me/yard/spark-ann/build.sh \
-  --text "Built Java17 image and pushed to dev registry."
-```
-
-`write-log` writes `<namespace>/log/YYYY-MM-DD.jsonl` and auto-generates `ts` as a local timezone ISO 8601 timestamp with an offset, such as `2026-05-06T18:30:00+08:00`.
-
-Allowed log tags are:
-
-```text
-operation, progress, milestone, state, result, output, verification,
-issue, debug, error, fix, decision, analysis, consideration, build,
-deploy, release, commit, test, benchmark, lesson, fact, pattern,
-insight, note, context
-```
-
-Full-text search. Search returns a `scope` object: docs and memory search cover primary plus reference roots, while log search covers the primary root's configured namespace only. Adding `--project` / `--topic` narrows scope to log-only.
-
-```bash
-python3 scripts/memory_tool.py search "deploy"
-python3 scripts/memory_tool.py search "bug" --log-days 7
-python3 scripts/memory_tool.py search "deploy" --no-docs --json
-python3 scripts/memory_tool.py search "regression" --project spark-ann
-```
-
-Run maintenance checks and repair missing docs index entries:
-
-```bash
-python3 scripts/memory_tool.py maintain --config ~/.skills/using-memory/config.yaml
-```
-
-When `maintain` indexes manually added docs, it creates minimal metadata only: `title` from the first Markdown H1 when present, `type: wiki`, and empty `projects` / `tags`. Use `upsert-doc` when you need precise document type, project, tag, or summary metadata.
-
-Memory stats. Stats return a `scope` object and currently count the primary root only:
-
-```bash
-python3 scripts/memory_tool.py stats
-```
-
-Health dashboard:
-
-```bash
-python3 scripts/memory_tool.py status
-python3 scripts/memory_tool.py status --json
-```
-
-Export Markdown summary:
-
-```bash
-python3 scripts/memory_tool.py export
-python3 scripts/memory_tool.py export --dest CLAUDE.md
-```
 
 ## Tests
 
 Run the full test suite:
 
 ```bash
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m pytest -q; echo EXIT:$?
 ```
+
+Trust the exit code, not just the summary text. The web/API suite uses FastAPI's `TestClient`, so deprecation warnings from FastAPI/Starlette can appear while behavior still passes.
 
 ## Web browser (optional)
 
-`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. Read-only in v0.1 — every dimension is viewable (dashboard, logs, search, docs incl. `.md` and `.html`, MEMORY, PREFERENCES) but writes still go through `memory_tool.py`.
+`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. It also exposes `/api/v1` for command-level remote access: POST `log`, `memory`, `preference`, and `doc`; GET `load`, `search`, and `health`. If top-level `remote.token` is configured, non-loopback `/api/v1` clients must send `Authorization: Bearer <token>`; loopback calls remain usable for local development.
 
 ```bash
 cd web
@@ -423,7 +331,7 @@ pip install -e .
 memory-web --open    # → http://127.0.0.1:8765
 ```
 
-See [web/README.md](web/README.md) for pages, architecture, and the v0.4 / v0.5 roadmap (editing, manual maintain / distill / promote triggers).
+See [web/README.md](web/README.md) for pages, architecture, API remote behavior, and browser QA notes.
 
 ## References
 

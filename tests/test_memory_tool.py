@@ -3,8 +3,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import date, datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -103,6 +105,36 @@ memory_roots:
             encoding="utf-8",
         )
 
+    def write_remote_config(self, path: Path, primary: Path, endpoint: str, *, token: str | None = None):
+        token_line = f"  token: {token}\n" if token is not None else ""
+        path.write_text(
+            f"""version: 1
+remote:
+  endpoint: {endpoint}
+{token_line}memory_roots:
+  - path: {primary}
+    role: primary
+    writable: true
+    namespace: main
+    machine_id: primary-machine
+    priority: 100
+defaults:
+  read_today: true
+  read_yesterday: true
+  load_docs_on_demand: true
+""",
+            encoding="utf-8",
+        )
+
+    def start_remote_api(self, handler):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        self.addCleanup(thread.join, 2)
+        return f"http://127.0.0.1:{server.server_port}"
+
     def loaded_paths(self, result):
         return [Path(source["path"]) for source in result["sources"] if source["loaded"]]
 
@@ -135,6 +167,124 @@ memory_roots:
             self.assertNotIn("today reference", serialized)
             self.assertIn("today primary", serialized)
             self.assertEqual(result["doc_hits"], [])
+
+    def test_write_log_forwards_to_remote_api_when_configured(self):
+        seen = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("content-length", "0"))
+                seen["path"] = self.path
+                seen["authorization"] = self.headers.get("authorization")
+                seen["body"] = json.loads(self.rfile.read(length).decode("utf-8"))
+                payload = {"changed": True, "path": "remote://log", "remote": True}
+                data = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *_args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            endpoint = self.start_remote_api(Handler)
+            config = base / "config.yaml"
+            self.write_remote_config(config, primary, endpoint, token="secret-token")
+
+            result = self.run_tool(
+                "write-log",
+                "--config", str(config),
+                "--date", "2026-05-06",
+                "--tag", "note",
+                "--text", "remote write",
+                "--json",
+            )
+
+            self.assertTrue(result["remote"])
+            self.assertEqual(seen["path"], "/api/v1/log")
+            self.assertEqual(seen["authorization"], "Bearer secret-token")
+            self.assertEqual(seen["body"]["tag"], "note")
+            self.assertEqual(seen["body"]["date"], "2026-05-06")
+            local_log = self.namespace_root(primary) / "log" / "2026-05-06.jsonl"
+            self.assertNotIn("remote write", local_log.read_text(encoding="utf-8"))
+
+    def test_write_log_remote_failure_falls_back_to_local(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_remote_config(config, primary, "http://127.0.0.1:9")
+
+            proc = subprocess.run(
+                [
+                    sys.executable, str(TOOL),
+                    "write-log",
+                    "--config", str(config),
+                    "--date", "2026-05-06",
+                    "--tag", "note",
+                    "--text", "fallback write",
+                    "--json",
+                ],
+                cwd=ROOT,
+                env={k: v for k, v in os.environ.items() if k != "USING_MEMORY_CONFIG"},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            result = json.loads(proc.stdout)
+            self.assertTrue(result["changed"])
+            self.assertFalse(result.get("remote", False))
+            self.assertIn("remote unavailable", proc.stderr)
+            local_log = self.namespace_root(primary) / "log" / "2026-05-06.jsonl"
+            self.assertIn("fallback write", local_log.read_text(encoding="utf-8"))
+
+    def test_search_forwards_to_remote_api_when_configured(self):
+        seen = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen["path"] = self.path
+                seen["authorization"] = self.headers.get("authorization")
+                payload = {"query": "needle", "hits": [{"source": "remote"}], "total": 1}
+                data = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *_args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            endpoint = self.start_remote_api(Handler)
+            config = base / "config.yaml"
+            self.write_remote_config(config, primary, endpoint, token="secret-token")
+
+            result = self.run_tool(
+                "search",
+                "needle",
+                "--config", str(config),
+                "--project", "using-memory",
+                "--topic", "hooks",
+                "--json",
+            )
+
+            self.assertTrue(result["remote"])
+            self.assertEqual(seen["authorization"], "Bearer secret-token")
+            self.assertIn("/api/v1/search?", seen["path"])
+            self.assertIn("q=needle", seen["path"])
+            self.assertIn("project=using-memory", seen["path"])
+            self.assertIn("topic=hooks", seen["path"])
+            self.assertEqual(result["hits"], [{"source": "remote"}])
 
     def test_load_uses_configured_namespace_for_all_memory_files(self):
         with tempfile.TemporaryDirectory() as tmp:

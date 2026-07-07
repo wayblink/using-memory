@@ -42,8 +42,9 @@ description: Memory protocol for persisted cross-session context and operation c
 - Read `USING_MEMORY_CONFIG` first.
 - If it is unset, try `~/.skills/using-memory/config.yaml`.
 - If config is missing, enter no-memory mode: do not block the session, add a warning that setup is needed, and disable automatic writes by default.
-- If the user is installing, reinstalling, debugging setup, or explicitly expects a setup prompt, tell them to run `python3 scripts/memory_tool.py setup`. That command prompts for memory path, optional remote Git repo URL, namespace, and machine ID. If a remote Git repo is provided it clones or pulls first; otherwise it initializes a local Git repo and prints the later remote-creation command.
-- Do not assume package-manager style skill installation executes `scripts/install.sh`; many installers only copy the skill directory. In that case, run `python3 scripts/memory_tool.py setup` manually after install.
+- If the user is installing, reinstalling, debugging setup, or explicitly expects a setup prompt, tell them to run `umem setup`. That command prompts for memory path, optional remote Git repo URL, namespace, and machine ID. If a remote Git repo is provided it clones or pulls first; otherwise it initializes a local Git repo and prints the later remote-creation command.
+- Top-level config `remote: {endpoint, token}` is the optional HTTP API backend for command forwarding. It is separate from `memory_roots[*].remote`, which is Git remote metadata written by setup.
+- Do not assume package-manager style skill installation executes `scripts/install.sh`; many installers only copy the skill directory. In that case, run `umem setup` manually after install.
 
 ## Session Snapshot
 - `preferences`
@@ -120,7 +121,9 @@ A full worked example (well-formed Spark image build with a blocked registry pus
 
 ## Memory Tool Commands
 
-Use `scripts/memory_tool.py` when the host can run local scripts (run with `python3`; do not assume a `python` shim). Every command takes `--config` (or falls back to `USING_MEMORY_CONFIG` / the default yaml). **Full flag reference: `references/cli-reference.md`** — read it when you need exact selectors.
+Invoke as `umem <command>` (installed to `~/.local/bin` by `scripts/install.sh`; equivalent to `python3 <skill>/scripts/memory_tool.py <command>`). Every command takes `--config` (or falls back to `USING_MEMORY_CONFIG` / the default yaml) and supports `--json`. The list below is the entry point — **when unsure of a command's flags, run `umem <command> --help`**; full flag reference also in `references/cli-reference.md`.
+
+When top-level `remote.endpoint` is configured, `load`, `search`, `write-log`, `write-memory`, `write-preference`, and `upsert-doc` first call `/api/v1` on that endpoint. Connection failures, timeouts, and HTTP 5xx responses fall back to local files with a warning; HTTP 4xx responses are command errors. `remote.token`, when present, is sent as a bearer token.
 
 ### Read
 
@@ -166,7 +169,7 @@ Full details — the tag-family table, backlink semantics, hook internals, subag
 - `cumulative_human_turns` (Stop hook accumulates real human-turn deltas across sessions; powers distillation triggers)
 - `last_distill_check_ts`, `last_distill_inject_ts`, `last_distill_inject_turn`, `last_promote_ts` (timestamps and turn checkpoints used by the distillation pipeline; see Distillation Pipeline above)
 
-`memory_tool.py status` prints these along with a diagnostic ratio:
+`umem status` prints these along with a diagnostic ratio:
 
 - `stop_block_ratio = stop_blocks / (stop_blocks + stop_throttled_passthrough)` — high values mean the model is being interrupted often (consider raising `logging.detail_turn_interval` or narrowing `logging.hard_gate`); near-zero values mean the hook is mostly passing through.
 
@@ -205,11 +208,11 @@ Routing:
 - Complete operation records go to `<namespace>/log/*.jsonl` with `level=detail`: commands run, services restarted, files edited, config changed, branches/commits/pushes, builds, deployments, tests, debugging traces, verification, failures, fixes, and remaining risks.
 - Key results and milestones go to `<namespace>/log/*.jsonl` with `level=summary`: successful completion, release/PR state, verified behavior, or important user-facing outcomes.
 - Write enough fields in `text` to be useful later: what was done, why, command or host event when relevant, important parameters, affected paths, result status, commit hash/PR/deploy URL when available, and unresolved follow-up.
-- Mature workflows, best practices, and troubleshooting guides go to `<namespace>/docs/*.md` through `scripts/memory_tool.py upsert-doc`. The minimal invocation is `upsert-doc --doc <slug> --text <body>` (or `--text-stdin`); title/type/modified auto-fallback so handwriting a doc is cheap.
+- Mature workflows, best practices, and troubleshooting guides go to `<namespace>/docs/*.md` through `umem upsert-doc`. The minimal invocation is `upsert-doc --doc <slug> --text <body>` (or `--text-stdin`); title/type/modified auto-fallback so handwriting a doc is cheap.
 - When consolidating multiple log entries into one doc (context-heavy synthesis, ~5–30 KB of source material), delegate to a subagent via the Agent tool (`subagent_type=general-purpose`). The subagent's isolated context window keeps the main session lean and returns only the final slug + a one-sentence summary.
-- Stable facts, confirmed decisions, and durable lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`.
+- Stable facts, confirmed decisions, and durable lessons go to `<namespace>/MEMORY.md` through `umem write-memory`.
 - Open issues, parking points, and unresolved risks stay out of `<namespace>/MEMORY.md` unless they become confirmed decisions, durable lessons, or stable facts.
-- Stable user preferences go to `<namespace>/PREFERENCES.md` through `scripts/memory_tool.py write-preference`.
+- Stable user preferences go to `<namespace>/PREFERENCES.md` through `umem write-preference`.
 
 Never write:
 
@@ -229,7 +232,7 @@ Never write:
 
 ## References
 
-- `references/cli-reference.md`: full `memory_tool.py` flag reference for every read/write command.
+- `references/cli-reference.md`: full `umem` / `memory_tool.py` flag reference for every read/write command.
 - `references/distillation.md`: distillation tag-family table, backlink semantics, hook trigger internals, subagent prompt template, tuning constants.
 - `references/log-entry-examples.md`: full worked good/bad log-entry body examples.
 - `references/repo-layout.md`: read when discussing memory repo structure, file responsibilities, document metadata, or tag conventions.

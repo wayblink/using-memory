@@ -42,9 +42,9 @@ class SkillDocTests(unittest.TestCase):
         self.assertIn("Never write:", text)
         self.assertIn("one JSONL entry for every tool call as a mechanical mirror", text)
         self.assertIn("full temporary command output when a concise result summary is enough", text)
-        self.assertIn("scripts/memory_tool.py write-preference", text)
-        self.assertIn("scripts/memory_tool.py write-memory", text)
-        self.assertIn("scripts/memory_tool.py upsert-doc", text)
+        self.assertIn("umem write-preference", text)
+        self.assertIn("umem write-memory", text)
+        self.assertIn("umem upsert-doc", text)
         self.assertIn("write-memory` accepts only `fact`, `decision`, and `lesson`", combined)
         self.assertIn(
             "Open issues",

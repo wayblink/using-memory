@@ -16,6 +16,7 @@ import sys
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -89,6 +90,36 @@ def collect_roots(config: dict) -> tuple[list, list]:
     primaries = sorted([r for r in roots if r.get("role") == "primary"], key=root_priority, reverse=True)
     references = sorted([r for r in roots if r.get("role") == "reference"], key=root_priority, reverse=True)
     return primaries, references
+def remote_api_from_config(config: dict) -> dict | None:
+    """Return normalized API remote config, or None when not configured.
+
+    Top-level ``remote: {endpoint, token}`` is the HTTP API backend. Legacy
+    ``memory_roots[*].remote`` strings remain Git remote metadata from setup
+    and are intentionally ignored here.
+    """
+    remote = config.get("remote") if isinstance(config, dict) else None
+    if remote in (None, ""):
+        return None
+    if not isinstance(remote, dict):
+        sys.stderr.write("invalid config: top-level remote must be a mapping with endpoint/token\n")
+        sys.exit(2)
+    endpoint = remote.get("endpoint")
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        sys.stderr.write("invalid config: remote.endpoint must be a non-empty URL\n")
+        sys.exit(2)
+    endpoint = endpoint.strip().rstrip("/")
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        sys.stderr.write("invalid config: remote.endpoint must be an http(s) URL\n")
+        sys.exit(2)
+    token = remote.get("token")
+    if token is not None and not isinstance(token, str):
+        sys.stderr.write("invalid config: remote.token must be a string when set\n")
+        sys.exit(2)
+    normalized = {"endpoint": endpoint}
+    if token:
+        normalized["token"] = token
+    return normalized
 def root_priority(root: dict) -> int:
     try:
         return int(root.get("priority", 0))

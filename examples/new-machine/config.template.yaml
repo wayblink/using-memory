@@ -3,6 +3,12 @@
 
 version: 1
 
+# Optional HTTP API backend. This is command forwarding to memory-web /api/v1,
+# not the Git remote URL used by `umem setup --remote`.
+# remote:
+#   endpoint: http://127.0.0.1:8765
+#   token: change-me
+
 memory_roots:
   - path: ~/.memories
     role: primary

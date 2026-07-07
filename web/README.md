@@ -26,13 +26,17 @@ CDN at runtime.
 memory-web                       # http://127.0.0.1:8765
 memory-web --open                # also opens a browser tab
 memory-web --port 9000
-memory-web --host 0.0.0.0        # expose on LAN (no auth — use with care)
+memory-web --host 0.0.0.0        # expose on LAN; set remote.token for /api/v1 auth
 memory-web --config /path/to/config.yaml
 ```
 
 The app reads from the same `~/.skills/using-memory/config.yaml` (or
 `USING_MEMORY_CONFIG`) that `memory_tool.py` uses, and operates on the
 configured primary repo + namespace.
+
+If the config has top-level `remote.token`, non-loopback `/api/v1` requests
+must send `Authorization: Bearer <token>`. Loopback clients are exempt so local
+CLI forwarding remains frictionless.
 
 The version pill in the sidebar reads from `<repo>/version.txt` (the
 skill's source of truth). The probe falls back to common skill install
@@ -56,9 +60,16 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 | `/memory` | `MEMORY.md` rendered + Append-entry form (`fact` / `decision` / `lesson`) |
 | `/memory/download` | Download `MEMORY.md` |
 | `POST /memory/append` | Append via `memory_tool.write-memory` |
+| `POST /memory/update/{line_no}` | Replace one rendered MEMORY line |
+| `POST /memory/delete/{line_no}` | Delete one rendered MEMORY line |
 | `/preferences` | `PREFERENCES.md` rendered + Append-preference form |
 | `/preferences/download` | Download `PREFERENCES.md` |
 | `POST /preferences/append` | Append via `memory_tool.write-preference` |
+| `POST /preferences/update/{line_no}` | Replace one rendered preference line |
+| `POST /preferences/delete/{line_no}` | Delete one rendered preference line |
+| `/api/v1/health` | JSON health endpoint for remote CLI forwarding |
+| `GET /api/v1/load`, `GET /api/v1/search` | JSON read endpoints matching the CLI read commands |
+| `POST /api/v1/log`, `POST /api/v1/memory`, `POST /api/v1/preference`, `POST /api/v1/doc` | JSON write endpoints matching the CLI write commands |
 | `/lang/{en,zh}` | Set language cookie + redirect back |
 | `/favicon.ico` · `/static/favicon.svg` | SVG favicon (also referenced via `<link rel="icon">`) |
 
@@ -103,6 +114,10 @@ and `docs/index.json` stay consistent with the CLI:
 - **docs/*.md** → `upsert-doc`. Full editor: slug, title, type,
   projects, tags, summary, body. Body has a Write / Preview toggle.
 
+Existing MEMORY/PREFERENCES entries can also be edited or deleted by line number.
+Delete/update errors redirect back with a warning query string instead of
+mutating the wrong line.
+
 Validation failures are captured from `memory_tool`'s stderr via
 `contextlib.redirect_stderr` + `SystemExit` trap, then surfaced to the
 UI as a warning instead of crashing the worker. PRG on success;
@@ -142,7 +157,8 @@ memory_web.i18n      ── STRINGS dict (en + zh), Translator, lang_context
                        Jinja2 context_processor
         ▲
 memory_web.app       ── FastAPI factory; lang middleware; /lang/{code};
-                       /favicon.ico; static mount; router mounts
+                       /favicon.ico; /api/v1 auth middleware; static mount;
+                       router mounts
         ▲
 memory_web.routes.*  ── one router per page (dashboard, logs, search,
                        docs, memory, preferences)
@@ -151,6 +167,24 @@ templates/*.html     ── Jinja2, all UI strings via t('key')
 static/style.css     ── single stylesheet, no JS framework
 static/favicon.svg   ── 32×32 brand favicon (3-line journal motif)
 ```
+
+## API v1 and CLI forwarding
+
+`memory-web` exposes a small command-shaped JSON API:
+
+| CLI command | API endpoint |
+|---|---|
+| `umem load` | `GET /api/v1/load` |
+| `umem search` | `GET /api/v1/search` |
+| `umem write-log` | `POST /api/v1/log` |
+| `umem write-memory` | `POST /api/v1/memory` |
+| `umem write-preference` | `POST /api/v1/preference` |
+| `umem upsert-doc` | `POST /api/v1/doc` |
+
+Configure the CLI with top-level `remote.endpoint` to prefer these endpoints
+before local file access. Connection refused, timeout, and HTTP 5xx fall back
+to the local backend; HTTP 4xx remains a command error. This top-level API
+remote is separate from the Git remote URL used by `umem setup --remote`.
 
 Implementation notes:
 
@@ -164,10 +198,16 @@ Implementation notes:
   `Query(None)` default would otherwise parse them as `[""]` and filter
   every entry out.
 
-## Roadmap
+## QA notes
 
-- v0.5 — manual triggers for `maintain` / `distill` / `promote` from
-  the web UI.
+The current browser QA surface covers dashboard, logs, docs index/detail/new,
+MEMORY, PREFERENCES, search, downloads, language switching, admin maintain,
+API v1, remote CLI forwarding, and mobile layout at 375px. Run the project
+suite from the repo root with:
+
+```bash
+.venv/bin/python -m pytest -q; echo EXIT:$?
+```
 
 See SKILL.md for the broader using-memory roadmap.
 

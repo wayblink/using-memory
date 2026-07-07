@@ -35,6 +35,9 @@ htmlcov/
 # Playwright MCP scratch (browser snapshots, console logs)
 .playwright-mcp/
 
+# GStack generated QA/review artifacts
+.gstack/
+
 # Generated screenshots (root-level UI captures)
 /*.png
 

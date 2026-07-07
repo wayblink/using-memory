@@ -15,6 +15,9 @@ import yaml
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib import error as urlerror
+from urllib import parse as urlparse
+from urllib import request as urlrequest
 
 try:
     import fcntl
@@ -33,6 +36,7 @@ from memory_lib.core import (
     DEFAULT_CONFIG_PATH, DOC_ENTRY_REQUIRED_FIELDS, DEFAULT_NAMESPACE,
     SUPPORTED_DOC_EXTS, DEFAULT_DOC_EXT, SETUP_HINT,
     no_memory_config, load_config, collect_roots, root_priority, expand_path,
+    remote_api_from_config,
     namespace_from_root, namespace_root, read_source, validate_single_primary,
     normalize_index_doc_path, read_json_source, validate_doc_entry,
     validate_doc_index, sha256_file, lock_path_for, exclusive_file_lock,
@@ -68,6 +72,18 @@ LOG_TAGS = {
     "note",
     "context",
 }
+
+
+def _cli_error(msg: str, hint: str | None = None):
+    """Print an agent-friendly CLI error to stderr and exit 2.
+
+    One-line problem + optional hint (correct usage / allowed values) so a
+    caller can self-correct in a single retry.
+    """
+    sys.stderr.write(f"error: {msg}\n")
+    if hint:
+        sys.stderr.write(hint.rstrip("\n") + "\n")
+    sys.exit(2)
 
 
 def parse_iso_date(raw: str | None, label: str) -> date:
@@ -781,8 +797,10 @@ def do_write_log(args: argparse.Namespace) -> dict:
     when = parse_iso_date(args.date, "--date")
     tag = (args.tag or "").lower()
     if tag not in LOG_TAGS:
-        sys.stderr.write(f"invalid tag '{args.tag}'; allowed: {', '.join(sorted(LOG_TAGS))}\n")
-        sys.exit(2)
+        _cli_error(
+            f"invalid --tag '{args.tag}'",
+            hint=f"allowed tags: {', '.join(sorted(LOG_TAGS))}\n(see: umem write-log --help)",
+        )
     level = args.level
     confidence = args.confidence if args.confidence else None
     source = args.source if args.source else None
@@ -2164,6 +2182,144 @@ def do_setup(args: argparse.Namespace) -> dict:
     }
 
 
+_REMOTE_COMMANDS = {"load", "search", "write-log", "write-memory", "write-preference", "upsert-doc"}
+
+
+def _remote_payload_for_args(args: argparse.Namespace) -> tuple[str, str, dict | None, dict]:
+    """Map one CLI command to the v1 web API contract."""
+    cmd = args.cmd
+    if cmd == "write-log":
+        return "POST", "/api/v1/log", {
+            "date": args.date,
+            "tag": args.tag,
+            "text": args.text,
+            "level": args.level,
+            "confidence": args.confidence,
+            "source": args.source,
+            "files": args.files or [],
+            "project": args.project,
+            "topic": args.topic,
+        }, {}
+    if cmd == "write-memory":
+        return "POST", "/api/v1/memory", {
+            "date": args.date,
+            "tag": args.tag,
+            "text": args.text,
+        }, {}
+    if cmd == "write-preference":
+        return "POST", "/api/v1/preference", {
+            "date": args.date,
+            "text": args.text,
+        }, {}
+    if cmd == "upsert-doc":
+        text = args.text
+        if text is None and getattr(args, "text_stdin", False):
+            text = sys.stdin.read()
+            # Preserve fallback semantics if the remote is unavailable.
+            args.text = text
+            args.text_stdin = False
+        return "POST", "/api/v1/doc", {
+            "doc": args.doc,
+            "text": text,
+            "title": args.title,
+            "doc_type": args.doc_type,
+            "created": args.created,
+            "modified": args.modified,
+            "projects": args.project or None,
+            "doc_tags": args.doc_tag or None,
+            "summary": args.summary,
+            "link_logs": args.link_log or None,
+        }, {}
+    if cmd == "load":
+        return "GET", "/api/v1/load", None, {
+            "date": args.date,
+            "log_from": args.log_from,
+            "log_to": args.log_to,
+            "log_days": args.log_days,
+            "log_query": args.log_query,
+            "project": args.project or [],
+            "topic": args.topic or [],
+            "doc": args.doc,
+            "doc_type": args.doc_type,
+            "doc_tag": args.doc_tag or [],
+            "doc_query": args.doc_query,
+        }
+    if cmd == "search":
+        return "GET", "/api/v1/search", None, {
+            "q": args.query,
+            "log_days": args.log_days,
+            "no_docs": args.no_docs,
+            "no_memory": args.no_memory,
+            "no_log": args.no_log,
+            "project": args.project or [],
+            "topic": args.topic or [],
+        }
+    raise ValueError(f"unsupported remote command: {cmd}")
+
+
+def _filtered_remote_payload(payload: dict | None) -> bytes | None:
+    if payload is None:
+        return None
+    return json.dumps({k: v for k, v in payload.items() if v is not None}, ensure_ascii=False).encode("utf-8")
+
+
+def _filtered_remote_query(params: dict) -> str:
+    cleaned = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, list) and not value:
+            continue
+        cleaned[key] = value
+    return urlparse.urlencode(cleaned, doseq=True)
+
+
+def _remote_result_if_configured(args: argparse.Namespace) -> dict | None:
+    if args.cmd not in _REMOTE_COMMANDS:
+        return None
+    config = load_config(
+        Path(args.config) if getattr(args, "config", None) else None,
+        os.environ.get("USING_MEMORY_CONFIG"),
+    )
+    remote = remote_api_from_config(config)
+    if not remote:
+        return None
+
+    method, path, payload, query = _remote_payload_for_args(args)
+    url = f"{remote['endpoint']}{path}"
+    qs = _filtered_remote_query(query)
+    if qs:
+        url = f"{url}?{qs}"
+    body = _filtered_remote_payload(payload)
+    headers = {"accept": "application/json"}
+    if body is not None:
+        headers["content-type"] = "application/json"
+    token = remote.get("token")
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+    req = urlrequest.Request(url, data=body, headers=headers, method=method)
+
+    try:
+        with urlrequest.urlopen(req, timeout=3) as resp:
+            raw = resp.read().decode("utf-8")
+            result = json.loads(raw) if raw else {}
+            if isinstance(result, dict):
+                result["remote"] = True
+                result["remote_endpoint"] = remote["endpoint"]
+            return result
+    except urlerror.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        if 500 <= exc.code <= 599:
+            sys.stderr.write(f"warning: remote unavailable ({exc.code}); falling back to local memory\n")
+            return None
+        sys.stderr.write(raw.strip() + "\n" if raw.strip() else f"remote request failed: HTTP {exc.code}\n")
+        sys.exit(2)
+    except (urlerror.URLError, TimeoutError, socket.timeout) as exc:
+        reason = getattr(exc, "reason", exc)
+        sys.stderr.write(f"warning: remote unavailable ({reason}); falling back to local memory\n")
+        return None
+
+
 def cmd_setup(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("setup", help="Configure the memory repo path, optional remote Git repo, namespace, and machine ID")
     p.add_argument("--config", type=str, default=None)
@@ -2345,8 +2501,18 @@ def cmd_status(sub: argparse._SubParsersAction) -> None:
 
 
 def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(description="using-memory CLI")
-    sub = parser.add_subparsers(dest="cmd")
+    parser = argparse.ArgumentParser(
+        prog="umem",
+        description=(
+            "using-memory CLI — persisted cross-session memory "
+            "(operation log / docs / MEMORY / preferences)."
+        ),
+        epilog=(
+            "Run 'umem <command> --help' for a command's flags and examples. "
+            "'umem' is equivalent to 'python3 <skill>/scripts/memory_tool.py'."
+        ),
+    )
+    sub = parser.add_subparsers(dest="cmd", metavar="<command>")
     cmd_load(sub)
     cmd_setup(sub)
     cmd_search(sub)
@@ -2362,7 +2528,10 @@ def main(argv=None) -> None:
     if not args.cmd:
         parser.print_help()
         sys.exit(2)
-    if args.cmd == "load":
+    remote_result = _remote_result_if_configured(args)
+    if remote_result is not None:
+        result = remote_result
+    elif args.cmd == "load":
         result = do_load(args)
     elif args.cmd == "setup":
         result = do_setup(args)

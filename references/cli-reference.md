@@ -2,6 +2,8 @@
 
 Full flag reference for `scripts/memory_tool.py`. SKILL.md keeps a one-line summary per command; read this file when you need the exact selectors/flags. Prefer executing it directly or with `python3`; do not assume a `python` shim exists.
 
+If top-level config `remote.endpoint` is set, `load`, `search`, `write-log`, `write-memory`, `write-preference`, and `upsert-doc` forward to the web app's `/api/v1` endpoints before touching local files. `remote.token` is sent as `Authorization: Bearer <token>`. Connection failures, timeouts, and HTTP 5xx responses fall back to local execution with a warning; HTTP 4xx responses are surfaced as command errors. `setup`, `maintain`, `stats`, `status`, and `export` stay local.
+
 ## Read
 
 - `load`: read memory snapshot. Key selectors: `--config`, `--date`, `--json`, `--log-from` + `--log-to`, `--log-days`, `--log-query`, `--doc` / `--doc-type` / `--doc-tag` / `--project` / `--topic` / `--doc-query`. Returns `log_entries` as a parsed JSON list from the primary repo's configured namespace log.
@@ -19,3 +21,18 @@ Full flag reference for `scripts/memory_tool.py`. SKILL.md keeps a one-line summ
 - `write-memory`: append one curated `<namespace>/MEMORY.md` entry. Required: `--config`, `--date`, `--tag`, `--text`; `write-memory` accepts only `fact`, `decision`, and `lesson`.
 - `write-preference`: append one stable `<namespace>/PREFERENCES.md` entry. Required: `--config`, `--text`.
 - `upsert-doc`: write one `<namespace>/docs/*.md` document and update `<namespace>/docs/index.json`. Required: `--doc`, plus `--text` OR `--text-stdin`. Optional with auto-fallback: `--config` (env / default yaml), `--title` (first H1 in text → slug-derived), `--doc-type` (defaults to `wiki`; common: `wiki`, `lesson`, `troubleshooting`, `decision-record`, `runbook`, `SOP`, `project`), `--modified` (defaults to today). Optional metadata: `--project`, `--doc-tag`, `--summary`. Optional backlinks: `--link-log '[[log:YYYY-MM-DD#L<n>]]'` (repeatable; appends/merges a `## Related log entries` section, deduped). The distillation pipeline emits one `--link-log` per source entry so promoted log entries can be filtered out on the next distill pass.
+
+## Remote forwarding map
+
+When `remote.endpoint` is configured:
+
+| CLI command | HTTP endpoint | Fallback |
+|---|---|---|
+| `load` | `GET /api/v1/load` | yes for connection errors/timeouts/5xx |
+| `search` | `GET /api/v1/search` | yes for connection errors/timeouts/5xx |
+| `write-log` | `POST /api/v1/log` | yes for connection errors/timeouts/5xx |
+| `write-memory` | `POST /api/v1/memory` | yes for connection errors/timeouts/5xx |
+| `write-preference` | `POST /api/v1/preference` | yes for connection errors/timeouts/5xx |
+| `upsert-doc` | `POST /api/v1/doc` | yes for connection errors/timeouts/5xx |
+
+Loopback `memory-web` API calls are allowed without a bearer token so a local `umem` wrapper can forward to a local server without extra friction. Non-loopback clients must send the configured bearer token when `remote.token` is set.
