@@ -800,6 +800,51 @@ mark {
   border: 1px solid var(--border-strong);
 }
 
+
+/* Add-entry modal */
+.entry-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-width: 720px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.entry-modal::backdrop {
+  background: rgba(34, 33, 30, 0.34);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.modal-head .card-title {
+  margin: 0;
+}
+.modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.modal-close:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
 /* Editor tabs */
 .editor-tabs {
   display: flex;

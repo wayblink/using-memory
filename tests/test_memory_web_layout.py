@@ -66,6 +66,19 @@ class MemoryWebLayoutTests(unittest.TestCase):
         self.assertIn(".entry-form label { min-width: 0; }", css)
         self.assertIn(".bar-row { grid-template-columns: minmax(0, 1fr) 72px 36px; }", css)
 
+    def test_memory_and_preferences_add_forms_are_dialogs(self):
+        memory_resp = self.client.get("/memory")
+        self.assertEqual(memory_resp.status_code, 200)
+        self.assertIn('data-open-modal="memory-add-dialog"', memory_resp.text)
+        self.assertIn('<dialog class="entry-modal" id="memory-add-dialog"', memory_resp.text)
+        self.assertNotIn('<section class="card">', memory_resp.text)
+
+        pref_resp = self.client.get("/preferences")
+        self.assertEqual(pref_resp.status_code, 200)
+        self.assertIn('data-open-modal="preference-add-dialog"', pref_resp.text)
+        self.assertIn('<dialog class="entry-modal" id="preference-add-dialog"', pref_resp.text)
+        self.assertNotIn('<section class="card">', pref_resp.text)
+
 
 if __name__ == "__main__":
     unittest.main()

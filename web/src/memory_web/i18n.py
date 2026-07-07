@@ -228,6 +228,7 @@ STRINGS: dict[str, dict[str, str]] = {
         # Memory
         "memory.title": "MEMORY.md",
         "memory.sub": "Curated stable facts, confirmed decisions, durable lessons",
+        "memory.add": "Add entry",
         "memory.form.title": "Append entry",
         "memory.form.tag": "Tag",
         "memory.form.date": "Date",
@@ -240,6 +241,7 @@ STRINGS: dict[str, dict[str, str]] = {
         # Preferences
         "pref.title": "PREFERENCES.md",
         "pref.sub": "Stable user-level habits and rules",
+        "pref.add": "Add preference",
         "pref.form.title": "Append preference",
         "pref.form.text": "Text",
         "pref.form.text.placeholder": "One stable habit / working rule.",
@@ -455,6 +457,7 @@ STRINGS: dict[str, dict[str, str]] = {
         # Memory
         "memory.title": "MEMORY.md",
         "memory.sub": "精选的稳定事实、已确认决策、长期教训",
+        "memory.add": "新增",
         "memory.form.title": "追加条目",
         "memory.form.tag": "标签",
         "memory.form.date": "日期",
@@ -467,6 +470,7 @@ STRINGS: dict[str, dict[str, str]] = {
         # Preferences
         "pref.title": "PREFERENCES.md",
         "pref.sub": "稳定的用户级习惯与规则",
+        "pref.add": "新增",
         "pref.form.title": "追加偏好",
         "pref.form.text": "正文",
         "pref.form.text.placeholder": "一条稳定的习惯 / 工作规则。",
