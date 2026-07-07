@@ -16,6 +16,7 @@ EXEMPT_DIR_PARTS = {
     "__pycache__",
     ".pytest_cache",
     ".playwright-mcp",
+    ".gstack",
     ".mypy_cache",
     "node_modules",
     "egg-info",

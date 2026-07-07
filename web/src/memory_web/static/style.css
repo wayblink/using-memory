@@ -1242,3 +1242,75 @@ a.bar-row:hover .bar-label { color: var(--accent); }
   background: #fdecec;
   color: #b54708;
 }
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    min-width: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sidebar-footer {
+    margin-top: 14px;
+  }
+
+  .content {
+    min-width: 0;
+    padding: 28px 16px 56px;
+  }
+
+  .reload-btn {
+    top: 18px;
+    right: 16px;
+  }
+
+  .content header.page {
+    padding-right: 42px;
+  }
+
+  .stat-grid,
+  .stat-grid-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .maintenance-card .row {
+    align-items: flex-start;
+  }
+
+  .filters,
+  .search-filters {
+    align-items: stretch;
+  }
+
+  .filters label,
+  .filters input,
+  .filters select,
+  .filters button,
+  .search-filters > label,
+  .search-q-field,
+  .search-select-field,
+  .search-select-field select,
+  .search-submit {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .entry-form label { min-width: 0; }
+
+  .bar-list {
+    min-width: 0;
+  }
+
+  .bar-row { grid-template-columns: minmax(0, 1fr) 72px 36px; }
+}
