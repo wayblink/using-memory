@@ -265,7 +265,7 @@ Invoke as `umem <command>` (installed to `~/.local/bin` by `scripts/install.sh`;
 | Command | What |
 |---|---|
 | `umem load` | Print the memory snapshot: preferences + durable memory + recent log window + matched docs. |
-| `umem search <query>` | Full-text search across `docs/*.md`, `MEMORY.md`, and the namespace log. |
+| `umem search` | Full-text search (query as positional arg) across `docs/*.md`, `MEMORY.md`, and the namespace log. |
 | `umem maintain` | Repair `docs/index.json`, flag stale/corrupt log lines. `--distill` / `--promote TOPIC` drive the distillation pipeline (read-only). |
 | `umem stats` | Aggregate tag counts across the log + `MEMORY.md`. |
 | `umem status` | Lifetime hook/counter dashboard from `STATS.json`. |

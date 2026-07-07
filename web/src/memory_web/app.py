@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from .adapter import MemoryAdapter, NamespaceRegistry
 from .i18n import COOKIE_NAME, SUPPORTED, lang_context, resolve_lang
 from .maintenance import MaintenanceScheduler, read_interval_from_env
-from .routes import admin, dashboard, docs, downloads, logs, memory, preferences, search
+from .routes import admin, api_v1, dashboard, docs, downloads, logs, memory, preferences, search
 
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -113,7 +113,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         version=SKILL_VERSION,
         docs_url=None,
         redoc_url=None,
-        openapi_url=None,
+        openapi_url="/openapi.json",
     )
     adapter = MemoryAdapter(config_path=config_path)
     registry = NamespaceRegistry(adapter)
@@ -222,5 +222,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
     app.include_router(memory.router)
     app.include_router(preferences.router)
     app.include_router(admin.router)
+    app.include_router(api_v1.router)
 
     return app

@@ -56,7 +56,7 @@ class ReadmeTests(unittest.TestCase):
             "upsert-doc",
         ]:
             with self.subTest(command=command):
-                self.assertIn(f"`{command}`", text)
+                self.assertIn(f"`umem {command}`", text)
 
     def test_project_declares_python_dependency(self):
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
