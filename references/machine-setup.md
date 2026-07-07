@@ -19,6 +19,27 @@ Work from `personal-skills/using-memory/` so every edit touches the same skill t
 - `scripts/link.sh` refuses to replace an existing real directory. Remove the directory manually or use a copied install when the destination is not already a symlink.
 - `scripts/install.sh` refuses to overwrite an existing destination unless `USING_MEMORY_INSTALL_FORCE=1` is set. Copied installs exclude development-only files such as `.git`, `tests`, Python bytecode, and editor swap files.
 
+### Refreshing an existing Codex install
+
+Prefer a live symlink while developing the skill:
+
+```bash
+cd /path/to/personal-skills/using-memory
+./scripts/link.sh codex
+umem --help
+python3 ~/.codex/skills/using-memory/scripts/memory_tool.py load --json >/tmp/umem-load.json
+```
+
+Use a copied reinstall when the host should not read the working tree directly:
+
+```bash
+cd /path/to/personal-skills/using-memory
+USING_MEMORY_INSTALL_FORCE=1 ./scripts/install.sh codex
+umem --help
+```
+
+After either path, start a brand-new Codex session. Existing chats may keep old skill text in context.
+
 ## Host skill exposure
 
 ### Codex
@@ -58,6 +79,16 @@ session_archive:
   auto_load: false
   index_events: true
 ```
+
+Optional command-forwarding backend:
+
+```yaml
+remote:
+  endpoint: http://127.0.0.1:8765
+  token: change-me
+```
+
+This top-level `remote` sends `umem load`, `search`, `write-log`, `write-memory`, `write-preference`, and `upsert-doc` to `memory-web` `/api/v1/*` before local file access. It is not the same as `umem setup --remote`, which is the Git remote URL for syncing the memory repo. Connection refused, timeout, and HTTP 5xx fall back to local execution with a warning; HTTP 4xx is a command error. `remote.token` is sent as `Authorization: Bearer <token>`, and `memory-web` exempts loopback clients for local development.
 
 ## Hook Enforcement
 
@@ -218,6 +249,7 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 - `SessionStart` and memory-relevant `UserPromptSubmit` add context reminding the agent to use the skill. SessionStart also injects a compact saved-preferences summary so host-level reply rules such as language preference are visible before the first answer.
 - `PostToolUse` and Claude's `PostToolBatch` mark the turn as log-worthy when commands, edits, builds, tests, commits, pushes, deployments, hook/config changes, failures, or fixes appear.
 - `Stop` is the enforcement point: when the main agent is about to finish, the hook returns `decision: "block"` if the configured memory-prompt gate or important-turn interval fires and no `memory_tool.py write-log`, `write-memory`, `write-preference`, or `upsert-doc` was observed. The default interval is 20 real human turns.
+- `PreCompact` is intentionally disabled and should not be wired into new Codex or Claude Code installs. Older hook configs that still call it get `{}` from the shared handler.
 - `stop_hook_active` is honored to prevent infinite loops after the agent continues from a Stop hook.
 - Silent auto-summary writes are disabled by default. Set `logging.silent_summary: true` only when a machine deliberately wants best-effort summary logs on substantial pass-through turns.
 - Optional `session_archive.enabled: true` writes pointer records to `<namespace>/sessions/index.jsonl`; it does not copy transcript content and `session_archive.auto_load` defaults to false.
@@ -258,6 +290,7 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 - `~/.claude/CLAUDE.md` does not include `@./skills/using-memory/SKILL.md`.
 - `~/.claude/settings.json` still points `SessionStart` at `~/.claude/hooks/session-start` or `claude_memory_hook.py` instead of `scripts/hooks/claude_session_start_hook.py`.
 - Codex `~/.codex/config.toml` is missing `[features] codex_hooks = true`.
+- An older hook config still wires `PreCompact`; remove it unless you are testing backward compatibility.
 - The hook config points at a copied skill path but the skill was only linked under the other host.
 - The skill was never linked or installed. Re-run `scripts/link.sh both` for live symlinks or `scripts/install.sh both` for copied installs.
 - `USING_MEMORY_CONFIG` points to the wrong file, or `~/.skills/using-memory/config.yaml` does not exist.
@@ -279,7 +312,7 @@ Claude Code also supports project `.claude/settings.json`, local `.claude/settin
 - Start from `examples/new-machine/config.template.yaml` when creating `~/.skills/using-memory/config.yaml` on a fresh machine.
 - Copy `examples/new-machine/GEMINI.template.md` into `~/.codex/superpowers/GEMINI.md` if you want the minimal startup include block without retyping it.
 - Copy `examples/new-machine/CLAUDE.template.md` into `~/.claude/CLAUDE.md` if you want the minimal Claude Code startup include block without retyping it.
-- After any `git pull` that changes hook behavior, rerun `scripts/link.sh` or `scripts/install.sh both` so installed host paths pick up new helper scripts before you restart Codex or Claude Code. Also compare the local `config.yaml` with `examples/new-machine/config.template.yaml` for new opt-in fields.
+- After any `git pull` that changes hook behavior, rerun `scripts/link.sh` or `scripts/install.sh both` so installed host paths pick up new helper scripts before you restart Codex or Claude Code. For Codex-only refreshes, `scripts/link.sh codex` is enough when the destination is a development symlink. Also compare the local `config.yaml` with `examples/new-machine/config.template.yaml` for new opt-in fields.
 - Only change machine-local values such as `path`, `namespace`, `machine_id`, and whether a reference root should exist on this machine.
 
 ## Per-machine values only

@@ -2,6 +2,8 @@ version: 1
 
 # Optional HTTP API backend. This is command forwarding to memory-web /api/v1,
 # not the Git remote URL used by `umem setup --remote`.
+# Only load/search/write-log/write-memory/write-preference/upsert-doc forward.
+# setup/maintain/stats/status/export stay local.
 # remote:
 #   endpoint: http://127.0.0.1:8765
 #   token: change-me

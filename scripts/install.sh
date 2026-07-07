@@ -30,11 +30,11 @@ print_hook_next_steps() {
  local claude_home="${CLAUDE_HOME:-$HOME/.claude}"
  echo
  echo "Hook wiring targets:"
- echo "  Codex SessionStart/UserPromptSubmit/PostToolUse/PreCompact/Stop:"
+ echo "  Codex SessionStart/UserPromptSubmit/PostToolUse/Stop:"
  echo "    python3 ${codex_home}/skills/using-memory/scripts/hooks/codex_memory_hook.py"
  echo "  Claude Code SessionStart:"
  echo "    python3 ${claude_home}/skills/using-memory/scripts/hooks/claude_session_start_hook.py"
- echo "  Claude Code UserPromptSubmit/PostToolUse/PostToolBatch/ConfigChange/PreCompact/Stop:"
+ echo "  Claude Code UserPromptSubmit/PostToolUse/PostToolBatch/ConfigChange/Stop:"
  echo "    python3 ${claude_home}/skills/using-memory/scripts/hooks/claude_memory_hook.py"
  echo "Rerun scripts/install.sh or scripts/link.sh after updates so new hook helpers are deployed."
 }

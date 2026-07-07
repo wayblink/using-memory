@@ -138,6 +138,23 @@ You can target a single host, or install by copying:
 ./scripts/install.sh both
 ```
 
+Use `link.sh codex` for day-to-day development: Codex reads this checkout through a symlink, so edits to `SKILL.md`, scripts, hooks, and docs are live after a new Codex session starts. Use `install.sh codex` for a copied install when you want Codex isolated from the working tree.
+
+To refresh an existing Codex development install:
+
+```bash
+./scripts/link.sh codex
+umem --help
+python3 ~/.codex/skills/using-memory/scripts/memory_tool.py load --json >/tmp/umem-load.json
+```
+
+To replace Codex with a copied install:
+
+```bash
+USING_MEMORY_INSTALL_FORCE=1 ./scripts/install.sh codex
+umem --help
+```
+
 `link.sh` refuses to replace an existing real directory; remove the old directory manually or use `install.sh` for a copied install. `install.sh` refuses to overwrite an existing destination unless `USING_MEMORY_INSTALL_FORCE=1` is set, and copied installs exclude development-only files such as `.git` and `tests/`.
 
 After installation, the skill usually lives at:
@@ -245,7 +262,7 @@ The shared adapter at `scripts/hooks/memory_hook_common.py` is wired into Claude
 | **UserPromptSubmit** | Set `prompt_mentions_memory` if the prompt contains memory keywords; emit reminder when set. Session-lifetime counters are not reset. |
 | **PostToolUse** / **PostToolBatch** | Update `important_events` / `memory_written` flags. |
 | **Stop** / **SubagentStop** | Layered throttle. `stop_hook_active` short-circuits to `{}`. If the final message contains a memory-write call, mark `memory_written=true` and pass through. Otherwise count real human user turns in the transcript JSONL: when configured memory-prompt gating is active or `delta >= logging.detail_turn_interval` (default `20`), BLOCK with a short reason asking the model to write a detail-level log. Silent `level=summary tag=progress source=auto` appends happen only when `logging.silent_summary: true`. If `session_archive.enabled: true`, successful Stop pass-through appends a pointer record to `<namespace>/sessions/index.jsonl`. |
-| **PreCompact** | No-op. Previous BLOCK behavior could hang context compaction; leftover hook wiring returns `{}`. |
+| **PreCompact** | Disabled. Previous BLOCK behavior could hang context compaction; do not wire it in new installs. If an older host still invokes it, the handler returns `{}`. |
 
 Block reasons are intentionally short (~200 chars) — they are a *trigger* for the model to call `write-log`, not a place to replay the model's own tool history.
 
@@ -256,9 +273,9 @@ For Codex, enable the hooks feature in `~/.codex/config.toml`:
 codex_hooks = true
 ```
 
-Then point `~/.codex/hooks.json` at `~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact`, and `Stop`.
+Then point `~/.codex/hooks.json` at `~/.codex/skills/using-memory/scripts/hooks/codex_memory_hook.py` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, and `Stop`. Do not add `PreCompact` on new installs; it is intentionally disabled.
 
-For Claude Code, point `SessionStart` at `~/.claude/skills/using-memory/scripts/hooks/claude_session_start_hook.py` so startup includes both `using-superpowers` and `using-memory`. Point `UserPromptSubmit`, `PostToolUse`, `PostToolBatch`, `ConfigChange`, `PreCompact`, and `Stop` at `~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py`.
+For Claude Code, point `SessionStart` at `~/.claude/skills/using-memory/scripts/hooks/claude_session_start_hook.py` so startup includes both `using-superpowers` and `using-memory`. Point `UserPromptSubmit`, `PostToolUse`, `PostToolBatch`, `ConfigChange`, and `Stop` at `~/.claude/skills/using-memory/scripts/hooks/claude_memory_hook.py`. Do not add `PreCompact` on new installs.
 
 When you pull an update that changes hook behavior, rerun `./scripts/link.sh` or `./scripts/install.sh both` before restarting the host. Copied installs do not pick up new helper scripts until you reinstall.
 
@@ -297,8 +314,10 @@ Invoke as `umem <command>` (installed to `~/.local/bin` by `scripts/install.sh`;
 Run the full test suite:
 
 ```bash
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m pytest -q; echo EXIT:$?
 ```
+
+Trust the exit code, not just the summary text. The web/API suite uses FastAPI's `TestClient`, so deprecation warnings from FastAPI/Starlette can appear while behavior still passes.
 
 ## Web browser (optional)
 
@@ -312,7 +331,7 @@ pip install -e .
 memory-web --open    # → http://127.0.0.1:8765
 ```
 
-See [web/README.md](web/README.md) for pages, architecture, and the v0.4 / v0.5 roadmap (editing, manual maintain / distill / promote triggers).
+See [web/README.md](web/README.md) for pages, architecture, API remote behavior, and browser QA notes.
 
 ## References
 
