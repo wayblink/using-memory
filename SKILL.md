@@ -1,9 +1,9 @@
 ---
-name: using-memory
+name: umem
 description: Memory protocol for persisted cross-session context and operation continuity. Use when a task mentions memory, remember, forget, preference, prior context, previous work, continue, resume, project history, saved decisions, logs, operations, commits, pushes, builds, tests, deploys, hooks, or equivalent non-English memory/logging triggers; also use whenever persisted memory could change the answer or the turn may create operation history that should survive restart.
 ---
 
-# using-memory
+# umem
 
 ## Retrieval Contract
 
