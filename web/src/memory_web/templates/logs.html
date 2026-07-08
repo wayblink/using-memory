@@ -9,7 +9,7 @@
   </div>
 </header>
 
-<form class="filters" method="get" action="/logs">
+<form class="filters" method="get" action="/logs" onchange="this.submit()">
   <label>{{ t('logs.form.from') }}
     <input type="date" name="from" value="{{ selected['from'] or '' }}">
   </label>
@@ -61,8 +61,6 @@
       {% endfor %}
     </select>
   </label>
-  <button type="submit">{{ t('common.apply') }}</button>
-  <a class="row" href="/logs" style="align-self:end;"><button type="button" class="secondary">{{ t('common.reset') }}</button></a>
 </form>
 
 {% if entries %}

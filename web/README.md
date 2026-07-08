@@ -47,10 +47,10 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 
 | Path | What |
 |---|---|
-| `/` | Dashboard — STATS.json counters, ratios, **estimated tokens kept out of context** |
+| `/` | Dashboard — STATS.json counters, ratios, tag charts |
 | `/logs` | JSONL log entries, markdown-rendered, filters: date / days / tag / level / source / project / topic / text |
 | `/search?q=…` | Full-text across docs, `MEMORY.md`, and the log window. Each hit is a clickable card |
-| `/docs` | Every `.md` and `.html` under `<ns>/docs/`, with type / format / project / tag / indexed / title filters |
+| `/docs` | Every `.md` and `.html` under `<ns>/docs/`, with type / format / project / tag / title filters |
 | `/docs/new` | Empty editor for a new `.md` doc |
 | `/docs/<rel>` | Single document rendered (`.md` via marked.js, `.html` in a sandboxed iframe) |
 | `/docs/<rel>?edit=1` | Editor for an existing `.md` doc (textarea + Write/Preview toggle) |
@@ -138,10 +138,6 @@ translated; only UI chrome.
 - **Lifetime counters**: sessions, cumulative turns, log
   entries total / user / auto, MEMORY entries, stop blocks /
   passthroughs, PreCompact saves.
-- **Estimated tokens kept out of context** (rough): sums
-  `log_entries_auto × 400` + `stop_blocks × 200`.
-  Each component is shown with its input counter and heuristic factor.
-  Disclaimer makes clear the skill has no real API token visibility.
 - **Tag charts**: log tags (blue) and MEMORY.md tags (orange) sorted
   by count, rendered as horizontal bars. Log-tag rows are clickable —
   they jump to `/logs?days=180&tag=<tag>`.

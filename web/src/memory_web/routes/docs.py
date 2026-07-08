@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Form, HTTPException, Query, Request
+from urllib.parse import quote
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from ..adapter import MemoryToolError
@@ -29,6 +31,14 @@ NO_PROJECT_KEY = "__no_project__"
 ALL_DOCS_KEY = "__all_docs__"
 
 
+def _to_minute(value: str | None) -> str:
+    if not value:
+        return ""
+    if "T" not in value:
+        return value
+    return value.replace("T", " ")[:16]
+
+
 @router.get("/docs", response_class=HTMLResponse, name="docs_index")
 def docs_index(
     request: Request,
@@ -40,6 +50,8 @@ def docs_index(
     indexed: str | None = None,
     group: str | None = None,
     sort: str | None = None,
+    maintained: int | None = Query(None, ge=0),
+    error: str | None = None,
     page: int = Query(1, ge=1),
     per_page: int | None = Query(DEFAULT_PER_PAGE),
 ) -> HTMLResponse:
@@ -156,6 +168,8 @@ def docs_index(
             "unregistered": sum(1 for i in page_items if not i.get("in_index")),
             "pagination": pagination,
             "per_page_options": PER_PAGE_OPTIONS,
+            "maintained": maintained,
+            "error": error,
             "available_types": available_types,
             "available_projects": available_projects,
             "available_tags": available_tags,
@@ -192,7 +206,6 @@ def doc_new(request: Request, error: str | None = None) -> HTMLResponse:
             "ext": DEFAULT_DOC_EXT,
             "title": "",
             "doc_type": "wiki",
-            "modified": "",
             "created_display": "",
             "projects": "",
             "tags": "",
@@ -205,6 +218,44 @@ def doc_new(request: Request, error: str | None = None) -> HTMLResponse:
     )
 
 
+@router.post("/docs/refresh", name="docs_refresh")
+def docs_refresh(request: Request):
+    adapter = request.state.adapter
+    try:
+        report = adapter.maintain()
+    except MemoryToolError as exc:
+        return RedirectResponse(f"/docs?error={quote(str(exc))}", status_code=303)
+    added = len(report.get("indexed_docs") or [])
+    return RedirectResponse(f"/docs?maintained={added}", status_code=303)
+
+
+@router.post("/docs/upload", name="docs_upload")
+async def docs_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    path: str = Form(""),
+    replace: str | None = Form(None),
+):
+    adapter = request.state.adapter
+    filename = (file.filename or "").strip()
+    target = (path or "").strip() or filename
+    if not target:
+        return RedirectResponse("/docs?error=missing%20upload%20filename", status_code=303)
+
+    data = await file.read()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return RedirectResponse("/docs?error=uploaded%20file%20must%20be%20UTF-8%20text", status_code=303)
+
+    try:
+        rel = adapter.normalize_doc_upload_path(target)
+        adapter.upload_doc(doc=rel, text=text, replace=bool(replace))
+    except MemoryToolError as exc:
+        return RedirectResponse(f"/docs?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/docs/{rel}", status_code=303)
+
+
 @router.post("/docs/save")
 def doc_save(
     request: Request,
@@ -212,7 +263,6 @@ def doc_save(
     ext: str = Form(DEFAULT_DOC_EXT),
     title: str = Form(""),
     doc_type: str = Form("wiki"),
-    modified: str = Form(""),
     projects: str = Form(""),
     tags: str = Form(""),
     summary: str = Form(""),
@@ -243,7 +293,6 @@ def doc_save(
             text=body,
             title=(title or None),
             doc_type=(doc_type or None),
-            modified=(modified or None),
             projects=project_list or None,
             doc_tags=tag_list or None,
             summary=(summary or None),
@@ -262,7 +311,6 @@ def doc_save(
                 "ext": ext,
                 "title": title,
                 "doc_type": doc_type,
-                "modified": modified,
                 "created_display": "",
                 "projects": projects,
                 "tags": tags,
@@ -315,8 +363,7 @@ def doc_view(
                 "ext": doc["ext"],
                 "title": entry.get("title") or "",
                 "doc_type": entry.get("type") or "wiki",
-                "modified": "",
-                "created_display": entry.get("created") or "",
+                "created_display": _to_minute(entry.get("created") or ""),
                 "projects": ", ".join(entry.get("projects") or []),
                 "tags": ", ".join(entry.get("tags") or []),
                 "summary": entry.get("summary") or "",

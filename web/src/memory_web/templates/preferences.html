@@ -1,12 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ t('pref.title') }} · {{ t('brand') }}{% endblock %}
 {% block content %}
-<header class="page">
-  <h1>{{ t('pref.title') }}</h1>
-  <div class="sub">
-    {{ t('pref.sub') }}
-    <a href="/preferences/download" style="margin-left:8px;">{{ t('common.download') }}</a>
+<header class="page" style="display:flex; align-items:flex-end; gap:16px;">
+  <div>
+    <h1>{{ t('pref.title') }}</h1>
+    <div class="sub">
+      {{ t('pref.sub') }}
+      <a href="/preferences/download" style="margin-left:8px;">{{ t('common.download') }}</a>
+    </div>
   </div>
+  {% if ns_writable %}
+  <button type="button" class="btn page-actions" data-open-modal="preference-add-dialog">{{ t('pref.add') }}</button>
+  {% endif %}
 </header>
 
 {% if error %}
@@ -14,8 +19,11 @@
 {% endif %}
 
 {% if ns_writable %}
-<section class="card">
-  <h2 class="card-title">{{ t('pref.form.title') }}</h2>
+<dialog class="entry-modal" id="preference-add-dialog" aria-labelledby="preference-add-title">
+  <div class="modal-head">
+    <h2 class="card-title" id="preference-add-title">{{ t('pref.form.title') }}</h2>
+    <button type="button" class="modal-close" data-close-modal aria-label="{{ t('common.cancel') }}">&times;</button>
+  </div>
   <form class="entry-form" method="post" action="/preferences/append">
     <div class="row">
       <label>{{ t('memory.form.date') }}
@@ -27,10 +35,11 @@
     </label>
     <div class="row">
       <button type="submit">{{ t('pref.form.submit') }}</button>
+      <button type="button" class="secondary" data-close-modal>{{ t('common.cancel') }}</button>
       <span class="small">{{ t('pref.form.hint') }}</span>
     </div>
   </form>
-</section>
+</dialog>
 {% endif %}
 
 {% if missing %}
@@ -80,6 +89,38 @@
 {% block scripts %}
 <script>
 (function() {
+  document.querySelectorAll('[data-open-modal]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var dialog = document.getElementById(btn.dataset.openModal);
+      if (!dialog) return;
+      if (typeof dialog.showModal === 'function') {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute('open', '');
+      }
+      var first = dialog.querySelector('form select, form input, form textarea, form button');
+      if (first) first.focus();
+    });
+  });
+  document.querySelectorAll('.entry-modal').forEach(function(dialog) {
+    dialog.querySelectorAll('[data-close-modal]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (typeof dialog.close === 'function') {
+          dialog.close();
+        } else {
+          dialog.removeAttribute('open');
+        }
+      });
+    });
+    dialog.addEventListener('click', function(ev) {
+      if (ev.target !== dialog) return;
+      if (typeof dialog.close === 'function') {
+        dialog.close();
+      } else {
+        dialog.removeAttribute('open');
+      }
+    });
+  });
   document.querySelectorAll('.entry-card').forEach(function(card) {
     var view = card.querySelector('.entry-card-view');
     var edit = card.querySelector('.entry-card-edit');

@@ -61,11 +61,11 @@ def _read_skill_version() -> str:
     """Read the using-memory skill version from <repo>/version.txt.
 
     The web package lives at <repo>/web/src/memory_web/, so the repo root is
-    `_PKG_DIR.parents[3]`. Falls back to ``unknown`` if the file is missing
+    `_PKG_DIR.parents[2]`. Falls back to ``unknown`` if the file is missing
     or unreadable (e.g. memory-web installed standalone via pip).
     """
     candidates = [
-        _PKG_DIR.parents[3] / "version.txt",
+        _PKG_DIR.parents[2] / "version.txt",
         Path("~/.skills/using-memory/version.txt").expanduser(),
         Path("~/.claude/skills/using-memory/version.txt").expanduser(),
         Path("~/.codex/skills/using-memory/version.txt").expanduser(),
@@ -119,12 +119,22 @@ def _namespace_context(request: Request) -> dict:
     }
 
 
+def _to_minute(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value)
+    if "T" not in text:
+        return text
+    return text.replace("T", " ")[:16]
+
+
 TEMPLATES = Jinja2Templates(
     directory=str(_PKG_DIR / "templates"),
     context_processors=[lang_context, _namespace_context],
 )
 # Make the skill version available to every template without per-route boilerplate.
 TEMPLATES.env.globals["skill_version"] = SKILL_VERSION
+TEMPLATES.env.filters["to_minute"] = _to_minute
 
 
 def create_app(config_path: str | None = None) -> FastAPI:

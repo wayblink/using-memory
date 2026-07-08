@@ -15,6 +15,14 @@
       } catch (e) {
         document.documentElement.setAttribute('data-width-mode', 'narrow');
       }
+      try {
+        var th = localStorage.getItem('memory-web:theme');
+        var themes = ['spotify', 'supabase', 'apple', 'notion', 'vercel', 'airbnb'];
+        if (themes.indexOf(th) === -1) th = 'spotify';
+        document.documentElement.setAttribute('data-theme', th);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'spotify');
+      }
     })();
   </script>
   {% block head_extra %}{% endblock %}
@@ -57,37 +65,70 @@
       <a href="/preferences" class="{% if page == 'preferences' %}active{% endif %}"><span class="icon">★</span> {{ t('nav.preferences') }}</a>
     </nav>
     <footer class="sidebar-footer">
-      <div class="width-switcher" role="group" aria-label="{{ t('width.aria') }}">
-        <button type="button" data-width-mode="narrow" title="{{ t('width.narrow.title') }}" aria-label="{{ t('width.narrow') }}">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="5" y="2" width="6" height="12" rx="1"/>
-          </svg>
-          {{ t('width.narrow') }}
-        </button>
-        <span class="sep">·</span>
-        <button type="button" data-width-mode="wide" title="{{ t('width.wide.title') }}" aria-label="{{ t('width.wide') }}">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="1" y="2" width="14" height="12" rx="1"/>
-          </svg>
-          {{ t('width.wide') }}
-        </button>
+      <div class="theme-switcher footer-control" aria-label="{{ t('theme.aria') }}">
+        <span class="theme-switcher-label footer-control-label">{{ t('theme.label') }}</span>
+        <details class="theme-picker">
+          <summary class="theme-picker-trigger" title="{{ t('theme.aria') }}">
+            <span class="theme-swatch theme-current-swatch theme-swatch-spotify" aria-hidden="true"></span>
+            <span class="theme-current-label">{{ t('theme.spotify') }}</span>
+          </summary>
+          <div class="theme-picker-menu" role="listbox">
+            <button type="button" data-theme-mode="spotify" title="{{ t('theme.spotify.title') }}" role="option">
+              <span class="theme-swatch theme-swatch-spotify" aria-hidden="true"></span>
+              {{ t('theme.spotify') }}
+            </button>
+            <button type="button" data-theme-mode="supabase" title="{{ t('theme.supabase.title') }}" role="option">
+              <span class="theme-swatch theme-swatch-supabase" aria-hidden="true"></span>
+              {{ t('theme.supabase') }}
+            </button>
+            <button type="button" data-theme-mode="apple" title="{{ t('theme.apple.title') }}" role="option">
+              <span class="theme-swatch theme-swatch-apple" aria-hidden="true"></span>
+              {{ t('theme.apple') }}
+            </button>
+            <button type="button" data-theme-mode="notion" title="{{ t('theme.notion.title') }}" role="option">
+              <span class="theme-swatch theme-swatch-notion" aria-hidden="true"></span>
+              {{ t('theme.notion') }}
+            </button>
+            <button type="button" data-theme-mode="vercel" title="{{ t('theme.vercel.title') }}" role="option">
+              <span class="theme-swatch theme-swatch-vercel" aria-hidden="true"></span>
+              {{ t('theme.vercel') }}
+            </button>
+            <button type="button" data-theme-mode="airbnb" title="{{ t('theme.airbnb.title') }}" role="option">
+              <span class="theme-swatch theme-swatch-airbnb" aria-hidden="true"></span>
+              {{ t('theme.airbnb') }}
+            </button>
+          </div>
+        </details>
       </div>
-      <div class="lang-switcher">
-        <a href="/lang/en" class="{% if lang == 'en' %}active{% endif %}">EN</a>
-        <span class="sep">·</span>
-        <a href="/lang/zh" class="{% if lang == 'zh' %}active{% endif %}">中文</a>
+      <div class="width-switcher footer-control" role="group" aria-label="{{ t('width.aria') }}">
+        <span class="width-switcher-label footer-control-label">{{ t('width.label') }}</span>
+        <div class="footer-control-options">
+          <button type="button" data-width-mode="narrow" title="{{ t('width.narrow.title') }}" aria-label="{{ t('width.narrow') }}">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="5" y="2" width="6" height="12" rx="1"/>
+            </svg>
+            {{ t('width.narrow') }}
+          </button>
+          <span class="sep">·</span>
+          <button type="button" data-width-mode="wide" title="{{ t('width.wide.title') }}" aria-label="{{ t('width.wide') }}">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="1" y="2" width="14" height="12" rx="1"/>
+            </svg>
+            {{ t('width.wide') }}
+          </button>
+        </div>
+      </div>
+      <div class="lang-switcher footer-control" role="group" aria-label="{{ t('lang.label') }}">
+        <span class="lang-switcher-label footer-control-label">{{ t('lang.label') }}</span>
+        <div class="footer-control-options">
+          <a href="/lang/en" class="{% if lang == 'en' %}active{% endif %}">EN</a>
+          <span class="sep">·</span>
+          <a href="/lang/zh" class="{% if lang == 'zh' %}active{% endif %}">中文</a>
+        </div>
       </div>
     </footer>
   </aside>
   <main class="content">
-    <button class="reload-btn" type="button" onclick="location.reload()" title="{{ t('common.reload.title') }}" aria-label="{{ t('common.reload') }}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/>
-        <polyline points="21 3 21 8 16 8"/>
-        <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/>
-        <polyline points="3 21 3 16 8 16"/>
-      </svg>
-    </button>
     {% block content %}{% endblock %}
   </main>
 </div>
@@ -107,6 +148,53 @@
         var mode = b.getAttribute('data-width-mode');
         try { localStorage.setItem('memory-web:width-mode', mode); } catch (e) {}
         apply(mode);
+      });
+    });
+  })();
+</script>
+<script>
+  (function () {
+    var html = document.documentElement;
+    function updateThemeFavicon() {
+      var icon = document.querySelector('link[rel="icon"]');
+      if (!icon || !window.getComputedStyle) return;
+      var styles = window.getComputedStyle(html);
+      var bg = styles.getPropertyValue('--accent').trim() || 'CanvasText';
+      var fg = styles.getPropertyValue('--on-accent').trim() || 'Canvas';
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+        '<rect width="32" height="32" rx="7" fill="' + bg + '"/>' +
+        '<g fill="none" stroke="' + fg + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 32) scale(1 -1)">' +
+        '<path d="M 13 7 C 10 7, 8 9, 8 12 C 6 12.5, 5.5 15.5, 7 17 C 6 19, 7.5 21.5, 10 22 C 10.5 24, 13 25, 15 24"/>' +
+        '<path d="M 19 7 C 22 7, 24 9, 24 12 C 26 12.5, 26.5 15.5, 25 17 C 26 19, 24.5 21.5, 22 22 C 21.5 24, 19 25, 17 24"/>' +
+        '<line x1="16" y1="7" x2="16" y2="24.5" opacity="0.85"/>' +
+        '</g></svg>';
+      icon.setAttribute('href', 'data:image/svg+xml,' + encodeURIComponent(svg));
+    }
+    function apply(theme) {
+      html.setAttribute('data-theme', theme);
+      var activeLabel = '';
+      document.querySelectorAll('.theme-picker-menu button[data-theme-mode]').forEach(function (b) {
+        var isActive = b.getAttribute('data-theme-mode') === theme;
+        b.classList.toggle('active', isActive);
+        b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        if (isActive) activeLabel = b.textContent.trim();
+      });
+      var label = document.querySelector('.theme-current-label');
+      if (label && activeLabel) label.textContent = activeLabel;
+      var swatch = document.querySelector('.theme-current-swatch');
+      if (swatch) {
+        swatch.className = 'theme-swatch theme-current-swatch theme-swatch-' + theme;
+      }
+      updateThemeFavicon();
+    }
+    apply(html.getAttribute('data-theme') || 'spotify');
+    document.querySelectorAll('.theme-picker-menu button[data-theme-mode]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var theme = b.getAttribute('data-theme-mode');
+        try { localStorage.setItem('memory-web:theme', theme); } catch (e) {}
+        apply(theme);
+        var picker = b.closest('.theme-picker');
+        if (picker) picker.removeAttribute('open');
       });
     });
   })();

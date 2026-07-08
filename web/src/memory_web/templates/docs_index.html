@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ t('docs.title') }} · {{ t('brand') }}{% endblock %}
 {% block content %}
-<header class="page" style="display:flex; align-items:flex-end; gap:16px;">
-  <div>
-    <h1 style="margin:0 0 4px;">{{ t('docs.title') }}</h1>
+<header class="page docs-page-head">
+  <div class="docs-page-title">
+    <h1>{{ t('docs.title') }}</h1>
     <div class="sub">
       {% if total == grand_total %}
         {{ t('docs.sub', n=total, s='' if total == 1 else 's') }}
@@ -15,11 +15,47 @@
     </div>
   </div>
   {% if ns_writable %}
-  <a href="/docs/new" class="btn page-actions">{{ t('docs.new') }}</a>
+  <form id="docs-refresh-form" method="post" action="/docs/refresh" hidden></form>
+  <div class="page-actions action-row">
+    <button type="submit" form="docs-refresh-form" class="btn">{{ t('docs.refresh') }}</button>
+    <button type="button" class="btn" data-open-modal="docs-upload-dialog">{{ t('docs.upload.open') }}</button>
+    <a href="/docs/new" class="btn">{{ t('docs.new') }}</a>
+  </div>
   {% endif %}
 </header>
 
-<form class="filters" method="get" action="/docs">
+{% if error %}
+  <div class="warning">{{ error }}</div>
+{% elif maintained is not none %}
+  <div class="notice">{{ t('docs.maintained', n=maintained) }}</div>
+{% endif %}
+
+{% if ns_writable %}
+<dialog class="entry-modal docs-upload-modal" id="docs-upload-dialog" aria-labelledby="docs-upload-title">
+  <div class="modal-head">
+    <h2 class="card-title" id="docs-upload-title">{{ t('docs.upload.title') }}</h2>
+    <button type="button" class="modal-close" data-close-modal aria-label="{{ t('common.cancel') }}">&times;</button>
+  </div>
+  <form class="entry-form" method="post" action="/docs/upload" enctype="multipart/form-data">
+    <label class="full">{{ t('docs.upload.file') }}
+      <input type="file" name="file" accept=".md,.html,.htm,.txt,text/markdown,text/html,text/plain" required>
+    </label>
+    <label class="full">{{ t('docs.upload.path') }}
+      <input type="text" name="path" placeholder="{{ t('docs.upload.path.placeholder') }}">
+    </label>
+    <label class="checkbox-line">
+      <span>{{ t('docs.upload.replace') }}</span>
+      <input type="checkbox" name="replace" value="1">
+    </label>
+    <div class="row">
+      <button type="submit">{{ t('docs.upload.submit') }}</button>
+      <button type="button" class="secondary" data-close-modal>{{ t('common.cancel') }}</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+
+<form class="filters" method="get" action="/docs" onchange="this.submit()">
   <label>{{ t('docs.filter.type') }}
     <select name="type">
       <option value="">{{ t('common.all') }}</option>
@@ -53,13 +89,6 @@
       {% endfor %}
     </select>
   </label>
-  <label>{{ t('docs.filter.indexed') }}
-    <select name="indexed">
-      <option value="">{{ t('common.all') }}</option>
-      <option value="yes" {% if selected['indexed'] == 'yes' %}selected{% endif %}>{{ t('docs.filter.indexed.yes') }}</option>
-      <option value="no" {% if selected['indexed'] == 'no' %}selected{% endif %}>{{ t('docs.filter.indexed.no') }}</option>
-    </select>
-  </label>
   <label>{{ t('docs.filter.group') }}
     <select name="group">
       <option value="none"    {% if selected['group'] == 'none'    %}selected{% endif %}>{{ t('docs.group.none') }}</option>
@@ -74,11 +103,9 @@
       <option value="created" {% if selected['sort'] == 'created' %}selected{% endif %}>{{ t('docs.sort.created') }}</option>
     </select>
   </label>
-  <label style="flex:2 1 220px;">{{ t('docs.filter.q') }}
+  <label class="docs-query-filter">{{ t('docs.filter.q') }}
     <input type="text" name="q" value="{{ selected['q'] }}" placeholder="{{ t('docs.filter.q.placeholder') }}">
   </label>
-  <button type="submit">{{ t('common.apply') }}</button>
-  <a class="row" href="/docs" style="align-self:end;"><button type="button" class="secondary">{{ t('common.reset') }}</button></a>
 </form>
 
 {% if items %}
@@ -92,18 +119,18 @@
           <li>
             <div class="title">
               <a href="/docs/{{ it.rel }}">{{ it.title }}</a>
-              <span class="tag tag-ext-{{ it.ext }}" style="margin-left:8px;">{{ it.ext }}</span>
-              {% if not it.in_index %}<span class="tag" style="margin-left:4px;" title="{{ t('docs.unindexed_badge') }}">{{ t('docs.unindexed_badge') }}</span>{% endif %}
+              <span class="tag tag-ext-{{ it.ext }} docs-ext-tag">{{ it.ext }}</span>
+              {% if not it.in_index %}<span class="tag docs-unindexed-tag" title="{{ t('docs.unindexed_badge') }}">{{ t('docs.unindexed_badge') }}</span>{% endif %}
             </div>
             <div class="meta">
               {{ it.rel }}
-              {% if it.created %} · {{ t('docs.meta.created') }} {{ it.created }}{% endif %}
-              {% if it.modified %} · {{ t('docs.meta.modified') }} {{ it.modified }}{% endif %}
+              {% if it.created %} · {{ t('docs.meta.created') }} {{ it.created|to_minute }}{% endif %}
+              {% if it.modified %} · {{ t('docs.meta.modified') }} {{ it.modified|to_minute }}{% endif %}
               {% if it.projects %} · {{ t('docs.meta.project') }}:{{ it.projects|join(', ') }}{% endif %}
               {% if it.tags %} · {{ t('docs.meta.tags') }}:{{ it.tags|join(', ') }}{% endif %}
               · {{ it.size }} {{ t('docs.meta.bytes') }}
             </div>
-            {% if it.summary %}<div class="meta" style="margin-top:4px; color: var(--text-soft);">{{ it.summary }}</div>{% endif %}
+            {% if it.summary %}<div class="meta docs-summary">{{ it.summary }}</div>{% endif %}
           </li>
         {% endfor %}
       </ul>
@@ -126,7 +153,6 @@
         <input type="hidden" name="format" value="{{ selected['format'] }}">
         <input type="hidden" name="project" value="{{ selected['project'] }}">
         <input type="hidden" name="tag" value="{{ selected['tag'] }}">
-        <input type="hidden" name="indexed" value="{{ selected['indexed'] }}">
         <input type="hidden" name="group" value="{{ selected['group'] }}">
         <input type="hidden" name="sort" value="{{ selected['sort'] }}">
         <input type="hidden" name="q" value="{{ selected['q'] }}">
@@ -165,4 +191,43 @@
     </div>
   </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  document.querySelectorAll('[data-open-modal]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var dialog = document.getElementById(btn.dataset.openModal);
+      if (!dialog) return;
+      if (typeof dialog.showModal === 'function') {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute('open', '');
+      }
+      var first = dialog.querySelector('form select, form input, form textarea, form button');
+      if (first) first.focus();
+    });
+  });
+  document.querySelectorAll('.entry-modal').forEach(function(dialog) {
+    dialog.querySelectorAll('[data-close-modal]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (typeof dialog.close === 'function') {
+          dialog.close();
+        } else {
+          dialog.removeAttribute('open');
+        }
+      });
+    });
+    dialog.addEventListener('click', function(ev) {
+      if (ev.target !== dialog) return;
+      if (typeof dialog.close === 'function') {
+        dialog.close();
+      } else {
+        dialog.removeAttribute('open');
+      }
+    });
+  });
+})();
+</script>
 {% endblock %}
