@@ -247,34 +247,6 @@ html[data-width-mode="wide"] .content {
   max-width: 1600px;
 }
 
-/* Floating reload button — top-right of every page */
-.reload-btn {
-  position: absolute;
-  top: 24px;
-  right: 24px;
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg);
-  color: var(--text-soft);
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  cursor: pointer;
-  padding: 0;
-  transition: color 0.15s ease, transform 0.4s ease, background 0.15s ease;
-  z-index: 5;
-}
-.reload-btn:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.reload-btn:active svg {
-  transform: rotate(-180deg);
-  transition: transform 0.3s ease;
-}
-.reload-btn svg { display: block; }
 .content header.page {
   margin-bottom: 24px;
   border-bottom: 1px solid var(--border);
@@ -372,6 +344,40 @@ html[data-width-mode="wide"] .content {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border-strong);
+}
+
+.docs-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.docs-page-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.action-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: max-content;
+}
+.action-row form {
+  margin: 0;
+  display: inline-flex;
+}
+.action-row .btn,
+.action-row button {
+  border: none;
+  cursor: pointer;
+  line-height: 1.4;
+  white-space: nowrap;
+  min-height: 30px;
 }
 
 /* Log entries timeline */
@@ -570,6 +576,14 @@ html[data-width-mode="wide"] .markdown {
   border-radius: var(--radius);
   margin-bottom: 18px;
 }
+.notice {
+  border: 1px solid #b8d8c4;
+  background: #f0faf3;
+  color: #2f6f47;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  margin-bottom: 18px;
+}
 
 /* Search page polish — single-row form with query input + scope + time-range + submit */
 .search-filters {
@@ -734,7 +748,7 @@ mark {
 .small { font-size: 12.5px; color: var(--text-muted); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-/* Cards (used by inline forms on memory/preferences pages) */
+/* Cards */
 .card {
   border: 1px solid var(--border);
   background: var(--bg-soft);
@@ -776,6 +790,21 @@ mark {
   color: var(--text);
   width: 100%;
 }
+.entry-form input[type="file"] {
+  padding: 6px 8px;
+}
+.entry-form .checkbox-line {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+  color: var(--text-soft);
+}
+.entry-form .checkbox-line input {
+  width: auto;
+  margin: 0;
+}
 .entry-form input[readonly] { background: var(--bg-soft); color: var(--text-soft); }
 .entry-form textarea {
   font-family: var(--mono);
@@ -800,7 +829,6 @@ mark {
   border: 1px solid var(--border-strong);
 }
 
-
 /* Add-entry modal */
 .entry-modal {
   width: min(720px, calc(100vw - 32px));
@@ -814,6 +842,9 @@ mark {
 }
 .entry-modal::backdrop {
   background: rgba(34, 33, 30, 0.34);
+}
+.docs-upload-modal {
+  width: min(520px, calc(100vw - 32px));
 }
 .modal-head {
   display: flex;
@@ -977,6 +1008,17 @@ mark {
 }
 
 @media (max-width: 720px) {
+  .docs-page-head {
+    min-height: 0;
+  }
+
+  .docs-page-head .action-row {
+    justify-content: flex-start;
+    margin-top: 12px;
+    margin-left: 0;
+    overflow-x: auto;
+  }
+
   .pagination-wrap {
     flex-direction: column;
     align-items: stretch;
@@ -1004,142 +1046,6 @@ mark {
   color: var(--text-soft);
   margin: 24px 0 12px;
   font-weight: 600;
-}
-
-/* Token savings card */
-.savings-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 20px 24px;
-  background: linear-gradient(135deg, #f5fbff 0%, var(--bg) 60%);
-}
-
-/* Savings card variant with ? popover */
-.stat-savings .value {
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-.stat-help {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 5;
-}
-.stat-help > summary {
-  list-style: none;
-  cursor: pointer;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-soft);
-  background: var(--bg);
-  transition: all 0.15s ease;
-}
-.stat-help > summary::-webkit-details-marker { display: none; }
-.stat-help > summary::marker { content: ""; }
-.stat-help > summary:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.stat-help[open] > summary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-.stat-popover {
-  position: absolute;
-  top: 36px;
-  right: 0;
-  width: 340px;
-  max-width: 90vw;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  padding: 14px 16px;
-  box-shadow: 0 6px 18px rgba(15, 15, 15, 0.08), 0 2px 6px rgba(15, 15, 15, 0.04);
-  z-index: 20;
-}
-.stat-popover .popover-title {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-soft);
-  margin-bottom: 6px;
-  font-weight: 600;
-}
-.stat-popover .savings-disclaimer {
-  margin: 0 0 12px;
-}
-.stat-popover .savings-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-.savings-total {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.savings-total-label {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-soft);
-}
-.savings-total-value {
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-.savings-total-unit {
-  font-size: 14px;
-  color: var(--text-soft);
-}
-.savings-disclaimer {
-  margin: 6px 0 14px;
-  color: var(--text-muted);
-}
-.savings-rows {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-@media (min-width: 760px) {
-  .savings-rows { grid-template-columns: repeat(3, 1fr); gap: 18px; }
-}
-.savings-row-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-.savings-row-label {
-  font-size: 13px;
-  color: var(--text);
-  font-weight: 500;
-}
-.savings-row-value {
-  font-family: var(--mono);
-  font-size: 14px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-.savings-row-hint {
-  color: var(--text-muted);
-  line-height: 1.5;
 }
 
 /* Two-column layout for stats blocks */
@@ -1313,15 +1219,6 @@ a.bar-row:hover .bar-label { color: var(--accent); }
   .content {
     min-width: 0;
     padding: 28px 16px 56px;
-  }
-
-  .reload-btn {
-    top: 18px;
-    right: 16px;
-  }
-
-  .content header.page {
-    padding-right: 42px;
   }
 
   .stat-grid,

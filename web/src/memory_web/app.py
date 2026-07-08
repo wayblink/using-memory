@@ -119,12 +119,22 @@ def _namespace_context(request: Request) -> dict:
     }
 
 
+def _to_minute(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value)
+    if "T" not in text:
+        return text
+    return text.replace("T", " ")[:16]
+
+
 TEMPLATES = Jinja2Templates(
     directory=str(_PKG_DIR / "templates"),
     context_processors=[lang_context, _namespace_context],
 )
 # Make the skill version available to every template without per-route boilerplate.
 TEMPLATES.env.globals["skill_version"] = SKILL_VERSION
+TEMPLATES.env.filters["to_minute"] = _to_minute
 
 
 def create_app(config_path: str | None = None) -> FastAPI:

@@ -398,6 +398,34 @@ class MemoryAdapter:
         )
         return self._call_capturing_exits(self._mt.do_upsert_doc, ns)
 
+    def normalize_doc_upload_path(self, doc: str) -> str:
+        """Return a validated docs/ relative path with a supported extension."""
+        raw = (doc or "").strip().replace("\\", "/")
+        validated = self._mt.normalize_index_doc_path(raw)
+        if validated is None:
+            raise MemoryToolError("invalid doc path; use a relative .md, .html, .htm, or .txt path")
+        return validated
+
+    def doc_file_exists(self, doc: str) -> bool:
+        root = self.primary_root()
+        if root is None:
+            return False
+        rel = self.normalize_doc_upload_path(doc)
+        docs_dir = (root / "docs").resolve()
+        candidate = (docs_dir / rel).resolve()
+        try:
+            candidate.relative_to(docs_dir)
+        except ValueError:
+            raise MemoryToolError("invalid doc path; path escapes docs/")
+        return candidate.exists()
+
+    def upload_doc(self, *, doc: str, text: str, replace: bool = False) -> dict:
+        self._require_writable()
+        rel = self.normalize_doc_upload_path(doc)
+        if self.doc_file_exists(rel) and not replace:
+            raise MemoryToolError(f"doc already exists: {rel}")
+        return self.upsert_doc(doc=rel, text=text)
+
     # --- structural helpers used by routes for richer rendering -------------
 
     def primary_root(self) -> Path | None:

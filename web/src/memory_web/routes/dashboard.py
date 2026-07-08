@@ -6,16 +6,6 @@ from fastapi.responses import HTMLResponse
 router = APIRouter()
 
 
-# Heuristic factors for the rough token-savings estimate. The skill has no
-# real-API visibility, so these are explicit guesses about average sizes
-# kept out of the conversation window. Document them so future readers know
-# the number is directional, not precise.
-_AUTO_SUMMARY_TOKENS_AVOIDED = 400   # avg detail entry size that a silent
-                                     # Stop-hook summary replaces in-context
-_STOP_BLOCK_TOKENS_AVOIDED = 200     # avg "context-bloat" message a Stop block
-                                     # converts to a disk-only write
-
-
 @router.get("/", response_class=HTMLResponse, name="dashboard")
 def dashboard(request: Request) -> HTMLResponse:
     adapter = request.state.adapter
@@ -73,21 +63,6 @@ def dashboard(request: Request) -> HTMLResponse:
     log_max = log_tags[0]["count"] if log_tags else 0
     memory_max = memory_tags[0]["count"] if memory_tags else 0
 
-    def _int(key: str) -> int:
-        try:
-            return int(lifetime.get(key, 0) or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    auto_entries = _int("log_entries_auto")
-    stop_blocks = _int("stop_blocks")
-
-    savings_breakdown = {
-        "auto_summary": auto_entries * _AUTO_SUMMARY_TOKENS_AVOIDED,
-        "stop_block": stop_blocks * _STOP_BLOCK_TOKENS_AVOIDED,
-    }
-    savings_total = sum(savings_breakdown.values())
-
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -116,12 +91,6 @@ def dashboard(request: Request) -> HTMLResponse:
             "memory_max": memory_max,
             "last_event_ts": status.get("last_event_ts"),
             "warnings": status.get("warnings", []),
-            "savings_total": savings_total,
-            "savings_breakdown": savings_breakdown,
-            "savings_factors": {
-                "auto_summary": _AUTO_SUMMARY_TOKENS_AVOIDED,
-                "stop_block": _STOP_BLOCK_TOKENS_AVOIDED,
-            },
             "maintenance": maintenance_status,
         },
     )

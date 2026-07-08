@@ -146,41 +146,4 @@
     {% endif %}
   </section>
 </div>
-
-<section class="stat-grid">
-    <div class="stat stat-savings">
-      <details class="stat-help">
-        <summary aria-label="show breakdown" title="{{ t('dashboard.savings.title') }}">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="8" cy="8" r="6.5"/>
-            <path d="M 6 6 C 6 4.5, 10 4.5, 10 6.5 C 10 7.7, 8 7.8, 8 9.2"/>
-            <circle cx="8" cy="11.5" r="0.4" fill="currentColor"/>
-          </svg>
-        </summary>
-        <div class="stat-popover">
-          <div class="popover-title">{{ t('dashboard.savings.title') }}</div>
-          <p class="savings-disclaimer small">{{ t('dashboard.savings.disclaimer') }}</p>
-          <div class="savings-rows">
-            <div class="savings-row">
-              <div class="savings-row-head">
-                <span class="savings-row-label">{{ t('dashboard.savings.auto_summary') }}</span>
-                <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.auto_summary) }}</span>
-              </div>
-              <div class="small savings-row-hint">{{ t('dashboard.savings.auto_summary.hint', n=lifetime.get('log_entries_auto', 0), factor=savings_factors.auto_summary) }}</div>
-            </div>
-            <div class="savings-row">
-              <div class="savings-row-head">
-                <span class="savings-row-label">{{ t('dashboard.savings.stop_block') }}</span>
-                <span class="savings-row-value">~ {{ '{:,}'.format(savings_breakdown.stop_block) }}</span>
-              </div>
-              <div class="small savings-row-hint">{{ t('dashboard.savings.stop_block.hint', n=lifetime.get('stop_blocks', 0), factor=savings_factors.stop_block) }}</div>
-            </div>
-          </div>
-        </div>
-      </details>
-      <div class="label">{{ t('dashboard.card.savings') }}</div>
-      <div class="value">~ {{ '{:,}'.format(savings_total) }}</div>
-      <div class="hint">{{ t('dashboard.card.savings.hint') }}</div>
-    </div>
-  </section>
 {% endblock %}

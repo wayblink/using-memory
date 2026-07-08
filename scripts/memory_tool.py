@@ -86,11 +86,30 @@ def _cli_error(msg: str, hint: str | None = None):
     sys.exit(2)
 
 
+def now_local_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 def parse_iso_date(raw: str | None, label: str) -> date:
     try:
         return date.fromisoformat(raw or "")
     except (TypeError, ValueError):
         sys.stderr.write(f"invalid {label}; expected YYYY-MM-DD\n")
+        sys.exit(2)
+
+
+def parse_iso_date_or_datetime(raw: str | None, label: str) -> None:
+    value = raw or ""
+    try:
+        datetime.fromisoformat(value)
+        return
+    except (TypeError, ValueError):
+        pass
+    try:
+        date.fromisoformat(value)
+        return
+    except (TypeError, ValueError):
+        sys.stderr.write(f"invalid {label}; expected ISO date or datetime\n")
         sys.exit(2)
 
 
@@ -500,7 +519,7 @@ def extract_h1_from_text(text: str) -> str | None:
 
 def doc_index_entry_for_file(docs_dir: Path, doc_path: Path) -> dict:
     rel_path = doc_path.relative_to(docs_dir).as_posix()
-    modified = date.fromtimestamp(doc_path.stat().st_mtime).isoformat()
+    modified = datetime.fromtimestamp(doc_path.stat().st_mtime).astimezone().isoformat(timespec="seconds")
     return {
         "path": rel_path,
         "title": extract_markdown_title(doc_path),
@@ -1032,7 +1051,6 @@ def _bump_lifetime_stats(scoped_root: Path, deltas: dict, sets: dict | None = No
 # first matching topic wins so callers get deterministic results.
 _TOPIC_KEYWORDS: list[tuple[str, re.Pattern]] = [
     ("hooks", re.compile(r"\b(hook|hooks|posttooluse|pretooluse|sessionstart|stop[ _-]?hook|precompact)\b", re.I)),
-    ("anatomy", re.compile(r"\banatomy\b", re.I)),
     ("build", re.compile(r"\b(build|compile|docker[ _-]?build|image[ _-]?build|tsc|webpack|vite)\b", re.I)),
     ("deploy", re.compile(r"\b(deploy|release|rollout|helm|kubectl|fly\.io|render|netlify|vercel)\b", re.I)),
     ("test", re.compile(r"\b(tests?|pytest|jest|vitest|cargo[ _-]?tests?|go[ _-]?tests?|smoke[ _-]?tests?)\b", re.I)),
@@ -1131,8 +1149,8 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
     stem = strip_doc_ext(doc_name)
 
     # Fallback fields: title -> first H1 / <title> / first non-empty line ->
-    # slug-derived; doc_type -> "wiki"; modified -> today; created ->
-    # today for new docs and preserved from the existing index entry on edit.
+    # slug-derived; doc_type -> "wiki"; modified -> now; created ->
+    # now for new docs and preserved from the existing index entry on edit.
     if args.title is not None:
         title = args.title
     else:
@@ -1142,11 +1160,11 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
             or stem
         )
     doc_type = args.doc_type or "wiki"
-    today = date.today().isoformat()
-    modified = args.modified or today
-    parse_iso_date(modified, "--modified")
+    now = now_local_iso()
+    modified = args.modified or now
+    parse_iso_date_or_datetime(modified, "--modified")
     created = args.created or modified
-    parse_iso_date(created, "--created")
+    parse_iso_date_or_datetime(created, "--created")
 
     doc_path = scoped_root / "docs" / doc_name
     index_path = scoped_root / "docs" / "index.json"
@@ -1184,7 +1202,7 @@ def do_upsert_doc(args: argparse.Namespace) -> dict:
         )
         if existing_entry and not args.created:
             created = existing_entry.get("created") or created
-            parse_iso_date(created, "--created")
+            parse_iso_date_or_datetime(created, "--created")
         entry = {
             "path": rel_path,
             "title": title,
@@ -2475,9 +2493,9 @@ def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--doc-type", type=str, default=None,
                    help="Optional. Defaults to 'wiki'. Common values: wiki, lesson, troubleshooting, decision-record, runbook, SOP, project.")
     p.add_argument("--modified", type=str, default=None,
-                   help="Optional ISO date (YYYY-MM-DD). Defaults to today.")
+                   help="Optional ISO date or datetime. Defaults to the current local timestamp.")
     p.add_argument("--created", type=str, default=None,
-                   help="Optional ISO date (YYYY-MM-DD). Defaults to today for new docs and preserves the existing created date on edit.")
+                   help="Optional ISO date or datetime. Defaults to the current local timestamp for new docs and preserves the existing created value on edit.")
     p.add_argument("--project", action="append", default=None)
     p.add_argument("--doc-tag", action="append", default=None)
     p.add_argument("--summary", type=str, default=None)

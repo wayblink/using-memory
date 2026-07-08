@@ -1044,6 +1044,39 @@ memory_roots:
             self.assertEqual(entry["projects"], ["using-memory"])
             self.assertEqual(entry["tags"], ["roadmap"])
 
+    def test_upsert_doc_defaults_created_modified_to_local_datetime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            result = self.run_tool(
+                "upsert-doc",
+                "--config",
+                str(config),
+                "--doc",
+                "plans/current",
+                "--text",
+                "# Current Plan\n",
+                "--json",
+            )
+
+            self.assertIn("T", result["created"])
+            self.assertIn("T", result["modified"])
+            parsed_created = datetime.fromisoformat(result["created"])
+            parsed_modified = datetime.fromisoformat(result["modified"])
+            self.assertIsNotNone(parsed_created.tzinfo)
+            self.assertIsNotNone(parsed_created.utcoffset())
+            self.assertIsNotNone(parsed_modified.tzinfo)
+            self.assertIsNotNone(parsed_modified.utcoffset())
+            self.assertEqual(result["created"], result["modified"])
+
+            index = json.loads((self.namespace_root(primary) / "docs" / "index.json").read_text(encoding="utf-8"))
+            entry = next(doc for doc in index["documents"] if doc["path"] == "plans/current.md")
+            self.assertEqual(entry["created"], result["created"])
+            self.assertEqual(entry["modified"], result["modified"])
+
     def test_upsert_doc_preserves_created_and_refreshes_modified_on_update(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -1088,6 +1121,48 @@ memory_roots:
             entry = next(doc for doc in index["documents"] if doc["path"] == "plans/q2-roadmap.md")
             self.assertEqual(entry["created"], "2026-05-01")
             self.assertEqual(entry["modified"], "2026-05-09")
+
+    def test_upsert_doc_refreshes_modified_to_datetime_when_not_explicit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            primary = self.make_repo(base, "primary", machine_id="primary")
+            config = base / "config.yaml"
+            self.write_config(config, primary)
+
+            self.run_tool(
+                "upsert-doc",
+                "--config",
+                str(config),
+                "--doc",
+                "plans/q2-roadmap",
+                "--title",
+                "Q2 Roadmap",
+                "--created",
+                "2026-05-01",
+                "--modified",
+                "2026-05-06",
+                "--text",
+                "# First version\n",
+                "--json",
+            )
+            result = self.run_tool(
+                "upsert-doc",
+                "--config",
+                str(config),
+                "--doc",
+                "plans/q2-roadmap",
+                "--title",
+                "Q2 Roadmap v2",
+                "--text",
+                "# Second version\n",
+                "--json",
+            )
+
+            self.assertEqual(result["created"], "2026-05-01")
+            self.assertIn("T", result["modified"])
+            parsed_modified = datetime.fromisoformat(result["modified"])
+            self.assertIsNotNone(parsed_modified.tzinfo)
+            self.assertIsNotNone(parsed_modified.utcoffset())
 
     def test_upsert_doc_writes_html_and_txt_with_index_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1503,6 +1578,10 @@ memory_roots:
             self.assertEqual(len(manual_entries), 1)
             self.assertEqual(manual_entries[0]["title"], "Manual Note")
             self.assertEqual(manual_entries[0]["type"], "wiki")
+            self.assertIn("T", manual_entries[0]["created"])
+            self.assertIn("T", manual_entries[0]["modified"])
+            self.assertIsNotNone(datetime.fromisoformat(manual_entries[0]["created"]).utcoffset())
+            self.assertIsNotNone(datetime.fromisoformat(manual_entries[0]["modified"]).utcoffset())
             self.assertEqual(manual_entries[0]["tags"], [])
             self.assertEqual(manual_entries[0]["projects"], [])
 

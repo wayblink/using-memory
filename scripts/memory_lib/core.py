@@ -34,6 +34,21 @@ DEFAULT_NAMESPACE = "main"
 SUPPORTED_DOC_EXTS = (".md", ".html", ".htm", ".txt")
 DEFAULT_DOC_EXT = ".md"
 SETUP_HINT = "Run `python3 scripts/memory_tool.py setup` to configure memory path, optional remote Git repo, namespace, and machine ID."
+
+
+def _is_iso_date_or_datetime(value: str) -> bool:
+    try:
+        datetime.fromisoformat(value)
+        return True
+    except ValueError:
+        pass
+    try:
+        date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
 def no_memory_config(warning: str) -> dict:
     return {
         "version": 1,
@@ -203,17 +218,13 @@ def validate_doc_entry(entry: dict) -> str | None:
         value = entry.get(field, [])
         if value is not None and not isinstance(value, list):
             return f"document entry field must be a list: {field}"
-    try:
-        date.fromisoformat(entry["modified"])
-    except ValueError:
+    if not _is_iso_date_or_datetime(entry["modified"]):
         return f"document entry has invalid modified date: {entry['modified']}"
     created = entry.get("created")
     if created is not None:
         if not isinstance(created, str) or not created.strip():
             return "document entry has invalid created date"
-        try:
-            date.fromisoformat(created)
-        except ValueError:
+        if not _is_iso_date_or_datetime(created):
             return f"document entry has invalid created date: {created}"
     return None
 def validate_doc_index(data) -> str | None:
@@ -270,7 +281,7 @@ def append_markdown_entry(path: Path, entry: str) -> Path:
     return path
 def looks_like_memory_namespace_root(path: Path) -> bool:
     # "local" is kept as a backward-compat marker; pre-V2.3 namespaces had it.
-    markers = ("MEMORY.md", "PREFERENCES.md", "log", "docs", "anatomy", "STATS.json", "local")
+    markers = ("MEMORY.md", "PREFERENCES.md", "log", "docs", "STATS.json", "local")
     return any((path / marker).exists() for marker in markers)
 def validate_primary_root_for_write(root: Path, namespace: str) -> None:
     if not root.exists():
