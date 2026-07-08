@@ -13,8 +13,8 @@
 {% endif %}
 
 {% if maintenance %}
-<section class="maintenance-card" style="margin:16px 0; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-lg); background:var(--card-bg, transparent);">
-  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+<section class="maintenance-card">
+  <div class="maintenance-row">
     <strong>{{ t('dashboard.maintain.title') }}</strong>
     {% if maintenance.enabled %}
       <span class="small">{{ t('dashboard.maintain.interval', n=maintenance.interval_minutes) }}</span>
@@ -29,13 +29,13 @@
     {% if maintenance.last_status == 'ok' %}
       <span class="tag" title="{{ t('dashboard.maintain.last_status') }}">{{ t('dashboard.maintain.status_ok') }}</span>
     {% elif maintenance.last_status == 'error' %}
-      <span class="tag" style="background:#fdecec; color:#a92626;" title="{{ maintenance.last_error or '' }}">{{ t('dashboard.maintain.status_error') }}</span>
+      <span class="tag status-error" title="{{ maintenance.last_error or '' }}">{{ t('dashboard.maintain.status_error') }}</span>
     {% endif %}
     {% if maintenance.enabled and maintenance.next_run_ts %}
-      <span class="small" style="margin-left:auto;">{{ t('dashboard.maintain.next_run', ts=maintenance.next_run_ts) }}</span>
+      <span class="small maintenance-next">{{ t('dashboard.maintain.next_run', ts=maintenance.next_run_ts) }}</span>
     {% endif %}
     {% if ns_writable %}
-    <form method="post" action="/admin/maintain" style="margin:0 0 0 auto; display:inline;">
+    <form method="post" action="/admin/maintain" class="maintenance-action">
       <button type="submit" class="btn"{% if maintenance.running %} disabled{% endif %}>
         {% if maintenance.running %}{{ t('dashboard.maintain.running') }}{% else %}{{ t('dashboard.maintain.run_now') }}{% endif %}
       </button>
@@ -43,7 +43,7 @@
     {% endif %}
   </div>
   {% if maintenance.last_summary %}
-    <div class="small" style="margin-top:6px; color:var(--text-soft);">
+    <div class="small maintenance-summary">
       {{ t('dashboard.maintain.summary',
             stale=maintenance.last_summary.get('stale', 0),
             corrupt=maintenance.last_summary.get('corrupt', 0),
@@ -51,7 +51,7 @@
     </div>
   {% endif %}
   {% if maintenance.last_status == 'error' and maintenance.last_error %}
-    <div class="small" style="margin-top:6px; color:#a92626;">{{ maintenance.last_error }}</div>
+    <div class="small maintenance-error">{{ maintenance.last_error }}</div>
   {% endif %}
 </section>
 {% endif %}

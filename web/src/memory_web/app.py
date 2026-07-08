@@ -61,11 +61,11 @@ def _read_skill_version() -> str:
     """Read the using-memory skill version from <repo>/version.txt.
 
     The web package lives at <repo>/web/src/memory_web/, so the repo root is
-    `_PKG_DIR.parents[3]`. Falls back to ``unknown`` if the file is missing
+    `_PKG_DIR.parents[2]`. Falls back to ``unknown`` if the file is missing
     or unreadable (e.g. memory-web installed standalone via pip).
     """
     candidates = [
-        _PKG_DIR.parents[3] / "version.txt",
+        _PKG_DIR.parents[2] / "version.txt",
         Path("~/.skills/using-memory/version.txt").expanduser(),
         Path("~/.claude/skills/using-memory/version.txt").expanduser(),
         Path("~/.codex/skills/using-memory/version.txt").expanduser(),

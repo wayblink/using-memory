@@ -3,7 +3,7 @@
 {% block content %}
 <header class="page docs-page-head">
   <div class="docs-page-title">
-    <h1 style="margin:0 0 4px;">{{ t('docs.title') }}</h1>
+    <h1>{{ t('docs.title') }}</h1>
     <div class="sub">
       {% if total == grand_total %}
         {{ t('docs.sub', n=total, s='' if total == 1 else 's') }}
@@ -89,13 +89,6 @@
       {% endfor %}
     </select>
   </label>
-  <label>{{ t('docs.filter.indexed') }}
-    <select name="indexed">
-      <option value="">{{ t('common.all') }}</option>
-      <option value="yes" {% if selected['indexed'] == 'yes' %}selected{% endif %}>{{ t('docs.filter.indexed.yes') }}</option>
-      <option value="no" {% if selected['indexed'] == 'no' %}selected{% endif %}>{{ t('docs.filter.indexed.no') }}</option>
-    </select>
-  </label>
   <label>{{ t('docs.filter.group') }}
     <select name="group">
       <option value="none"    {% if selected['group'] == 'none'    %}selected{% endif %}>{{ t('docs.group.none') }}</option>
@@ -110,7 +103,7 @@
       <option value="created" {% if selected['sort'] == 'created' %}selected{% endif %}>{{ t('docs.sort.created') }}</option>
     </select>
   </label>
-  <label style="flex:2 1 220px;">{{ t('docs.filter.q') }}
+  <label class="docs-query-filter">{{ t('docs.filter.q') }}
     <input type="text" name="q" value="{{ selected['q'] }}" placeholder="{{ t('docs.filter.q.placeholder') }}">
   </label>
 </form>
@@ -126,8 +119,8 @@
           <li>
             <div class="title">
               <a href="/docs/{{ it.rel }}">{{ it.title }}</a>
-              <span class="tag tag-ext-{{ it.ext }}" style="margin-left:8px;">{{ it.ext }}</span>
-              {% if not it.in_index %}<span class="tag" style="margin-left:4px;" title="{{ t('docs.unindexed_badge') }}">{{ t('docs.unindexed_badge') }}</span>{% endif %}
+              <span class="tag tag-ext-{{ it.ext }} docs-ext-tag">{{ it.ext }}</span>
+              {% if not it.in_index %}<span class="tag docs-unindexed-tag" title="{{ t('docs.unindexed_badge') }}">{{ t('docs.unindexed_badge') }}</span>{% endif %}
             </div>
             <div class="meta">
               {{ it.rel }}
@@ -137,7 +130,7 @@
               {% if it.tags %} · {{ t('docs.meta.tags') }}:{{ it.tags|join(', ') }}{% endif %}
               · {{ it.size }} {{ t('docs.meta.bytes') }}
             </div>
-            {% if it.summary %}<div class="meta" style="margin-top:4px; color: var(--text-soft);">{{ it.summary }}</div>{% endif %}
+            {% if it.summary %}<div class="meta docs-summary">{{ it.summary }}</div>{% endif %}
           </li>
         {% endfor %}
       </ul>
@@ -160,7 +153,6 @@
         <input type="hidden" name="format" value="{{ selected['format'] }}">
         <input type="hidden" name="project" value="{{ selected['project'] }}">
         <input type="hidden" name="tag" value="{{ selected['tag'] }}">
-        <input type="hidden" name="indexed" value="{{ selected['indexed'] }}">
         <input type="hidden" name="group" value="{{ selected['group'] }}">
         <input type="hidden" name="sort" value="{{ selected['sort'] }}">
         <input type="hidden" name="q" value="{{ selected['q'] }}">
