@@ -49,6 +49,62 @@ The important boundary is between memory storage and context delivery.
 - Storage answers: what is saved, where, with what provenance.
 - Context delivery answers: what should be shown to this run, under this scope, within this token budget.
 
+## Provider Bridge: Skills, CLIs, MCP Servers, and Plugins
+
+A skill, a CLI, a plugin package, and a Dozo provider are orthogonal concepts:
+
+- A **skill** is model-facing guidance: when and how the agent should use a capability.
+- A **CLI/MCP/HTTP API** is a transport surface that can execute operations.
+- A **plugin/extension** is packaging, installation, trust, lifecycle, and optional UI.
+- A **provider** is the normalized semantic contract Dozo uses for context, memory, or knowledge operations.
+
+Dozo should not try to infer reliable provider semantics from free-form `SKILL.md` prose. Instead, a skill or tool can ship an adjacent machine-readable provider descriptor, for example `dozo.provider.json`. Dozo can discover that descriptor from an external skill directory without taking ownership of the skill installation.
+
+Recommended compatibility levels:
+
+1. **Skill-only**: Dozo imports instructions, but the agent invokes the tool itself. No automatic recall, normalized provenance, or lifecycle guarantees.
+2. **Wrapped legacy tool**: a descriptor maps normalized operations to an existing CLI, MCP tool, or HTTP endpoint.
+3. **Native provider**: the executable implements the Dozo Context Provider protocol directly and passes conformance tests.
+
+A provider descriptor should declare capabilities honestly and bind semantic operations to a transport:
+
+```json
+{
+  "apiVersion": "dozo.context/v1",
+  "id": "using-memory",
+  "kind": "memory",
+  "transport": {
+    "kind": "stdio-jsonrpc",
+    "command": "umem",
+    "args": ["provider", "--stdio"]
+  },
+  "capabilities": {
+    "read": true,
+    "search": true,
+    "writePreference": true,
+    "writeMemory": true,
+    "appendLog": true,
+    "forget": false,
+    "consolidate": true,
+    "provenance": true
+  },
+  "skill": { "path": "SKILL.md" },
+  "ui": { "mode": "external", "urlFrom": "provider.status.uiUrl" }
+}
+```
+
+MCP can be one transport, but it is not the domain contract: MCP tool names and schemas vary. A descriptor or connector must map provider-neutral operations such as `memory.search` to concrete MCP tools. The same rule applies to legacy CLIs and HTTP APIs.
+
+Dozo should own execution when a provider participates in automatic recall or context injection. Agent-mediated skill calls remain useful for optional/on-demand behavior, but they cannot guarantee that context was loaded before the model call. Dozo-generated agent tools can call the same provider handle for explicit reads and writes.
+
+Provider registration also needs three separate identities:
+
+- **ProviderDefinition**: installed code/descriptor and declared capabilities.
+- **ProviderProfile**: one configured instance, including credentials, roots, vault, database, or namespace.
+- **ProviderBinding**: which user/workspace/session scopes use that profile, and its read/write policy.
+
+This separation lets one Notion connector have multiple workspaces, one Obsidian connector have multiple vaults, and one `using-memory` connector have multiple namespaces without duplicating provider implementations.
+
 ## Provider-neutral Contracts
 
 Dozo should introduce contracts roughly like these in protocol/core, then implement a `using-memory` adapter behind them.
