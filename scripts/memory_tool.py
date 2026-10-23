@@ -679,6 +679,90 @@ def _normalize_axis_filter(values: list[str] | None) -> set[str] | None:
     return out or None
 
 
+BRIEF_SOURCE_CONTENT_LIMIT = 1200
+# MEMORY.md is a bullet list, and its new entries are the ones most likely to
+# matter to the current task; PREFERENCES.md is short and rule-shaped, where the
+# oldest lines are as valid as the newest. So MEMORY is tail-kept and PREFERENCES
+# is head-kept.
+BRIEF_DURABLE_MEMORY_LIMIT = 4000
+# Per-entry text cap for the injected log window. A `detail` entry is meant to
+# run 800–3000 chars and several of them would dominate the message on their
+# own; the head of the body carries the heading and Context, which is what the
+# model needs to decide whether to read further.
+BRIEF_LOG_TEXT_LIMIT = 350
+
+
+def _brief_tail(text: str, limit: int) -> str:
+    """Tail-keep a bullet list, expanding backwards to a whole bullet start.
+
+    Cutting mid-bullet would hand the model half a fact, so the window is
+    widened to the next line boundary; the marker records what was removed.
+
+    A single-line file has no boundary to widen to. Rather than return it whole
+    (which would blow the budget and look to the model like a complete file),
+    that case is hard-cut at the limit with the same marker: a visibly truncated
+    line is honest, an over-budget one is not.
+    """
+    if len(text) <= limit:
+        return text
+    cut = len(text) - limit
+    nl = text.find("\n", cut)
+    if nl != -1 and nl + 1 < len(text):
+        kept = text[nl + 1 :]
+        return f"… [{cut} earlier chars omitted — search or read the file for them]\n\n{kept}"
+    kept = text[cut:]
+    return f"… [{cut} earlier chars omitted — search or read the file for them]\n\n{kept}"
+
+
+def _brief_log_entries(entries: list[dict]) -> list[dict]:
+    """Cap each injected log entry's body, keeping the fields that identify it."""
+    out: list[dict] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            out.append(entry)
+            continue
+        trimmed = dict(entry)
+        text = trimmed.get("text")
+        if isinstance(text, str) and len(text) > BRIEF_LOG_TEXT_LIMIT:
+            trimmed["text"] = (
+                f"{text[:BRIEF_LOG_TEXT_LIMIT]}… [truncated, "
+                f"{len(text) - BRIEF_LOG_TEXT_LIMIT} more chars]"
+            )
+            trimmed["truncated"] = True
+        out.append(trimmed)
+    return out
+
+
+def brief_sources(sources: list[dict]) -> list[dict]:
+    """Shrink a load snapshot for injection into an LLM's context.
+
+    The Pi extension posts the snapshot as a message, so the size is a token
+    cost on every session start. Two things dominate it: the docs index
+    (pure metadata the model cannot act on without also reading a doc) and long
+    PREFERENCES/MEMORY bodies. The index source is dropped entirely and each
+    remaining content is truncated with an explicit marker, because a silently
+    shortened file reads like a short file.
+
+    `preferences` and `durable_memory` (the top-level lists) stay complete: they
+    are what the model actually reads, and they are already the curated subset.
+    """
+    out: list[dict] = []
+    for source in sources:
+        if source.get("type") == "docs_index":
+            continue
+        entry = dict(source)
+        content = entry.get("content")
+        if isinstance(content, str) and len(content) > BRIEF_SOURCE_CONTENT_LIMIT:
+            kept = content[:BRIEF_SOURCE_CONTENT_LIMIT]
+            entry["content"] = (
+                f"{kept}\n\n… [truncated: {len(content) - BRIEF_SOURCE_CONTENT_LIMIT} "
+                "more chars — read the file for the rest]"
+            )
+            entry["truncated"] = True
+        out.append(entry)
+    return out
+
+
 def do_load(args: argparse.Namespace) -> dict:
     config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
     if not config:
@@ -808,6 +892,17 @@ def do_load(args: argparse.Namespace) -> dict:
         "doc_hits": doc_set,
         "warnings": warnings,
     }
+    if getattr(args, "brief", False):
+        result["sources"] = brief_sources(result["sources"])
+        # `durable_memory` is what the model actually reads, so it is kept — but
+        # bounded. Anything dropped is reachable through `load --doc`/`search`,
+        # and the marker says so rather than pretending the file ends there.
+        result["durable_memory"] = [
+            _brief_tail(doc, BRIEF_DURABLE_MEMORY_LIMIT)
+            for doc in result["durable_memory"]
+        ]
+        result["brief"] = True
+        result["log_entries"] = _brief_log_entries(result["log_entries"])
     return result
 
 
@@ -2429,6 +2524,15 @@ def cmd_load(sub: argparse._SubParsersAction) -> None:
         help="Filter log entries by topic axis (repeatable). Does not affect docs.",
     )
     p.add_argument("--doc-query", type=str, default=None)
+    p.add_argument(
+        "--brief",
+        action="store_true",
+        help=(
+            "Compact snapshot for hosts that inject the result into conversation "
+            "context (the Pi extension). Drops the docs index source and truncates "
+            "each source's content. Without --brief the output is unchanged."
+        ),
+    )
     p.add_argument("--json", action="store_true")
 
 
@@ -2518,6 +2622,48 @@ def cmd_status(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--json", action="store_true", help="Emit raw JSON instead of the human-readable dashboard.")
 
 
+def do_hook_context(args: argparse.Namespace) -> dict:
+    """Emit the host-aware hook copy so a host without a hook runner can inject it.
+
+    Codex and Claude Code get these strings from `scripts/hooks/*.py` printing
+    `hookSpecificOutput`. The Pi extension is a long-lived process that needs the
+    same words at *runtime*, not at hook-fire time, so it asks for them here.
+
+    Keeping the copy in one place is the point: a wording change must not land
+    in two languages. `host` selects the phrasing (a tool call on Pi, a shell
+    invocation elsewhere).
+    """
+    import sys as _sys
+
+    hooks_dir = str(Path(__file__).resolve().parent / "hooks")
+    if hooks_dir not in _sys.path:
+        _sys.path.insert(0, hooks_dir)
+    import memory_hook_common as hook  # local import: only this path needs it
+
+    host = (args.host or "generic").strip().lower()
+    events = list(args.events or [])
+    return {
+        "host": host,
+        "reminder": hook.memory_protocol_reminder(host),
+        "gate_reason": hook.stop_gate_reason(events, "", None, host),
+        # The instruction sentence without the event count, so a caller that
+        # renders the reason synchronously can append its own list instead of
+        # re-implementing the copy in another language.
+        "gate_instruction": hook.stop_gate_instruction(host),
+        "pi": hook.pi_settings(),
+    }
+
+
+def cmd_hook_context(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "hook-context",
+        help="Print the host-aware hook reminder and gate copy (used by the Pi extension)",
+    )
+    p.add_argument("--host", type=str, default="generic", help="pi | codex | claude | generic")
+    p.add_argument("--events", action="append", default=None, help="Repeatable event summary for the gate copy")
+    p.add_argument("--json", action="store_true")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
         prog="umem",
@@ -2542,6 +2688,7 @@ def main(argv=None) -> None:
     cmd_write_preference(sub)
     cmd_upsert_doc(sub)
     cmd_status(sub)
+    cmd_hook_context(sub)
     args = parser.parse_args(argv)
     if not args.cmd:
         parser.print_help()
@@ -2571,6 +2718,8 @@ def main(argv=None) -> None:
         result = do_upsert_doc(args)
     elif args.cmd == "status":
         result = do_status(args)
+    elif args.cmd == "hook-context":
+        result = do_hook_context(args)
     else:
         parser.print_help()
         sys.exit(2)

@@ -1,0 +1,50 @@
+{
+  "name": "@wayblink/using-memory-pi",
+  "version": "2.7.1",
+  "description": "Pi extension for using-memory — the umem tool, /umem command, and the memory hooks Pi's event model can carry",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "agent-skill",
+    "memory",
+    "umem"
+  ],
+  "author": "wayblink",
+  "homepage": "https://github.com/wayblink/using-memory#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wayblink/using-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wayblink/using-memory/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "files": [
+    "extensions"
+  ],
+  "scripts": {
+    "test": "node --import ./tests/ts-resolve-hook.mjs --test \"tests/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

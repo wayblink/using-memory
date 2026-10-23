@@ -228,7 +228,7 @@ Never write:
 - `maintain`: scan the configured namespace log for stale `files` references and corrupt JSON lines, and repair missing `<namespace>/docs/index.json` entries.
 - `search` / `stats` / `export` are available at any time for quick overview without modifying anything.
 - Distill useful patterns from log entries into curated long-term files during light maintenance moments. The automated path is `maintain --distill` -> `maintain --promote <topic>` -> subagent-driven `upsert-doc`; see "Distillation Pipeline" above for the two decision gates and trigger conditions.
-- Keep wording agent-agnostic so this skill can be used by both Codex and Claude Code without edits.
+- Keep wording agent-agnostic so this skill can be used by Codex, Claude Code and Pi without edits. The one host-specific difference is the write instruction: on Pi the model calls the `umem` tool, elsewhere it runs `scripts/memory_tool.py`. The copy lives in `memory_hook_common.py` behind a `host` parameter, and the Pi extension reads it via `memory_tool.py hook-context --host pi`.
 
 ## References
 
@@ -237,5 +237,6 @@ Never write:
 - `references/log-entry-examples.md`: full worked good/bad log-entry body examples.
 - `references/repo-layout.md`: read when discussing memory repo structure, file responsibilities, document metadata, or tag conventions.
 - `references/startup-and-write-rules.md`: read when discussing retrieval triggers, load order, docs index matching, write routing, distillation, or failure behavior.
-- `references/machine-setup.md`: read when installing on a new machine, exposing the skill to Codex or Claude Code, debugging config, or running smoke tests.
+- `references/machine-setup.md`: read when installing on a new machine, exposing the skill to Codex, Claude Code or Pi, debugging config, or running smoke tests.
+- `references/pi-integration.md`: read when working on the Pi extension, the write gate, `/umem web`, or Pi-specific configuration.
 - `examples/`: sample config files, startup templates, and example memory repo content.

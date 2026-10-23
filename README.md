@@ -1,6 +1,6 @@
 # using-memory
 
-`using-memory` is a memory-management skill for Codex and Claude Code. It stores cross-session memory and operation history in a Git-managed Markdown repo, with every memory file scoped under a configured namespace. The `umem` CLI (`scripts/memory_tool.py`) provides loading, writing, document indexing, and a health dashboard.
+`using-memory` is a memory-management skill for Codex, Claude Code and Pi. It stores cross-session memory and operation history in a Git-managed Markdown repo, with every memory file scoped under a configured namespace. The `umem` CLI (`scripts/memory_tool.py`) provides loading, writing, document indexing, and a health dashboard.
 
 The project goal is to make agents load durable memory only when cross-session context is useful, then route new information to the right place instead of mixing preferences, facts, temporary logs, and structured documents together.
 
@@ -135,8 +135,12 @@ You can target a single host, or install by copying:
 ```bash
 ./scripts/link.sh codex
 ./scripts/link.sh claude-code
-./scripts/install.sh both
+./scripts/link.sh pi            # Pi extension + skill package
+./scripts/install.sh both       # Codex and Claude Code
+./scripts/install.sh all        # Codex, Claude Code and Pi
 ```
+
+Pi takes a different shape: `packages/pi` is a Pi package (an `umem` tool, a `/umem` command and the session hooks), linked into `<agent-dir>/extensions/umem` and `<agent-dir>/skills/umem` rather than into a skill tree. See [references/pi-integration.md](references/pi-integration.md).
 
 Use `link.sh codex` for day-to-day development: Codex reads this checkout through a symlink, so edits to `SKILL.md`, scripts, hooks, and docs are live after a new Codex session starts. Use `install.sh codex` for a copied install when you want Codex isolated from the working tree.
 
@@ -321,15 +325,17 @@ Trust the exit code, not just the summary text. The web/API suite uses FastAPI's
 
 ## Web browser (optional)
 
-`web/` ships a FastAPI app that browses the same memory repo via the same `config.yaml`. It also exposes `/api/v1` for command-level remote access: POST `log`, `memory`, `preference`, and `doc`; GET `load`, `search`, and `health`. If top-level `remote.token` is configured, non-loopback `/api/v1` clients must send `Authorization: Bearer <token>`; loopback calls remain usable for local development.
+`web/` ships a standalone FastAPI service that browses the same memory repo via the same `config.yaml`. It also exposes `/api/v1` for command-level remote access: POST `log`, `memory`, `preference`, and `doc`; GET `load`, `search`, and `health`. If top-level `remote.token` is configured, non-loopback `/api/v1` clients must send `Authorization: Bearer <token>`; loopback calls remain usable for local development.
 
 ```bash
 cd web
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-memory-web --open    # → http://127.0.0.1:8765
+memory-web --open    # -> http://127.0.0.1:8765
 ```
+
+Dozo can expose this service as a dedicated Memory tool next to Notes and Scripts. Start `memory-web` separately, then run Dozo with `DOZO_MEMORY_WEB_URL=http://127.0.0.1:8765` when using a non-default endpoint.
 
 See [web/README.md](web/README.md) for pages, architecture, API remote behavior, and browser QA notes.
 
@@ -338,6 +344,7 @@ See [web/README.md](web/README.md) for pages, architecture, API remote behavior,
 - [SKILL.md](SKILL.md): the runtime entry point and formal model-facing instructions.
 - [references/repo-layout.md](references/repo-layout.md): memory repo structure, file responsibilities, and tag conventions.
 - [references/startup-and-write-rules.md](references/startup-and-write-rules.md): runtime load order, docs matching, write routing, and failure degradation.
-- [references/machine-setup.md](references/machine-setup.md): Codex and Claude Code installation, startup wiring, new-machine setup, and smoke tests.
+- [references/machine-setup.md](references/machine-setup.md): Codex, Claude Code and Pi installation, startup wiring, new-machine setup, and smoke tests.
+- [references/pi-integration.md](references/pi-integration.md): the Pi extension — event mapping, the write gate and its latch, `/umem web`, configuration, and troubleshooting.
 - [web/README.md](web/README.md): optional local web browser for the memory repo.
 - [examples/memory-repo/](examples/memory-repo/): sample memory repo content.

@@ -28,6 +28,7 @@ run_first_time_setup() {
 print_hook_next_steps() {
  local codex_home="${CODEX_HOME:-$HOME/.codex}"
  local claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+ local agent_dir="${PI_AGENT_DIR:-$HOME/.pi/agent}"
  echo
  echo "Hook wiring targets:"
  echo "  Codex SessionStart/UserPromptSubmit/PostToolUse/Stop:"
@@ -36,6 +37,9 @@ print_hook_next_steps() {
  echo "    python3 ${claude_home}/skills/using-memory/scripts/hooks/claude_session_start_hook.py"
  echo "  Claude Code UserPromptSubmit/PostToolUse/PostToolBatch/ConfigChange/Stop:"
  echo "    python3 ${claude_home}/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+ echo "  Pi: no hook table to edit — the extension registers its own handlers."
+ echo "    extension: ${agent_dir}/extensions/umem/index.ts"
+ echo "    skill:     ${agent_dir}/skills/umem/SKILL.md"
  echo "Rerun scripts/install.sh or scripts/link.sh after updates so new hook helpers are deployed."
 }
 
@@ -85,8 +89,59 @@ install_host() {
   --exclude=__pycache__ \
   --exclude='*.pyc' \
   --exclude='*.swp' \
+  --exclude=node_modules \
+  --exclude=.venv \
   -cf - . | tar -C "$dest" -xf -
  echo "Installed $name. Destination: $dest"
+}
+
+# Replace a previous install (symlink or directory) after the usual safety check.
+prepare_pi_dest() {
+ local dest="$1"
+ if [ -L "$dest" ]; then
+  rm "$dest"
+ elif [ -e "$dest" ]; then
+  if [ "${USING_MEMORY_INSTALL_FORCE:-0}" != "1" ]; then
+   echo "refusing to overwrite existing destination: $dest" >&2
+   echo "Set USING_MEMORY_INSTALL_FORCE=1 to replace it." >&2
+   exit 2
+  fi
+  rm -rf "$dest"
+ fi
+ mkdir -p "$dest"
+}
+
+# Pi wants two resource directories: <agent-dir>/extensions/umem (an index.ts
+# entry point) and <agent-dir>/skills/umem. The extension is copied from the
+# package so Pi's extension scan never walks scripts/ or web/. The skill is
+# copied from the checkout root, because SKILL.md resolves `references/...` and
+# `examples/...` against its own directory; a packaged duplicate of SKILL.md
+# would also be a second physical file with `name: umem`, which Pi reports as
+# `name "umem" collision` on machines that expose the skill via ~/.agents/skills.
+install_pi() {
+ local agent_dir="${PI_AGENT_DIR:-$HOME/.pi/agent}"
+ local pkg="$HERE/packages/pi"
+ if [ ! -d "$pkg" ]; then
+  echo "missing Pi package: $pkg" >&2
+  exit 2
+ fi
+ echo "Installing pi: $pkg -> $agent_dir"
+ prepare_pi_dest "$agent_dir/extensions/umem"
+ tar -C "$pkg/extensions/umem" \
+  --exclude=node_modules \
+  --exclude=tests \
+  --exclude='*.pyc' \
+  -cf - . | tar -C "$agent_dir/extensions/umem" -xf -
+
+ local skill_dir="$agent_dir/skills/umem"
+ prepare_pi_dest "$skill_dir"
+ cp "$HERE/SKILL.md" "$skill_dir/SKILL.md"
+ for extra in references examples; do
+  if [ -d "$HERE/$extra" ]; then
+   cp -R "$HERE/$extra" "$skill_dir/$extra"
+  fi
+ done
+ echo "Installed pi. Destination: $agent_dir"
 }
 
 UMEM_TARGET=""
@@ -99,13 +154,23 @@ case "$HOST" in
  install_host "claude-code" "${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
  UMEM_TARGET="${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
  ;;
+ pi)
+ install_pi
+ UMEM_TARGET="$HERE"
+ ;;
  both)
  install_host "codex" "${CODEX_HOME:-$HOME/.codex}/skills/using-memory"
  install_host "claude-code" "${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
  UMEM_TARGET="${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
  ;;
+ all)
+ install_host "codex" "${CODEX_HOME:-$HOME/.codex}/skills/using-memory"
+ install_host "claude-code" "${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
+ install_pi
+ UMEM_TARGET="${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
+ ;;
  *)
- echo "Usage: $0 [codex|claude-code|both]" >&2
+ echo "Usage: $0 [codex|claude-code|pi|both|all]" >&2
  exit 2
  ;;
 esac

@@ -161,7 +161,26 @@ def additional_context(event: str, text: str) -> dict[str, Any]:
     }
 
 
-def memory_protocol_reminder() -> str:
+def memory_protocol_reminder(host: str = "generic") -> str:
+    """The per-turn memory protocol nudge.
+
+    Host-aware because the *way* the model writes differs: on Codex and Claude
+    Code there is no memory tool, so the instruction has to name the Python
+    entry point; on Pi the same write is a first-class tool call. Naming a
+    shell invocation there would teach the model the wrong door.
+
+    The default is "generic" and its output is byte-identical to the pre-Pi
+    version — the Codex and Claude adapters rely on that.
+    """
+    if host == "pi":
+        return (
+            "using-memory hook reminder: consider the using-memory skill for persisted context. "
+            "Load memory only when it can change the answer. For writes, default toward recording "
+            "concrete operations and key events in <namespace>/log/YYYY-MM-DD.jsonl by calling the "
+            "`umem` tool with action=write-log. Do not mirror every tool call or raw transcript. "
+            "Stable preferences go to action=write-preference; stable facts, confirmed decisions, "
+            "and lessons go to action=write-memory."
+        )
     return (
         "using-memory hook reminder: consider the using-memory skill for persisted context. "
         "Load memory only when it can change the answer. For writes, default toward recording "
@@ -233,7 +252,29 @@ def render_preference_summary(preferences: list[str], max_items: int = 4) -> str
     return "\n".join(lines)
 
 
-def stop_gate_reason(events: list[str], last_message: str, distill_md: str | None = None) -> str:
+def stop_gate_instruction(host: str = "generic") -> str:
+    """The instruction sentence alone, with no event list appended.
+
+    Split out so a host that builds the reason synchronously (the Pi extension,
+    which cannot await a subprocess inside a gate decision) appends its own
+    event list without re-implementing the wording. The wording itself stays
+    here, in one language.
+    """
+    if host == "pi":
+        return (
+            "Before stopping, call the `umem` tool with action=write-log to record this turn"
+        )
+    return (
+        "Before stopping, run scripts/memory_tool.py write-log to record this turn"
+    )
+
+
+def stop_gate_reason(
+    events: list[str],
+    last_message: str,
+    distill_md: str | None = None,
+    host: str = "generic",
+) -> str:
     """Block reason for the Stop gate.
 
     Kept short on purpose. The model already has the full operation history
@@ -245,7 +286,12 @@ def stop_gate_reason(events: list[str], last_message: str, distill_md: str | Non
     When ``distill_md`` is provided, the distillation-candidate summary is
     appended below the write-log instruction so a single block can carry
     both signals.
+
+    ``host`` selects the phrasing of the write instruction: Pi calls a tool,
+    the other hosts shell out. The default stays "generic" so an un-parameterised
+    caller (including the existing tests) gets the original string.
     """
+    instruction = stop_gate_instruction(host)
     count = len(events)
     if count:
         kinds = []
@@ -262,13 +308,13 @@ def stop_gate_reason(events: list[str], last_message: str, distill_md: str | Non
                 break
         kinds_label = ", ".join(kinds) if kinds else "operation"
         base = (
-            f"Before stopping, run scripts/memory_tool.py write-log to record this turn: "
+            f"{instruction}: "
             f"{count} important event(s) [{kinds_label}]. Include affected files, result, "
             f"identifiers (commit/PR/deploy), verification, and unresolved risks."
         )
     else:
         base = (
-            "Before stopping, run scripts/memory_tool.py write-log to record this turn's "
+            f"{instruction}'s "
             "concrete operations, result, identifiers, verification, and unresolved risks."
         )
     if distill_md:
@@ -505,8 +551,83 @@ def hook_settings() -> dict[str, Any]:
     }
 
 
+PI_DEFAULT_DETAIL_TURN_INTERVAL = 30
+
+
+def pi_settings() -> dict[str, Any]:
+    """Return the `pi:` config block with Pi-specific conservative defaults.
+
+    Pi differs from Codex and Claude Code in one way that matters to these
+    numbers: it has no blocking Stop hook. The gate is implemented as an
+    injected message plus one extra model request, which is a real cost, so the
+    default threshold is looser (30 turns) than the hook hosts' 20. A missing
+    `pi:` block means every default here applies.
+    """
+    cfg = _read_memory_config()
+    pi_cfg = _as_dict(cfg.get("pi"))
+    gate = str(pi_cfg.get("gate") or "message").strip().lower()
+    if gate not in {"message", "off"}:
+        gate = "message"
+    return {
+        "gate": gate,
+        "detail_turn_interval": _as_int(
+            pi_cfg.get("detail_turn_interval"), PI_DEFAULT_DETAIL_TURN_INTERVAL
+        ),
+        "silent_summary": _as_bool(pi_cfg.get("silent_summary"), False),
+        "inject_preferences": _as_bool(pi_cfg.get("inject_preferences"), True),
+        "brief_snapshot": _as_bool(pi_cfg.get("brief_snapshot"), True),
+        "memory_tool_path": str(pi_cfg.get("memory_tool_path") or "").strip() or None,
+    }
+
+
+def resolve_memory_tool_path(explicit: str | None = None) -> str:
+    """Resolve `scripts/memory_tool.py` the same way from every caller.
+
+    Order: an explicit path (the extension's `pi.memory_tool_path`), then the
+    skill directory implied by `USING_MEMORY_CONFIG` (its config lives in the
+    skill dir, so `../scripts/` is the sibling), then the conventional
+    install locations, then this file's own tree. The Pi extension and the
+    Python hooks must agree on one answer, so both go through here.
+    """
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(os.path.expanduser(os.path.expandvars(explicit))))
+
+    env_config = os.environ.get("USING_MEMORY_CONFIG")
+    if env_config:
+        candidates.append(
+            Path(os.path.expanduser(env_config)).parent / "scripts" / "memory_tool.py"
+        )
+
+    home = Path.home()
+    candidates.extend(
+        [
+            home / ".skills" / "using-memory" / "scripts" / "memory_tool.py",
+            Path(os.environ.get("CODEX_HOME", home / ".codex"))
+            / "skills"
+            / "using-memory"
+            / "scripts"
+            / "memory_tool.py",
+            Path(os.environ.get("CLAUDE_HOME", home / ".claude"))
+            / "skills"
+            / "using-memory"
+            / "scripts"
+            / "memory_tool.py",
+            # <skill>/scripts/hooks/memory_hook_common.py -> <skill>/scripts/
+            Path(__file__).resolve().parent.parent / "memory_tool.py",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    # Nothing found: return the conventional location so the caller's error
+    # message names a path the user can act on.
+    return str(candidates[0] if explicit else candidates[2])
+
+
 def _memory_tool_path() -> str:
-    return str(Path.home() / ".claude" / "skills" / "using-memory" / "scripts" / "memory_tool.py")
+    return resolve_memory_tool_path(pi_settings().get("memory_tool_path"))
 
 
 _MACHINE_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
@@ -892,7 +1013,7 @@ def _run_impl(host: str) -> int:
         state.setdefault("memory_written", False)
         state.setdefault("important_events", [])
         save_state(payload, host, state)
-        reminder = memory_protocol_reminder()
+        reminder = memory_protocol_reminder(host)
         preference_md = fetch_session_start_snapshot(payload)
         distill_md, distill_deltas = fetch_distillation_candidates()
         sections = [reminder]
@@ -918,7 +1039,7 @@ def _run_impl(host: str) -> int:
         # here. Those track lifetime-of-session counters used by the Stop throttle.
         save_state(payload, host, state)
         if state["prompt_mentions_memory"]:
-            print(json.dumps(additional_context(event, memory_protocol_reminder()), ensure_ascii=False))
+            print(json.dumps(additional_context(event, memory_protocol_reminder(host)), ensure_ascii=False))
         return 0
 
     if event in {"PostToolUse", "PostToolBatch", "PostToolUseFailure", "PermissionDenied", "ConfigChange"}:
@@ -998,7 +1119,7 @@ def _run_impl(host: str) -> int:
             distill_md, distill_deltas = fetch_distillation_candidates()
             _apply_distill_inject_stats(distill_deltas)
             print(json.dumps(
-                {"decision": "block", "reason": stop_gate_reason(events, last_message, distill_md)},
+                {"decision": "block", "reason": stop_gate_reason(events, last_message, distill_md, host)},
                 ensure_ascii=False,
             ))
             return 0

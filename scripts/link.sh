@@ -28,6 +28,7 @@ run_first_time_setup() {
 print_hook_next_steps() {
  local codex_home="${CODEX_HOME:-$HOME/.codex}"
  local claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+ local agent_dir="${PI_AGENT_DIR:-$HOME/.pi/agent}"
  echo
  echo "Hook wiring targets:"
  echo "  Codex SessionStart/UserPromptSubmit/PostToolUse/Stop:"
@@ -36,6 +37,9 @@ print_hook_next_steps() {
  echo "    python3 ${claude_home}/skills/using-memory/scripts/hooks/claude_session_start_hook.py"
  echo "  Claude Code UserPromptSubmit/PostToolUse/PostToolBatch/ConfigChange/Stop:"
  echo "    python3 ${claude_home}/skills/using-memory/scripts/hooks/claude_memory_hook.py"
+ echo "  Pi: no hook table to edit — the extension registers its own handlers."
+ echo "    extension: ${agent_dir}/extensions/umem/index.ts"
+ echo "    skill:     ${agent_dir}/skills/umem/SKILL.md"
  echo "Rerun scripts/install.sh or scripts/link.sh after updates so new hook helpers are deployed."
 }
 
@@ -77,6 +81,32 @@ link_host() {
  ln -sfn "$HERE" "$dest"
 }
 
+# Pi loads user extensions from <agent-dir>/extensions/<name>/index.ts and user
+# skills from <agent-dir>/skills/. The extension comes from the package (a small
+# directory, so Pi's extension scan never walks scripts/ or web/). The skill
+# comes from the checkout root: SKILL.md resolves `references/...` and
+# `examples/...` against its own directory, and a packaged copy of SKILL.md would
+# be a second physical file with `name: umem` — Pi then reports
+# `name "umem" collision` against the copy exposed through ~/.agents/skills.
+link_pi() {
+ local agent_dir="${PI_AGENT_DIR:-$HOME/.pi/agent}"
+ local pkg="$HERE/packages/pi"
+ if [ ! -d "$pkg" ]; then
+  echo "missing Pi package: $pkg" >&2
+  exit 2
+ fi
+ echo "Linking pi package: $pkg -> $agent_dir"
+ mkdir -p "$agent_dir"
+ if [ -e "$agent_dir/extensions/umem" ] && [ ! -L "$agent_dir/extensions/umem" ]; then
+  echo "refusing to replace existing directory: $agent_dir/extensions/umem" >&2
+  echo "Remove it manually or run scripts/install.sh for a copied install." >&2
+  exit 2
+ fi
+ mkdir -p "$agent_dir/extensions" "$agent_dir/skills"
+ ln -sfn "$pkg/extensions/umem" "$agent_dir/extensions/umem"
+ ln -sfn "$HERE" "$agent_dir/skills/umem"
+}
+
 case "$HOST" in
  codex)
  link_host "codex" "${CODEX_HOME:-$HOME/.codex}/skills/using-memory"
@@ -84,12 +114,20 @@ case "$HOST" in
  claude-code)
  link_host "claude-code" "${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
  ;;
+ pi)
+ link_pi
+ ;;
  both)
  link_host "codex" "${CODEX_HOME:-$HOME/.codex}/skills/using-memory"
  link_host "claude-code" "${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
  ;;
+ all)
+ link_host "codex" "${CODEX_HOME:-$HOME/.codex}/skills/using-memory"
+ link_host "claude-code" "${CLAUDE_HOME:-$HOME/.claude}/skills/using-memory"
+ link_pi
+ ;;
  *)
- echo "Usage: $0 [codex|claude-code|both]" >&2
+ echo "Usage: $0 [codex|claude-code|pi|both|all]" >&2
  exit 2
  ;;
 esac

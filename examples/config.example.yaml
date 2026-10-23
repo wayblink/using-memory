@@ -34,5 +34,17 @@ session_archive:
   auto_load: false
   index_events: true
 
+# Pi extension settings. All optional; the defaults below apply when this block
+# is absent. `detail_turn_interval` is deliberately looser than the hook hosts'
+# 20 because Pi has no blocking Stop hook: the gate costs one extra model
+# request, so it should fire less often. Set `gate: off` to disable it entirely.
+# pi:
+#   gate: message            # message | off
+#   detail_turn_interval: 30
+#   silent_summary: false
+#   inject_preferences: true
+#   brief_snapshot: true
+#   memory_tool_path: ~/.skills/using-memory/scripts/memory_tool.py
+
 # This config lives outside the memory repo and records this machine's namespace and checkout path.
 # If namespace is omitted, using-memory defaults it to main.

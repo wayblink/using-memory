@@ -44,3 +44,7 @@ htmlcov/
 # Scratch / generated output dirs
 /output/
 /tmp/
+
+# Pi extension build/dev artefacts
+packages/pi/node_modules/
+node_modules/

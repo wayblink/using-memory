@@ -1,8 +1,8 @@
 # Host Setup and Smoke Test
 
-This file owns Codex and Claude Code setup, install/link behavior, fresh-session smoke tests, and multi-machine rollout. Runtime retrieval/write rules live in `startup-and-write-rules.md`; repo structure lives in `repo-layout.md`.
+This file owns Codex, Claude Code and Pi setup, install/link behavior, fresh-session smoke tests, and multi-machine rollout. Runtime retrieval/write rules live in `startup-and-write-rules.md`; repo structure lives in `repo-layout.md`; the Pi extension has its own reference in `pi-integration.md`.
 
-Codex and Claude Code are both first-class hosts. `using-memory` is agent-agnostic: both hosts should point at the same memory repo and use the same namespace-scoped memory repo schema, config lookup, local-primary-write/reference-read model, and `scripts/memory_tool.py` behavior. Only the host skill exposure file and skill install destination differ.
+Codex, Claude Code and Pi are all first-class hosts. `using-memory` is agent-agnostic: every host should point at the same memory repo and use the same namespace-scoped memory repo schema, config lookup, local-primary-write/reference-read model, and `scripts/memory_tool.py` behavior. Only the host skill exposure file and skill install destination differ.
 
 ## Develop in-place
 Work from `personal-skills/using-memory/` so every edit touches the same skill tree each host can read once the repo is linked. If a host appears to keep older skill text in memory, start a brand-new session instead of assuming an existing conversation reloads changed Markdown.
@@ -13,6 +13,7 @@ Work from `personal-skills/using-memory/` so every edit touches the same skill t
 - Both scripts accept an optional host argument: `codex`, `claude-code`, or `both`; the default is `both`.
 - Codex destination: `${CODEX_HOME:-~/.codex}/skills/using-memory`; default path is `~/.codex/skills/using-memory`.
 - Claude Code destination: `${CLAUDE_HOME:-~/.claude}/skills/using-memory`; default path is `~/.claude/skills/using-memory`.
+- Pi destination: `${PI_AGENT_DIR:-~/.pi/agent}/extensions/umem` plus `${PI_AGENT_DIR:-~/.pi/agent}/skills/umem`. The extension comes from the `packages/pi` package; the skill is this checkout root (`link.sh` symlinks it, `install.sh` copies `SKILL.md` with `references/` and `examples/`) — see `pi-integration.md`.
 - On first install or link through this repo's `scripts/install.sh` or `scripts/link.sh`, the helper scripts check for the memory config and start interactive storage setup when no config exists. The prompt collects the memory repo path, optional remote Git repo URL, namespace, and machine ID. Set `USING_MEMORY_SKIP_SETUP=1` to skip this in automation.
 - Some external skill installers only copy the skill directory and do not execute `scripts/install.sh`; after those installs, run `python3 scripts/memory_tool.py setup` manually.
 - If a remote Git repo URL is provided, setup clones it into the requested path or pulls an existing checkout before writing config. If no remote is provided, setup initializes a local Git repo and prints the later `git remote add origin ...` / `git push -u origin main` step.
@@ -243,6 +244,10 @@ Add a user-level hook block to `~/.claude/settings.json`:
 Use the dedicated Claude SessionStart wrapper on purpose: it chains `using-superpowers` startup guidance with `using-memory` SessionStart context, including the compact `<namespace>/PREFERENCES.md` summary. If an older machine still points SessionStart at `~/.claude/hooks/session-start` or directly at `claude_memory_hook.py`, update it after pulling this repo.
 
 Claude Code also supports project `.claude/settings.json`, local `.claude/settings.local.json`, plugins, and skill-scoped hooks. Prefer user-level hooks for a machine-wide memory rule; use project hooks when the project should carry its own enforcement. Run `/hooks` in Claude Code to inspect which hooks are active.
+
+### Pi
+
+Pi needs no hook configuration file: the extension in `packages/pi` registers its own handlers with `pi.on(...)`. `scripts/link.sh pi` or `scripts/install.sh pi` is the whole install, then restart Pi. The `umem` tool and `/umem` command appear automatically, and the write gate is controlled by the `pi:` block in `config.yaml` rather than by hook wiring.
 
 ### Hook behavior and limits
 
