@@ -37,7 +37,7 @@ The Codex and Claude adapters share `scripts/hooks/memory_hook_common.py`, drive
 | `UserPromptSubmit` | `before_agent_start` | full |
 | `PostToolUse` / `PostToolBatch` | `tool_execution_end` + `tool_call` | full, and more precise |
 | `Stop` (blocking) | `agent_before_settle` | **partial** — see below |
-| `PreCompact` | `session_before_compact` | no-op, deliberately |
+| `PreCompact` | `session_before_compact` | re-injects the snapshot when compaction drops messages |
 
 What each does:
 
@@ -55,7 +55,9 @@ Pi has no hook that can refuse to stop. The equivalent is appending a `custom_me
 
 Turn counting is **branch-aware**: it walks `ctx.sessionManager.getBranch()` rather than a transcript file, so undoing to an earlier point and taking another path gives the count for *that* path. Two kinds of entries are filtered: synthetic wrapper content (`<system-reminder>`, `<command-message>`, …) and the extension's own injected messages, which would otherwise let the gate feed its own counter.
 
-`PreCompact` stays a no-op. The hook hosts used to *block* compaction to force a memory flush; it hung the compaction pipeline and was removed there too.
+**`session_before_compact`** — re-injects the snapshot when the compaction actually drops messages. Rules are delivered at session start, and without this a long session depends on the compaction summary remembering them, which is a hope rather than a guarantee: measured on an 8-day session, one injection at 02:38 was followed by three compactions and no further injection. The event carries `preparation.messagesToSummarize`, so "was anything lost" is a fact — an empty list means the compaction had nothing to drop and re-injecting would only cost tokens. Re-injection happens at most once per turn, since `session_start` may have just delivered the same text.
+
+It does not customize or block compaction; it returns `undefined` so Pi runs its normal summarization. The hook hosts used to *block* compaction to force a memory flush — that hung the pipeline and was removed there too. Re-injecting after a loss is a different thing from standing in front of it.
 
 ## Configuration
 

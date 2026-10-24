@@ -12,7 +12,7 @@
  * | UserPromptSubmit    | `before_agent_start`     | full     |
  * | PostToolUse         | `tool_execution_end`     | full     |
  * | Stop (block)        | `agent_before_settle`    | partial — see below |
- * | PreCompact          | `session_before_compact` | no-op, deliberately |
+ * | PreCompact          | `session_before_compact` | re-inject on loss |
  *
  * The Stop gate is the interesting one. Pi has no hook that can refuse to stop:
  * the closest thing is appending a `custom_message` entry and returning
@@ -46,6 +46,8 @@ interface SessionState {
   promptMentionsMemory: boolean;
   /** The latch: turn index at which the gate last fired, or null. */
   gateFiredAtTurn: number | null;
+  /** Turn index at which a snapshot was last injected (start or post-compact). */
+  injectedAtTurn: number | null;
 }
 
 const MEMORY_PROMPT_RE =
@@ -72,6 +74,7 @@ function newState(sessionId: string): SessionState {
     importantEvents: [],
     promptMentionsMemory: false,
     gateFiredAtTurn: null,
+    injectedAtTurn: null,
   };
 }
 
@@ -162,6 +165,7 @@ export function registerMemoryHooks(
         { customType: UMEM_CUSTOM_TYPE, content, display: false },
         { deliverAs: "nextTurn" },
       );
+      state.injectedAtTurn = state.turns;
     } catch {
       // Memory injection is best-effort. A missing config, a broken CLI or a
       // malformed snapshot must not stop the session from starting.
@@ -293,17 +297,70 @@ export function registerMemoryHooks(
       await handler(event, ctx);
     };
 
+  /* ---------------------------- session_before_compact ---------------------------- */
+
+  /**
+   * Re-inject the rules after a compaction that actually drops messages.
+   *
+   * Session start is the only time the rules were delivered, so a long session
+   * used to depend on the compaction summary remembering them — which is not a
+   * guarantee, it is a hope. Measured on an 8-day session: one injection at
+   * 02:38, compaction one minute later, then two more compactions, no further
+   * injection. The model then follows rules it has not been shown.
+   *
+   * The event carries `preparation.messagesToSummarize`, so "was anything lost"
+   * is a fact rather than a guess: an empty list means the compaction had
+   * nothing to drop and re-injecting would be pure token cost.
+   *
+   * This does NOT customize or block compaction — it returns `undefined` so Pi
+   * runs its normal summarization. An extension has no business standing in
+   * front of the compaction pipeline.
+   */
+  const onBeforeCompact = async (event: {
+    preparation?: { messagesToSummarize?: unknown[] };
+  }): Promise<undefined> => {
+    try {
+      const summarizing = event.preparation?.messagesToSummarize;
+      if (!Array.isArray(summarizing) || summarizing.length === 0) return undefined;
+      if (state === null) return undefined;
+      // Count from the branch rather than trusting `state.turns`: the counter is
+      // only refreshed at session start and at settle, so mid-turn it lags and
+      // the de-dup below would compare against a stale number.
+      const ctx = currentCtx;
+      const turns = ctx === null ? state.turns : recount(ctx);
+      state.turns = turns;
+      // One injection per turn: `session_start` may have just delivered the same
+      // text, and a compaction can fire more than once across a long turn.
+      if (state.injectedAtTurn === turns) return undefined;
+
+      const snapshot = await deps.sessionSnapshot();
+      if (snapshot === null) return undefined;
+      pi.sendMessage(
+        {
+          customType: UMEM_CUSTOM_TYPE,
+          content: `${deps.reminder}\n\n---\n\n${snapshot}`,
+          display: false,
+        },
+        { deliverAs: "nextTurn" },
+      );
+      state.injectedAtTurn = turns;
+    } catch {
+      // A failed re-injection must not disturb the compaction that is in flight.
+    }
+    return undefined;
+  };
+
   pi.on("session_start", withCtx(onSessionStart));
   pi.on("before_agent_start", withCtx(onBeforeAgentStart));
   pi.on("tool_execution_end", withCtx(onToolExecutionEnd));
   pi.on("tool_call", withCtx(onToolCall));
   pi.on("agent_before_settle", (async () => onAgentBeforeSettle()) as never);
 
-  // PreCompact stays a no-op on purpose. The hook hosts used to *block* compact
-  // to force a memory flush; it hung the compaction pipeline and was removed
-  // there too. Pi compacts on its own schedule and an extension has no business
+  // Compaction itself is left alone on purpose: the hook hosts used to *block*
+  // compact to force a memory flush, it hung the compaction pipeline, and that
+  // was removed there too. Re-injecting after loss is a different thing from
   // standing in front of it.
-  pi.on("session_before_compact", () => undefined as never);
+  pi.on("session_before_compact", onBeforeCompact as never);
 
   return (ctx: ExtensionContext): void => {
     currentCtx = ctx;

@@ -245,3 +245,148 @@ test("summarizeToolCall produces a one-line hint", () => {
   assert.equal(summarizeToolCall("write", {}), "write");
   assert.equal(summarizeToolCall("write", null), null);
 });
+
+/* ------------------------- post-compaction re-injection ------------------------- */
+
+test("compaction that drops messages re-injects the snapshot", async () => {
+  const branch: unknown[] = [];
+  const fake = makeFakePi(branch);
+  await fake.fire("session_start", { reason: "startup" });
+  fake.sent.length = 0;
+
+  addTurns(branch, 2);
+  await fake.fire("before_agent_start", { prompt: "long task" });
+
+  const result = await fake.fire("session_before_compact", {
+    preparation: { messagesToSummarize: [{ role: "user" }, { role: "assistant" }] },
+    reason: "threshold",
+    willRetry: false,
+  });
+
+  // Compaction itself must proceed untouched: no summary override, no cancel.
+  assert.equal(result, undefined);
+  assert.equal(fake.sent.length, 1);
+  assert.equal(fake.sent[0]!.customType, "umem");
+  assert.match(fake.sent[0]!.content, /PREFS/);
+  assert.match(fake.sent[0]!.content, /REMINDER/);
+  assert.equal(fake.sent[0]!.display, false);
+});
+
+test("a lossless compaction injects nothing", async () => {
+  const branch: unknown[] = [];
+  const fake = makeFakePi(branch);
+  await fake.fire("session_start", { reason: "startup" });
+  fake.sent.length = 0;
+
+  await fake.fire("session_before_compact", {
+    preparation: { messagesToSummarize: [] },
+    reason: "manual",
+    willRetry: false,
+  });
+  assert.equal(fake.sent.length, 0, "nothing was lost, so no tokens should be spent");
+});
+
+test("two compactions in one turn inject once", async () => {
+  const branch: unknown[] = [];
+  const fake = makeFakePi(branch);
+  await fake.fire("session_start", { reason: "startup" });
+  addTurns(branch, 1);
+  await fake.fire("before_agent_start", { prompt: "work" });
+  fake.sent.length = 0;
+
+  const payload = {
+    preparation: { messagesToSummarize: [{ role: "user" }] },
+    reason: "threshold",
+    willRetry: false,
+  };
+  await fake.fire("session_before_compact", payload);
+  await fake.fire("session_before_compact", payload);
+  assert.equal(fake.sent.length, 1);
+});
+
+test("a new turn re-arms compaction injection", async () => {
+  const branch: unknown[] = [];
+  const fake = makeFakePi(branch);
+  await fake.fire("session_start", { reason: "startup" });
+  addTurns(branch, 1);
+  await fake.fire("before_agent_start", { prompt: "work" });
+  fake.sent.length = 0;
+
+  const payload = {
+    preparation: { messagesToSummarize: [{ role: "user" }] },
+    reason: "threshold",
+    willRetry: false,
+  };
+  await fake.fire("session_before_compact", payload);
+  assert.equal(fake.sent.length, 1);
+
+  addTurns(branch, 1);
+  await fake.fire("before_agent_start", { prompt: "next turn" });
+  await fake.fire("session_before_compact", payload);
+  assert.equal(fake.sent.length, 2, "a later turn deserves its own re-injection");
+});
+
+test("a failing snapshot leaves compaction unaffected", async () => {
+  const branch: unknown[] = [];
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const sent: Emitted[] = [];
+  const pi = {
+    on(event: string, handler: (...args: unknown[]) => unknown) {
+      handlers.set(event, handler);
+      return () => handlers.delete(event);
+    },
+    sendMessage(message: Emitted) {
+      sent.push(message);
+    },
+  };
+  const ctx = {
+    sessionManager: { getSessionId: () => "s", getBranch: () => branch },
+    ui: { notify: () => undefined },
+  };
+  registerMemoryHooks(pi as never, {
+    config: CONFIG,
+    runCli: async () => "",
+    reminder: "REMINDER",
+    gateReason: () => "GATE",
+    sessionSnapshot: async () => {
+      throw new Error("cli exploded");
+    },
+    bumpStats: () => undefined,
+  });
+  await handlers.get("session_start")!({ reason: "startup" }, ctx);
+  addTurns(branch, 1);
+  await handlers.get("before_agent_start")!({ prompt: "work" }, ctx);
+  sent.length = 0;
+
+  const result = await handlers.get("session_before_compact")!(
+    { preparation: { messagesToSummarize: [{ role: "user" }] } },
+    ctx,
+  );
+  assert.equal(result, undefined, "compaction must still proceed");
+  assert.equal(sent.length, 0);
+});
+
+test("compaction before any session_start is a quiet no-op", async () => {
+  const branch: unknown[] = [];
+  const fake = makeFakePi(branch);
+  const result = await fake.fire("session_before_compact", {
+    preparation: { messagesToSummarize: [{ role: "user" }] },
+  });
+  assert.equal(result, undefined);
+  assert.equal(fake.sent.length, 0);
+});
+
+test("compaction right after session_start does not double-inject", async () => {
+  const branch: unknown[] = [];
+  addTurns(branch, 3);
+  const fake = makeFakePi(branch);
+  await fake.fire("session_start", { reason: "startup" });
+  assert.equal(fake.sent.length, 1);
+
+  await fake.fire("session_before_compact", {
+    preparation: { messagesToSummarize: [{ role: "user" }] },
+    reason: "threshold",
+    willRetry: false,
+  });
+  assert.equal(fake.sent.length, 1, "the startup snapshot already covered this turn");
+});
