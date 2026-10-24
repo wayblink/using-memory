@@ -2,7 +2,7 @@
 
 Local web browser + lightweight editor for the [using-memory](..) skill.
 Browse and edit log entries, docs (markdown + HTML), `MEMORY.md`,
-`PREFERENCES.md`, download underlying files, and run full-text search across them.
+`SPEC.md` and `spec/<repo>.md`, download underlying files, and run full-text search across them.
 Bilingual UI (English / Chinese).
 
 ## Install
@@ -62,8 +62,9 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 | `POST /memory/append` | Append via `memory_tool.write-memory` |
 | `POST /memory/update/{line_no}` | Replace one rendered MEMORY line |
 | `POST /memory/delete/{line_no}` | Delete one rendered MEMORY line |
-| `/preferences` | `PREFERENCES.md` rendered + Append-preference form |
-| `/preferences/download` | Download `PREFERENCES.md` |
+| `/spec` | Rules rendered, with a scope switcher (all projects + one tab per `spec/*.md`) + append form |
+| `/spec/download?scope=<global\|repo>` | Download that scope's file |
+| `/preferences` | 301 redirect to `/spec` (legacy address) |
 | `POST /preferences/append` | Append via `memory_tool.write-preference` |
 | `POST /preferences/update/{line_no}` | Replace one rendered preference line |
 | `POST /preferences/delete/{line_no}` | Delete one rendered preference line |
@@ -110,11 +111,11 @@ and `docs/index.json` stay consistent with the CLI:
 
 - **MEMORY.md** → `write-memory`. Tag restricted to `fact` / `decision`
   / `lesson` (the only values `memory_tool` accepts).
-- **PREFERENCES.md** → `write-preference`.
+- **SPEC.md** / **spec/<repo>.md** → `write-preference` with `--scope global` / `--scope <repo>`.
 - **docs/*.md** → `upsert-doc`. Full editor: slug, title, type,
   projects, tags, summary, body. Body has a Write / Preview toggle.
 
-Existing MEMORY/PREFERENCES entries can also be edited or deleted by line number.
+Existing MEMORY/SPEC entries can also be edited or deleted by line number; SPEC edits carry the scope so the right file is touched.
 Delete/update errors redirect back with a warning query string instead of
 mutating the wrong line.
 
@@ -197,7 +198,7 @@ Implementation notes:
 ## QA notes
 
 The current browser QA surface covers dashboard, logs, docs index/detail/new,
-MEMORY, PREFERENCES, search, downloads, language switching, admin maintain,
+MEMORY, SPEC, search, downloads, language switching, admin maintain,
 API v1, remote CLI forwarding, and mobile layout at 375px. Run the project
 suite from the repo root with:
 

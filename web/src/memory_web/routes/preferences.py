@@ -10,65 +10,99 @@ from ..adapter import MemoryToolError
 
 router = APIRouter()
 
+# `/preferences` was the page's address before rules were renamed to SPEC. Old
+# bookmarks and links keep working; the canonical route is now `/spec`.
+LEGACY_ROUTE = "/preferences"
+CANONICAL_ROUTE = "/spec"
 
-def _redirect_with_error(exc: MemoryToolError) -> RedirectResponse:
-    qs = urlencode({"error": str(exc)})
-    return RedirectResponse(f"/preferences?{qs}", status_code=303)
+
+def _redirect_with_error(exc: MemoryToolError, scope: str = "global") -> RedirectResponse:
+    qs = urlencode({"error": str(exc), "scope": scope})
+    return RedirectResponse(f"{CANONICAL_ROUTE}?{qs}", status_code=303)
 
 
-@router.get("/preferences", response_class=HTMLResponse, name="preferences")
-def preferences(request: Request, error: str | None = None) -> HTMLResponse:
+def _safe_scope(raw: str | None, valid: list[str]) -> str:
+    """Fall back to global rather than 500 when a scope disappears.
+
+    A project file can be deleted between page load and form submit; treating
+    that as an error would surface as a crash for a stale tab.
+    """
+    if raw and raw in valid:
+        return raw
+    return "global"
+
+
+@router.get(CANONICAL_ROUTE, response_class=HTMLResponse, name="spec")
+def spec(request: Request, scope: str | None = None, error: str | None = None) -> HTMLResponse:
     adapter = request.state.adapter
     templates = request.app.state.templates
 
-    entries = adapter.list_preference_entries()
+    scopes = adapter.list_spec_scopes()
+    active = _safe_scope(scope, scopes)
+    entries = adapter.list_preference_entries(active)
     return templates.TemplateResponse(
         request,
         "preferences.html",
         {
-            "page": "preferences",
+            "page": "spec",
             "entries": entries,
             "missing": not entries,
             "today": date.today().isoformat(),
             "error": error,
+            "scopes": scopes,
+            "active_scope": active,
         },
     )
 
 
-@router.post("/preferences/append")
-def preferences_append(
+@router.get(LEGACY_ROUTE, response_class=HTMLResponse, include_in_schema=False)
+def preferences_legacy(request: Request, scope: str | None = None, error: str | None = None):
+    qs = urlencode({k: v for k, v in (("scope", scope), ("error", error)) if v})
+    target = f"{CANONICAL_ROUTE}?{qs}" if qs else CANONICAL_ROUTE
+    return RedirectResponse(target, status_code=301)
+
+
+@router.post(f"{CANONICAL_ROUTE}/append")
+def spec_append(
     request: Request,
     text: str = Form(...),
     when: str = Form(""),
+    scope: str = Form("global"),
 ):
     adapter = request.state.adapter
+    active = _safe_scope(scope, adapter.list_spec_scopes())
     try:
-        adapter.write_preference(when=(when or None), text=text)
+        adapter.write_preference(when=(when or None), text=text, scope=active)
     except MemoryToolError as exc:
-        return _redirect_with_error(exc)
-    return RedirectResponse("/preferences", status_code=303)
+        return _redirect_with_error(exc, active)
+    return RedirectResponse(f"{CANONICAL_ROUTE}?scope={active}", status_code=303)
 
 
-@router.post("/preferences/update/{line_no}")
-def preferences_update(
+@router.post(f"{CANONICAL_ROUTE}/update/{{line_no}}")
+def spec_update(
     line_no: int,
     request: Request,
     text: str = Form(...),
     when: str = Form(""),
+    scope: str = Form("global"),
 ):
     adapter = request.state.adapter
+    active = _safe_scope(scope, adapter.list_spec_scopes())
     try:
-        adapter.update_preference_line(line_no=line_no, when=when or None, text=text)
+        adapter.update_preference_line(
+            line_no=line_no, when=when or None, text=text, scope=active
+        )
     except MemoryToolError as exc:
-        return _redirect_with_error(exc)
-    return RedirectResponse("/preferences", status_code=303)
+        return _redirect_with_error(exc, active)
+    return RedirectResponse(f"{CANONICAL_ROUTE}?scope={active}", status_code=303)
 
 
-@router.post("/preferences/delete/{line_no}")
-def preferences_delete(line_no: int, request: Request):
+@router.post(f"{CANONICAL_ROUTE}/delete/{{line_no}}")
+def spec_delete(line_no: int, request: Request, scope: str = Form("global")):
     adapter = request.state.adapter
+    active = _safe_scope(scope, adapter.list_spec_scopes())
     try:
-        adapter.delete_preference_line(line_no=line_no)
+        adapter.delete_preference_line(line_no=line_no, scope=active)
     except MemoryToolError as exc:
-        return _redirect_with_error(exc)
-    return RedirectResponse("/preferences", status_code=303)
+        return _redirect_with_error(exc, active)
+    return RedirectResponse(f"{CANONICAL_ROUTE}?scope={active}", status_code=303)

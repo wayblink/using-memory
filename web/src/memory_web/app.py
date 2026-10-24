@@ -31,6 +31,7 @@ _NAMESPACE_SAFE_ROOTS = frozenset({
     "/docs",
     "/logs",
     "/memory",
+    "/spec",
     "/preferences",
     "/search",
 })
