@@ -60,59 +60,29 @@
   <div class="empty" style="margin-top:24px;">{{ t('pref.empty') }}</div>
 {% else %}
   {% for f in files %}
-    {% if f.entries %}
-    <section class="spec-file" id="file-{{ f.scope }}">
-      <h2 class="section-label spec-file-head">
-        <span class="spec-file-name">{{ f.relative }}</span>
-        <span class="spec-file-scope">{% if f.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ f.scope }}{% endif %}</span>
-        <span class="spec-file-count">{{ f.entries|length }}</span>
-      </h2>
-      <div class="entry-cards">
-        {% for e in f.entries %}
-          <article class="entry-card" data-line="{{ e.line_no }}" data-scope="{{ e.scope }}">
-            <div class="entry-card-view">
-              <div class="entry-card-head">
-                <span class="entry-chips">
-                  {% if e.date %}<span class="entry-date">{{ e.date }}</span>{% endif %}
-                  <span class="entry-scope-chip{% if e.scope == 'global' %} is-global{% endif %}">
-                    {% if e.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ e.scope }}{% endif %}
-                  </span>
-                </span>
-                <div class="entry-actions">
-                  {% if ns_writable %}
-                  <button type="button" class="link-btn" data-action="edit">{{ t('common.edit') }}</button>
-                  <form method="post" action="/spec/delete/{{ e.line_no }}" class="inline-form"
-                        data-confirm="{{ t('common.delete.confirm') }}">
-                    <input type="hidden" name="scope" value="{{ e.scope }}">
-                    <button type="submit" class="link-btn danger">{{ t('common.delete') }}</button>
-                  </form>
-                  {% endif %}
-                </div>
-              </div>
-              <div class="entry-card-text">{{ e.text }}</div>
-            </div>
-            {% if ns_writable %}
-            <form class="entry-card-edit entry-form" method="post" action="/spec/update/{{ e.line_no }}" hidden>
-              <input type="hidden" name="scope" value="{{ e.scope }}">
-              <div class="row">
-                <label>{{ t('memory.form.date') }}
-                  <input type="date" name="when" value="{{ e.date }}" required>
-                </label>
-              </div>
-              <label class="full">{{ t('pref.form.text') }}
-                <textarea name="text" rows="3" required>{{ e.text }}</textarea>
-              </label>
-              <div class="row">
-                <button type="submit">{{ t('common.save') }}</button>
-                <button type="button" class="secondary" data-action="cancel">{{ t('common.cancel') }}</button>
-              </div>
-            </form>
-            {% endif %}
-          </article>
-        {% endfor %}
+  <section class="spec-file" id="file-{{ f.scope }}">
+    <h2 class="section-label spec-file-head">
+      <span class="spec-file-name">{{ f.relative }}</span>
+      <span class="spec-file-scope">{% if f.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ f.scope }}{% endif %}</span>
+      <span class="spec-file-count">{{ f.count }}</span>
+      {% if ns_writable %}
+      <a class="link-btn spec-file-download" href="/spec/download?scope={{ f.scope }}">{{ t('common.download') }}</a>
+      {% endif %}
+    </h2>
+    {% if ns_writable %}
+    <form method="post" action="/spec/save" class="spec-file-form">
+      <input type="hidden" name="scope" value="{{ f.scope }}">
+      <textarea name="text" class="spec-file-textarea" rows="{{ [f.count + 3, 6]|max }}" spellcheck="false"
+                placeholder="{{ t('spec.file.placeholder') }}">{{ f.text }}</textarea>
+      <div class="row">
+        <button type="submit">{{ t('spec.file.save') }}</button>
+        <span class="small">{{ t('spec.file.hint') }}</span>
       </div>
-    </section>
+    </form>
+    {% else %}
+    <pre class="spec-file-pre">{{ f.text }}</pre>
     {% endif %}
+  </section>
   {% endfor %}
 {% endif %}
 {% endblock %}
@@ -150,27 +120,6 @@
       } else {
         dialog.removeAttribute('open');
       }
-    });
-  });
-  document.querySelectorAll('.entry-card').forEach(function(card) {
-    var view = card.querySelector('.entry-card-view');
-    var edit = card.querySelector('.entry-card-edit');
-    var editBtn = card.querySelector('[data-action="edit"]');
-    var cancelBtn = card.querySelector('[data-action="cancel"]');
-    if (editBtn) editBtn.addEventListener('click', function() {
-      view.hidden = true;
-      edit.hidden = false;
-      var ta = edit.querySelector('textarea');
-      if (ta) ta.focus();
-    });
-    if (cancelBtn) cancelBtn.addEventListener('click', function() {
-      edit.hidden = true;
-      view.hidden = false;
-    });
-  });
-  document.querySelectorAll('form.inline-form[data-confirm]').forEach(function(f) {
-    f.addEventListener('submit', function(ev) {
-      if (!window.confirm(f.dataset.confirm)) ev.preventDefault();
     });
   });
 })();

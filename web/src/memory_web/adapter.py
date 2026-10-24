@@ -31,6 +31,17 @@ _PREF_LINE_RE = re.compile(
 )
 
 
+def _spec_rule_lines(text: str) -> list[str]:
+    """Rule rows in a spec file, for the per-file count shown in the UI.
+
+    Any bullet counts, not only `- [YYYY-MM-DD] ...`: the date marker is a
+    convention the writer adds, and a file a human edited by hand may omit it.
+    Counting only the strict shape reported "0 rules" for a file that visibly
+    had rules, and the page then hid the file entirely.
+    """
+    return [line for line in text.splitlines() if line.lstrip().startswith(("- ", "* "))]
+
+
 _MEMORY_TOOL: ModuleType | None = None
 
 
@@ -603,22 +614,36 @@ class MemoryAdapter:
         files: list[dict] = []
         for scope in self.list_spec_scopes():
             relative = self._spec_relative(scope)
-            try:
-                entries = self._parse_entries(relative, _PREF_LINE_RE, with_date=True)
-            except Exception:
-                continue
-            for entry in entries:
-                entry["scope"] = scope
-                entry["relative"] = relative
+            path = self.namespace_file_path(relative)
+            text = self.read_text_file(relative) or ""
             files.append(
                 {
                     "scope": scope,
                     "relative": relative,
-                    "exists": self.namespace_file_path(relative) is not None,
-                    "entries": entries,
+                    "exists": path is not None,
+                    "text": text,
+                    "count": len(_spec_rule_lines(text)),
                 }
             )
         return files
+
+    def write_spec_file(self, *, scope: str, text: str) -> None:
+        """Replace a whole spec file with `text`.
+
+        Editing the file as a whole rather than per entry, because a spec file
+        IS the unit: its heading says what it is, and its scope decides who has
+        to obey it. Reconstructing those from individual rule rows loses both.
+        """
+        self._require_writable()
+        relative = self._spec_relative(scope)
+        path = self.namespace_file_path(relative)
+        if path is None:
+            path = self.primary_root() / relative  # type: ignore[operator]
+            path.parent.mkdir(parents=True, exist_ok=True)
+        payload = text if text.endswith("\n") else text + "\n"
+        mt = self._mt
+        with mt.exclusive_file_lock(mt.lock_path_for(path)):
+            mt.atomic_write_text(path, payload)
 
     def list_spec_scopes(self) -> list[str]:
         """Every scope that has a file, global first.

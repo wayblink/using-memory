@@ -146,23 +146,29 @@ class SpecScopeWebTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 301)
         self.assertTrue(resp.headers["location"].startswith("/spec"))
 
-    def test_each_card_shows_its_scope(self):
+    def test_each_file_block_shows_its_scope(self):
         """Which file a rule came from decides who has to obey it."""
         resp = self.client.get("/spec")
         import re
-        chips = re.findall(r'entry-scope-chip[^"]*">\s*([^<]+?)\s*<', resp.text)
+        scopes = re.findall(r'spec-file-scope">\s*([^<]+?)\s*<', resp.text)
         # The global scope is shown by its label, not the internal "global".
-        self.assertIn("All projects", chips)
-        self.assertIn("dozo", chips)
+        self.assertIn("All projects", scopes)
+        self.assertIn("dozo", scopes)
 
     def test_page_reports_file_and_entry_counts(self):
         resp = self.client.get("/spec")
         self.assertIn("4", resp.text)  # total entries
         self.assertIn("spec/dozo.md", resp.text)
 
-    def test_preamble_is_not_offered_as_an_editable_rule(self):
+    def test_the_whole_file_is_editable(self):
+        """The file is the unit: its heading and preamble are part of it."""
         resp = self.client.get("/spec")
-        self.assertNotIn("Preamble that is not a rule", resp.text)
+        self.assertIn('action="/spec/save"', resp.text)
+        self.assertIn("spec-file-textarea", resp.text)
+        # The heading and preamble are visible in the editor, not stripped.
+        self.assertIn("Preamble that is not a rule", resp.text)
+        # Rules are no longer rendered as separate cards.
+        self.assertNotIn('class="entry-card"', resp.text)
 
 
 if __name__ == "__main__":
@@ -217,3 +223,62 @@ class MemoryPageParsingTests(unittest.TestCase):
         self.assertIn("project tagged", resp.text)
         self.assertIn("two projects", resp.text)
         self.assertNotIn("MEMORY.md is empty", resp.text)
+
+
+class SpecFileSaveTests(unittest.TestCase):
+    """Saving writes the whole file, heading and preamble included."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.memory_root = base / "memories"
+        subprocess.run(["git", "init", "-q", str(self.memory_root)], check=True)
+        self.ns = self.memory_root / "main"
+        (self.ns / "docs").mkdir(parents=True)
+        (self.ns / "log").mkdir()
+        (self.ns / "MEMORY.md").write_text("# Memory\n", encoding="utf-8")
+        (self.ns / "SPEC.md").write_text("# Spec\n\n- one rule\n", encoding="utf-8")
+        (self.ns / "spec").mkdir()
+        (self.ns / "spec" / "dozo.md").write_text(
+            "# Spec — dozo\n\nConstraints for the `dozo` repository.\n\n- dozo rule\n",
+            encoding="utf-8",
+        )
+        (self.ns / "docs" / "index.json").write_text(json.dumps([]), encoding="utf-8")
+        cfg = base / "config.yaml"
+        cfg.write_text(
+            yaml.safe_dump({"memory_roots": [{"path": str(self.memory_root),
+                            "role": "primary", "writable": True,
+                            "namespace": "main", "machine_id": "t"}]}),
+            encoding="utf-8",
+        )
+        self.client = TestClient(create_app(config_path=str(cfg)))
+
+    def tearDown(self) -> None:
+        self.client.close()
+        self.tmp.cleanup()
+
+    def test_save_replaces_the_whole_file(self):
+        new = "# Spec — dozo\n\nRewritten by the page.\n\n- rule a\n- rule b\n"
+        resp = self.client.post(
+            "/spec/save", data={"scope": "dozo", "text": new}, follow_redirects=False
+        )
+        self.assertEqual(resp.status_code, 303)
+        body = (self.ns / "spec" / "dozo.md").read_text(encoding="utf-8")
+        self.assertIn("Rewritten by the page.", body)
+        self.assertIn("- rule b", body)
+        self.assertNotIn("dozo rule", body)
+
+    def test_save_does_not_touch_other_files(self):
+        before = (self.ns / "SPEC.md").read_text(encoding="utf-8")
+        self.client.post("/spec/save", data={"scope": "dozo", "text": "# new\n"})
+        self.assertEqual((self.ns / "SPEC.md").read_text(encoding="utf-8"), before)
+
+    def test_save_adds_a_missing_trailing_newline(self):
+        self.client.post("/spec/save", data={"scope": "dozo", "text": "# no newline"})
+        body = (self.ns / "spec" / "dozo.md").read_text(encoding="utf-8")
+        self.assertTrue(body.endswith("\n"))
+
+    def test_textarea_shows_the_file_verbatim(self):
+        resp = self.client.get("/spec?scope=dozo&mode=file")
+        self.assertIn("Constraints for the `dozo` repository.", resp.text)
+        self.assertIn("- dozo rule", resp.text)

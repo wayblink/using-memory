@@ -1823,3 +1823,35 @@ a.bar-row:hover .bar-label { color: var(--accent); }
   border-color: var(--border);
   color: var(--text-dim, inherit);
 }
+
+/* Editable file body — the file is the unit, not the rule row. */
+.spec-file-form { margin-top: 10px; }
+.spec-file-download { margin-left: auto; font-size: 12px; }
+
+.spec-file-textarea,
+.spec-file-pre {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 13px;
+  line-height: 1.65;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: inherit;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.spec-file-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-active, var(--surface));
+}
+
+.spec-file-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -49,7 +49,10 @@ def spec(
     # group, because a file is a scope and flattening hides who a rule binds.
     if mode == "file":
         files = [f for f in files if f["scope"] == active]
-    total = sum(len(f["entries"]) for f in files)
+    total = sum(f["count"] for f in files)
+    # Empty means "nothing to edit": no file has any body. Judging by rule count
+    # would hide a file whose rules lack the `[date]` marker.
+    has_body = any(f["text"].strip() for f in files)
     return templates.TemplateResponse(
         request,
         "preferences.html",
@@ -57,7 +60,7 @@ def spec(
             "page": "spec",
             "files": files,
             "total": total,
-            "missing": total == 0,
+            "missing": not has_body,
             "today": date.today().isoformat(),
             "error": error,
             "scopes": scopes,
@@ -72,6 +75,27 @@ def preferences_legacy(request: Request, scope: str | None = None, error: str | 
     qs = urlencode({k: v for k, v in (("scope", scope), ("error", error)) if v})
     target = f"{CANONICAL_ROUTE}?{qs}" if qs else CANONICAL_ROUTE
     return RedirectResponse(target, status_code=301)
+
+
+@router.post(f"{CANONICAL_ROUTE}/save")
+def spec_save(
+    request: Request,
+    text: str = Form(""),
+    scope: str = Form("global"),
+):
+    """Write a whole spec file.
+
+    The file is the unit of editing: its heading and its scope cannot be
+    expressed by any single rule row, and rewriting the file from rows would
+    drop both.
+    """
+    adapter = request.state.adapter
+    active = _safe_scope(scope, adapter.list_spec_scopes())
+    try:
+        adapter.write_spec_file(scope=active, text=text)
+    except MemoryToolError as exc:
+        return _redirect_with_error(exc, active)
+    return RedirectResponse(f"{CANONICAL_ROUTE}?scope={active}&mode=file", status_code=303)
 
 
 @router.post(f"{CANONICAL_ROUTE}/append")
