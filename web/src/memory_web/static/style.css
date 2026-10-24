@@ -1805,6 +1805,30 @@ a.bar-row:hover .bar-label { color: var(--accent); }
   flex-wrap: wrap;
 }
 
+/* Scope pill: the first thing on the row, because which scope a file binds is
+   the most important fact about it. Sized to read at a glance rather than as a
+   metadata whisper. */
+.spec-scope-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent-strong, inherit);
+}
+
+.spec-scope-pill.is-global {
+  background: var(--bg-soft);
+  border-color: var(--border-strong, var(--border));
+  color: var(--text-dim, inherit);
+}
+
 .entry-scope-chip {
   font-size: 11px;
   font-weight: 500;

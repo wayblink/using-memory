@@ -64,10 +64,10 @@
     <article class="entry-card spec-file-card">
       <div class="entry-card-view">
         <div class="entry-card-head">
-          <span class="spec-file-name">{{ f.relative }}</span>
-          <span class="entry-scope-chip{% if f.scope == 'global' %} is-global{% endif %}">
+          <span class="spec-scope-pill{% if f.scope == 'global' %} is-global{% endif %}">
             {% if f.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ f.scope }}{% endif %}
           </span>
+          <span class="spec-file-name">{{ f.relative }}</span>
           <span class="spec-file-count">{{ f.count }} {{ t('spec.unit.entries') }}</span>
           <div class="entry-actions">
             {% if ns_writable %}

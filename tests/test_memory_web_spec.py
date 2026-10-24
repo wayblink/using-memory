@@ -150,7 +150,7 @@ class SpecScopeWebTests(unittest.TestCase):
         """Which file a rule came from decides who has to obey it."""
         resp = self.client.get("/spec")
         import re
-        scopes = re.findall(r'entry-scope-chip[^>]*>\s*([^<]+?)\s*<', resp.text)
+        scopes = re.findall(r'spec-scope-pill[^>]*>\s*([^<]+?)\s*<', resp.text)
         # The global scope is shown by its label, not the internal "global".
         self.assertIn("All projects", scopes)
         self.assertIn("dozo", scopes)
