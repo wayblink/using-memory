@@ -38,6 +38,7 @@ from memory_lib.core import (
     no_memory_config, load_config, collect_roots, root_priority, expand_path,
     remote_api_from_config,
     namespace_from_root, namespace_root, read_source, validate_single_primary,
+    derive_repo_name,
     normalize_index_doc_path, read_json_source, validate_doc_entry,
     validate_doc_index, sha256_file, lock_path_for, exclusive_file_lock,
     atomic_write_text, append_markdown_entry, looks_like_memory_namespace_root,
@@ -379,18 +380,44 @@ def append_memory_entry(root: Path, when: date, tag: str, text: str) -> Path:
     return append_markdown_entry(mem_path, entry)
 
 
-def append_preference_entry(root: Path, when: date, text: str) -> Path:
-    pref_path = root / "PREFERENCES.md"
+def append_preference_entry(root: Path, when: date, text: str, scope: str = "global") -> Path:
+    """Append one rule to SPEC.md (scope=global) or spec/<repo>.md.
+
+    A rule belongs to exactly one scope. Writing a repo-specific constraint to
+    the global file makes every other project pay for it on every turn, which is
+    what made the old single PREFERENCES.md balloon to 21 mixed entries.
+    """
+    if scope == "global":
+        pref_path = root / "SPEC.md"
+        header = (
+            "# Spec\n\n"
+            "Rules and constraints that apply to every project in this namespace.\n"
+            "Project-specific specs live in `spec/<repo>.md`.\n\n"
+        )
+    else:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", scope):
+            sys.stderr.write(
+                f"invalid --scope '{scope}': use 'global', 'auto', or a repo name "
+                "matching [a-z0-9][a-z0-9._-]{0,63} (lowercase; e.g. 'dozo', 'civil-forest')\n"
+            )
+            sys.exit(2)
+        pref_path = root / "spec" / f"{scope}.md"
+        header = (
+            f"# Spec — {scope}\n\n"
+            f"Constraints for the `{scope}` repository. "
+            "Loaded only when working in that repo.\n\n"
+        )
     entry = f"- [{when:%Y-%m-%d}] {text}\n"
+    pref_path.parent.mkdir(parents=True, exist_ok=True)
     with exclusive_file_lock(lock_path_for(pref_path)):
         existing = pref_path.read_text(encoding="utf-8") if pref_path.exists() else ""
-        if existing:
-            # One blank line between entries — preferences are often multi-paragraph
+        if not existing.strip():
+            atomic_write_text(pref_path, header + entry)
+        else:
+            # One blank line between entries — a spec entry is often multi-paragraph
             # (Why: / How to apply:), so a clear separator improves readability.
             existing = existing.rstrip("\n") + "\n\n"
             atomic_write_text(pref_path, existing + entry)
-        else:
-            atomic_write_text(pref_path, entry)
     return pref_path
 
 
@@ -794,6 +821,22 @@ def do_load(args: argparse.Namespace) -> dict:
     log_entries = []
     if roots_exist:
         ordered_roots = primary_list + ref_list
+        # Spec scoping is by repository. Resolve once: every root is probed for
+        # the same project's spec file, and a repo without a spec file is the
+        # normal case, not an error.
+        spec_project = None
+        raw_project = getattr(args, "project", None)
+        if isinstance(raw_project, list):
+            raw_project = raw_project[0] if raw_project else None
+        if raw_project:
+            spec_project = _normalize_axis_value(raw_project)
+        if spec_project is None:
+            cwd_arg = getattr(args, "cwd", None)
+            spec_project = _normalize_axis_value(derive_repo_name(Path(cwd_arg).expanduser() if cwd_arg else None))
+        if spec_project is None:
+            cwd_arg = getattr(args, "cwd", None)
+            candidate_cwd = Path(cwd_arg).expanduser() if cwd_arg else Path.cwd()
+            spec_project = _normalize_axis_value(candidate_cwd.name)
 
         for root_cfg in ordered_roots:
             raw_path = root_cfg.get("path", "")
@@ -801,10 +844,26 @@ def do_load(args: argparse.Namespace) -> dict:
             scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
             role = root_cfg.get("role", "reference")
             machine_id = root_cfg.get("machine_id", "")
-            pref_source = read_source(scoped_root / "PREFERENCES.md", "preferences", role, machine_id)
+            spec_path = scoped_root / "SPEC.md"
+            # Migration fallback: a namespace that has not been split yet still
+            # keeps its rules in PREFERENCES.md. Read exactly one of the two —
+            # reading both would resurrect the double-source problem that the
+            # SPEC split exists to remove.
+            if not spec_path.is_file() and (scoped_root / "PREFERENCES.md").is_file():
+                spec_path = scoped_root / "PREFERENCES.md"
+            pref_source = read_source(spec_path, "preferences", role, machine_id)
             sources_list.append(pref_source)
             if pref_source["loaded"]:
                 preferences.append(pref_source["content"])
+
+            if spec_project:
+                project_spec = scoped_root / "spec" / f"{spec_project}.md"
+                proj_source = read_source(project_spec, f"spec:{spec_project}", role, machine_id)
+                # A missing project spec is the ordinary case: most repos never
+                # get one. Do not surface it as a warning or a source row.
+                if proj_source["loaded"]:
+                    sources_list.append(proj_source)
+                    preferences.append(proj_source["content"])
 
         for root_cfg in ordered_roots:
             raw_path = root_cfg.get("path", "")
@@ -1217,10 +1276,19 @@ def do_write_memory(args: argparse.Namespace) -> dict:
 def do_write_preference(args: argparse.Namespace) -> dict:
     primary_root, primary_namespace = load_primary_for_write(args)
     when = parse_iso_date(args.date, "--date") if args.date else date.today()
-    target = append_preference_entry(namespace_root(primary_root, primary_namespace), when, args.text)
+    scope = getattr(args, "scope", None) or "global"
+    if scope == "auto":
+        # Opt-in convenience: derive the current repo instead of demanding the
+        # caller pass --scope on every write.
+        cwd_arg = getattr(args, "cwd", None)
+        scope = _normalize_axis_value(derive_repo_name(Path(cwd_arg).expanduser() if cwd_arg else None)) or "global"
+    target = append_preference_entry(
+        namespace_root(primary_root, primary_namespace), when, args.text, scope=scope
+    )
     return {
         "changed": True,
         "path": str(target),
+        "scope": scope,
         "sha256": sha256_file(target),
     }
 
@@ -2183,7 +2251,11 @@ def initialize_namespace(memory_root: Path, namespace: str, machine_id: str) -> 
             changed.append(str(target))
 
     seed_files = {
-        scoped_root / "PREFERENCES.md": "# Preferences\n\n",
+        scoped_root / "SPEC.md": (
+            "# Spec\n\n"
+            "Rules and constraints that apply to every project in this namespace.\n"
+            "Project-specific specs live in `spec/<repo>.md`.\n\n"
+        ),
         scoped_root / "MEMORY.md": "# Memory\n\n",
         scoped_root / "docs" / "index.json": json.dumps(
             {"version": 1, "documents": []}, ensure_ascii=False, indent=2
@@ -2577,12 +2649,20 @@ def cmd_write_memory(sub: argparse._SubParsersAction) -> None:
 
 
 def cmd_write_preference(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("write-preference", help="Append one stable preference to the configured namespace PREFERENCES.md")
+    p = sub.add_parser("write-preference", help="Append one rule to the namespace SPEC.md (scope=global) or spec/<repo>.md (scope=<repo>)")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--date", type=str, default=None,
-                   help="YYYY-MM-DD; defaults to today. Recorded as the preference's effective date.")
+                   help="YYYY-MM-DD; defaults to today. Recorded as the rule's effective date.")
     p.add_argument("--text", type=str, required=True)
+    p.add_argument(
+        "--scope",
+        type=str,
+        default="global",
+        help="'global' writes SPEC.md (applies to every project); a repo name writes spec/<repo>.md (applies only there). Defaults to global.",
+    )
     p.add_argument("--json", action="store_true")
+    p.add_argument("--cwd", type=str, default=None,
+                   help="Override cwd used when --scope is omitted and should follow the current repo.")
 
 
 def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
