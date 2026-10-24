@@ -212,7 +212,12 @@ export function renderSnapshot(raw: string, repo: string | null = null): string 
   if (entries.length > 0) {
     const lines = entries.map((entry) => {
       const head = [entry.ts, entry.tag, entry.level].filter(Boolean).join(" ");
-      return `- ${head}: ${(entry.text ?? "").replace(/\s+/g, " ").slice(0, 240)}`;
+      // Clip with a visible marker: an entry cut mid-sentence reads as a
+      // complete entry, so the model stops looking for the rest. The Python
+      // renderer marks it the same way, and the two hosts must agree.
+      const body = (entry.text ?? "").replace(/\s+/g, " ").trim();
+      const clipped = body.length > 240 ? `${body.slice(0, 240).trimEnd()}…` : body;
+      return `- ${head}: ${clipped}`;
     });
     sections.push(`## Recent operations\n\n${lines.join("\n")}`);
   }

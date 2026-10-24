@@ -251,3 +251,95 @@ class MemoryProjectFilterTests(unittest.TestCase):
         self.assertEqual(by_title["dozo specific fact"]["projects"], ["dozo"])
         self.assertEqual(by_title["shared by two repos"]["projects"], ["dozo", "iceberg"])
         self.assertEqual(by_title["cross-cutting lesson"]["projects"], [])
+
+
+class RecentLogTests(unittest.TestCase):
+    """The log window is what "continue where I left off" depends on."""
+
+    def test_renders_one_line_per_entry(self):
+        entries = [
+            {"ts": "2026-10-24T10:00:00+08:00", "tag": "fix", "level": "detail",
+             "text": "did a thing"},
+        ]
+        out = hook.render_recent_log(entries)
+        self.assertIn("## Recent operations", out)
+        self.assertIn("did a thing", out)
+        self.assertEqual(len([l for l in out.splitlines() if l.startswith("- ")]), 1)
+
+    def test_long_bodies_are_clipped_with_a_visible_marker(self):
+        """An entry cut mid-sentence reads as a complete entry."""
+        entries = [{"ts": "2026-10-24T10:00:00+08:00", "tag": "fix",
+                    "level": "detail", "text": "x" * 600}]
+        out = hook.render_recent_log(entries)
+        line = [l for l in out.splitlines() if l.startswith("- ")][0]
+        self.assertTrue(line.endswith("…"), "clipping must be visible")
+        self.assertLess(len(line), 300)
+
+    def test_newlines_are_collapsed(self):
+        entries = [{"ts": "t", "tag": "fix", "level": "detail",
+                    "text": "line one\nline two"}]
+        out = hook.render_recent_log(entries)
+        self.assertIn("line one line two", out)
+        self.assertEqual(len([l for l in out.splitlines() if l.startswith("- ")]), 1)
+
+    def test_empty_input_renders_nothing(self):
+        self.assertIsNone(hook.render_recent_log([]))
+        self.assertIsNone(hook.render_recent_log([{"ts": "t", "text": ""}]))
+
+
+class SessionStartIncludesLogTests(unittest.TestCase):
+    def test_the_snapshot_carries_the_log_window(self):
+        """Claude/Codex used to get SPEC and MEMORY but no log at all."""
+        import json
+        import tempfile
+        from unittest import mock
+
+        payload = {
+            "preferences": ["# Spec\n\n- a rule\n"],
+            "durable_memory": ["- [fact|2026-01-01|dozo] scoped\n"],
+            "log_entries": [{"ts": "2026-10-24T10:00:00+08:00", "tag": "fix",
+                             "level": "detail", "text": "an operation"}],
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("version: 1\nmemory_roots:\n  - path: /tmp\n")
+            cfg = fh.name
+        try:
+            completed = mock.Mock(returncode=0, stdout=json.dumps(payload))
+            with mock.patch.object(hook, "_resolve_memory_config", return_value=cfg), \
+                 mock.patch.object(hook.subprocess, "run", return_value=completed), \
+                 mock.patch.object(hook, "_repo_name_for", return_value="dozo"):
+                out = hook.fetch_session_start_snapshot({})
+        finally:
+            Path(cfg).unlink(missing_ok=True)
+
+        self.assertIn("## Active spec", out or "")
+        self.assertIn("## Long-term memory", out or "")
+        self.assertIn("## Recent operations", out or "")
+        self.assertIn("an operation", out or "")
+
+    def test_the_load_call_is_scoped_to_the_repo(self):
+        """Without --project the entry cap keeps other repos' newest entries."""
+        import json
+        import tempfile
+        from unittest import mock
+
+        payload = {"preferences": ["# Spec\n\n- a rule\n"]}
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("version: 1\nmemory_roots:\n  - path: /tmp\n")
+            cfg = fh.name
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return mock.Mock(returncode=0, stdout=json.dumps(payload))
+
+        try:
+            with mock.patch.object(hook, "_resolve_memory_config", return_value=cfg), \
+                 mock.patch.object(hook.subprocess, "run", side_effect=fake_run), \
+                 mock.patch.object(hook, "_repo_name_for", return_value="dozo"):
+                hook.fetch_session_start_snapshot({})
+        finally:
+            Path(cfg).unlink(missing_ok=True)
+
+        self.assertIn("--project", seen["cmd"])
+        self.assertIn("dozo", seen["cmd"])

@@ -347,6 +347,36 @@ def render_memory_index(durable_memory: list[str], project: str | None = None) -
     return "\n".join(lines)
 
 
+def render_recent_log(entries: list[dict], limit: int = 240) -> str | None:
+    """Render the auto log window as one line per operation.
+
+    This is the "continue where I left off" section: what was done, in order,
+    recently enough to still be in progress. It carries the same weight as the
+    MEMORY index — a bare list of titles tells the agent what exists, this tells
+    it what it was doing.
+
+    Bodies are clipped hard. A `detail` entry runs 800-3000 characters and the
+    heading plus first sentence is what identifies it; the full text is one
+    `umem search` away.
+    """
+    rows: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        head = " ".join(
+            str(entry.get(k) or "").strip() for k in ("ts", "tag", "level")
+        ).strip()
+        body = " ".join(str(entry.get("text") or "").split())
+        if not body:
+            continue
+        if len(body) > limit:
+            body = body[:limit].rstrip() + "…"
+        rows.append(f"- {head}: {body}".replace("- : ", "- "))
+    if not rows:
+        return None
+    return "## Recent operations\n\n" + "\n".join(rows)
+
+
 def render_docs_index(entries: list[dict], project: str | None = None) -> str | None:
     """Render the documents catalogue, narrowed to the current repository.
 
@@ -948,7 +978,7 @@ def _repo_name_for(cwd: str | None) -> str | None:
 
 
 def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
-    """Build SessionStart context: SPEC rules, a MEMORY index, and doc titles.
+    """Build SessionStart context: SPEC rules, a MEMORY index, and the log window.
 
     Claude and Codex used to receive only `preferences` from here. `load` returns
     `durable_memory` too, and this function dropped it, so on those hosts the
@@ -964,6 +994,7 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
         config = _resolve_memory_config()
         if not config:
             return None
+        repo = _repo_name_for(payload.get("cwd"))
         cmd = [
             sys.executable or "python3",
             _memory_tool_path(),
@@ -971,6 +1002,11 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
             "--config", config,
             "--json",
         ]
+        if repo:
+            # Narrow the log to this repository *before* the entry cap applies.
+            # Without it the cap keeps the newest 20 entries overall, most of
+            # which belong to whatever else was busy.
+            cmd += ["--project", repo]
         result = subprocess.run(cmd, capture_output=True, timeout=20, text=True)
         if result.returncode != 0:
             return None
@@ -996,6 +1032,12 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
             )
             if memory_md:
                 sections.append(memory_md)
+
+        logs = data.get("log_entries")
+        if isinstance(logs, list):
+            log_md = render_recent_log([e for e in logs if isinstance(e, dict)])
+            if log_md:
+                sections.append(log_md)
 
         return "\n\n---\n\n".join(sections) if sections else None
     except Exception:
