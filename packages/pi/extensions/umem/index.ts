@@ -58,65 +58,16 @@ interface HookCopy {
 }
 
 /**
- * Turn a `load --json --brief` snapshot into the text injected at session start.
+ * Re-exported from snapshot.ts.
  *
- * Rendered rather than dumped as JSON: the model reads prose better than it
- * reads a serialized object, and the JSON envelope (paths, sha256, role fields)
- * is scaffolding, not content. The curated lists are what matter; the raw
- * sources are already truncated by `--brief` and only supply file locations.
+ * It lives in its own module because index.ts imports the Pi runtime packages,
+ * so anything defined here cannot be loaded by a plain `node --test` run. The
+ * renderer decides what the model reads about its rules, and it had no
+ * coverage at all while it lived here.
  */
-export function renderSnapshot(raw: string): string | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const data = parsed as {
-    mode?: string;
-    preferences?: string[];
-    durable_memory?: string[];
-    log_entries?: { ts?: string; tag?: string; level?: string; text?: string }[];
-    warnings?: string[];
-  };
+import { renderSnapshot } from "./snapshot.js";
 
-  const sections: string[] = [];
-  // Rules go first and go whole: they must be in effect before the first answer.
-  // Nothing here truncates them — a rule shown partially reads as a complete
-  // rule and gets followed literally.
-  const prefs = (data.preferences ?? []).join("\n\n").trim();
-  if (prefs !== "") {
-    sections.push(
-      `## Active spec\n\nRules for this project. They are constraints, not suggestions — apply them unless the user explicitly overrides one in the current turn:\n\n${prefs}`,
-    );
-  }
-
-  const memory = (data.durable_memory ?? []).join("\n\n").trim();
-  if (memory !== "") sections.push(`## Long-term memory\n\n${memory}`);
-
-  const entries = data.log_entries ?? [];
-  if (entries.length > 0) {
-    const lines = entries.map((entry) => {
-      const head = [entry.ts, entry.tag, entry.level].filter(Boolean).join(" ");
-      return `- ${head}: ${(entry.text ?? "").replace(/\s+/g, " ").slice(0, 240)}`;
-    });
-    sections.push(`## Recent operations\n\n${lines.join("\n")}`);
-  }
-
-  if (data.mode === "no_memory") {
-    sections.push(
-      "## Memory not configured\n\nNo memory store is configured on this machine. Run `umem setup` to create one.",
-    );
-  }
-
-  const warnings = (data.warnings ?? []).filter((w) => typeof w === "string");
-  if (warnings.length > 0) {
-    sections.push(`## Memory warnings\n\n${warnings.map((w) => `- ${w}`).join("\n")}`);
-  }
-
-  return sections.length === 0 ? null : sections.join("\n\n---\n\n");
-}
+export { renderSnapshot };
 
 /**
  * Fetch the host copy from the Python layer.
