@@ -19,6 +19,16 @@ memory_roots:
 defaults:
   read_today: true
   read_yesterday: true
+  # Rolling window for the log entries included in the injected snapshot.
+  # Operations older than a month are history rather than continuity. Set to 0
+  # to fall back to the legacy `read_today` / `read_yesterday` two-day window,
+  # or a negative value alongside both flags false to inject no log at all.
+  log_days: 30
+  # Cap on the *auto-injected* log entries, newest kept first. An explicit
+  # `--log-days` / `--log-from` / `--log-to` query is never capped: the cap
+  # exists so a busy month cannot crowd the rules out of a snapshot nobody asked
+  # for, not to limit what you can read on request.
+  log_max_entries: 20
   load_docs_on_demand: true
 
 logging:

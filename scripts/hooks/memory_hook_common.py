@@ -303,17 +303,16 @@ def render_memory_index(durable_memory: list[str], project: str | None = None) -
     like an excerpt, and the model may answer from titles. It is told these are
     pointers and that bodies are one `search` away.
 
-    When a project is known, three kinds of entry are kept and the rest dropped:
-    entries tagged with that project, entries tagged with any project list that
-    contains it, and untagged entries.
+    This is a whitelist: an entry is shown only when its project list contains
+    the current repository. Untagged entries are NOT shown. That is deliberate —
+    an untagged entry is one whose owner never said which repository it belongs
+    to, and showing it everywhere is how 28 of 31 visible entries turned out to
+    be about other projects entirely. Cross-cutting knowledge still needs a home,
+    so it gets tagged with every repository it applies to.
 
-    Untagged entries stay because they are the cross-cutting ones — a lesson
-    about worktrees or about how documents are filed applies everywhere. The
-    filter exists to stop other repositories' specifics from crowding the
-    context, not to hide general knowledge.
-
-    With no project resolved, everything is shown: an unrecognisable working
-    directory should cost tokens, not hide decisions.
+    With no project resolved (not a git directory, git missing) everything is
+    shown: an unrecognisable working directory should cost tokens, not hide
+    knowledge the agent cannot then discover.
     """
     wanted = (project or "").lower()
     entries: list[dict] = []
@@ -324,7 +323,7 @@ def render_memory_index(durable_memory: list[str], project: str | None = None) -
             if key in seen:
                 continue
             projects = entry.get("projects") or []
-            if wanted and projects and wanted not in projects:
+            if wanted and wanted not in projects:
                 continue
             seen.add(key)
             entries.append(entry)

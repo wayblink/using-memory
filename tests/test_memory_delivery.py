@@ -107,13 +107,15 @@ class SessionStartSnapshotTests(unittest.TestCase):
         try:
             completed = mock.Mock(returncode=0, stdout=json.dumps(payload))
             with mock.patch.object(hook, "_resolve_memory_config", return_value=cfg), \
-                 mock.patch.object(hook.subprocess, "run", return_value=completed):
+                 mock.patch.object(hook.subprocess, "run", return_value=completed), \
+                 mock.patch.object(hook, "_repo_name_for", return_value=None):
                 out = hook.fetch_session_start_snapshot({})
         finally:
             Path(cfg).unlink(missing_ok=True)
 
         self.assertIsNotNone(out)
         self.assertIn("## Active spec", out)
+        # MEMORY is a whitelist now: without a resolvable repo, everything shows.
         self.assertIn("## Long-term memory", out)
         self.assertEqual(len(index_rows(out.split("## Long-term memory")[1])), 5)
 
@@ -214,11 +216,12 @@ class MemoryProjectFilterTests(unittest.TestCase):
         "- [fact|2026-01-04|other-repo] unrelated repo fact\n"
     )
 
-    def test_project_scoping_keeps_own_and_untagged(self):
+    def test_project_scoping_is_a_whitelist(self):
+        """Only entries naming this repository; untagged ones are NOT shown."""
         out = hook.render_memory_index([self.DOC], project="dozo") or ""
         self.assertIn("dozo specific fact", out)
         self.assertIn("shared by two repos", out)
-        self.assertIn("cross-cutting lesson", out)
+        self.assertNotIn("cross-cutting lesson", out)
         self.assertNotIn("unrelated repo fact", out)
 
     def test_multi_project_entry_visible_in_each(self):
@@ -231,11 +234,16 @@ class MemoryProjectFilterTests(unittest.TestCase):
         out = hook.render_memory_index([self.DOC]) or ""
         self.assertIn("unrelated repo fact", out)
 
-    def test_untagged_entries_never_disappear(self):
-        """An untagged entry is cross-cutting; hiding it everywhere is worse."""
+    def test_untagged_entries_are_excluded_once_a_repo_is_known(self):
+        """An untagged entry is one nobody scoped, so it is not shown.
+
+        Showing untagged entries everywhere is how most of the visible index
+        ended up describing other projects. Cross-cutting knowledge stays
+        reachable by tagging it with every repository it applies to.
+        """
         for repo in ("dozo", "iceberg", "nonexistent"):
             out = hook.render_memory_index([self.DOC], project=repo) or ""
-            self.assertIn("cross-cutting lesson", out, f"missing in {repo}")
+            self.assertNotIn("cross-cutting lesson", out, f"leaked in {repo}")
 
     def test_projects_parse_from_the_third_marker_field(self):
         rows = hook.memory_index_entries(self.DOC)

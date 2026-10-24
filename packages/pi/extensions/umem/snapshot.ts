@@ -108,10 +108,10 @@ export function memoryIndex(docs: readonly string[], project: string | null = nu
         .split(",")
         .map((p) => p.trim().toLowerCase())
         .filter((p) => p !== "");
-      // Untagged entries are cross-cutting and stay visible everywhere; the
-      // filter is here to keep other repositories' specifics out, not to hide
-      // general knowledge.
-      if (wanted !== "" && projects.length > 0 && !projects.includes(wanted)) continue;
+      // Whitelist: only entries that name this repository. An untagged entry is
+      // one nobody scoped, and showing those everywhere is how most of the
+      // visible index ended up describing other projects.
+      if (wanted !== "" && !projects.includes(wanted)) continue;
       const key = body.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);

@@ -634,7 +634,13 @@ def date_range(start: date, end: date) -> list[date]:
     return [start + timedelta(days=offset) for offset in range(days + 1)]
 
 
-def log_dates_for_load(args: argparse.Namespace, target: date, read_today: bool, read_yesterday: bool) -> list[date]:
+def log_dates_for_load(
+    args: argparse.Namespace,
+    target: date,
+    read_today: bool,
+    read_yesterday: bool,
+    default_days: int = 30,
+) -> list[date]:
     has_range = bool(args.log_from or args.log_to)
     has_days = args.log_days is not None
     if has_range and has_days:
@@ -653,6 +659,17 @@ def log_dates_for_load(args: argparse.Namespace, target: date, read_today: bool,
             sys.stderr.write("--log-days must be >= 1\n")
             sys.exit(2)
         start = target - timedelta(days=args.log_days - 1)
+        return date_range(start, target)
+
+    # Default window. `read_today` / `read_yesterday` are the legacy way of
+    # saying "the last two days"; a positive `default_days` supersedes them with
+    # a rolling window, which is what the injected snapshot actually wants —
+    # operations older than a month are history, not continuity.
+    #
+    # Setting `read_today: false` and `read_yesterday: false` with no
+    # `log_days` keeps the old behaviour of loading no log at all.
+    if default_days > 0:
+        start = target - timedelta(days=default_days - 1)
         return date_range(start, target)
 
     dates = []
@@ -853,6 +870,21 @@ def do_load(args: argparse.Namespace) -> dict:
     defaults = config.get("defaults", {}) if config else {}
     read_today = defaults.get("read_today", True)
     read_yesterday = defaults.get("read_yesterday", True)
+    # Rolling window for the injected log; 30 days by default.
+    log_days_default = defaults.get("log_days", 30)
+    try:
+        log_days_default = int(log_days_default)
+    except (TypeError, ValueError):
+        log_days_default = 30
+    # Cap on the *automatically* injected log window. An explicit time query
+    # (`--log-days` / `--log-from` / `--log-to`) means the caller asked for a
+    # specific slice and is never truncated — the cap exists to stop a busy
+    # month from crowding out the rules in a snapshot nobody requested.
+    log_max_entries_default = defaults.get("log_max_entries", 20)
+    try:
+        log_max_entries_default = int(log_max_entries_default)
+    except (TypeError, ValueError):
+        log_max_entries_default = 20
     load_docs = defaults.get("load_docs_on_demand", True)
     target = parse_iso_date(args.date, "--date") if args.date else date.today()
     sources_list = []
@@ -981,7 +1013,17 @@ def do_load(args: argparse.Namespace) -> dict:
         primary_root = expand_path(primary_cfg.get("path", ""))
         primary_namespace = namespace_from_root(primary_cfg)
         primary_machine = primary_cfg.get("machine_id", "")
-        log_dates = log_dates_for_load(args, target, read_today, read_yesterday)
+        log_dates = log_dates_for_load(
+                args, target, read_today, read_yesterday, default_days=log_days_default
+            )
+        explicit_window = bool(
+            args.log_from or args.log_to or args.log_days is not None
+        )
+        # The cap applies to the auto window only. Narrowing by project is the
+        # caller's job (the Pi extension passes `--project`), because `load` is a
+        # general read API: filtering here by an inferred cwd would make "load
+        # everything" impossible to ask for.
+        log_projects = getattr(args, "project", None)
         append_log_jsonl_sources(
             sources_list,
             log_entries,
@@ -991,9 +1033,24 @@ def do_load(args: argparse.Namespace) -> dict:
             primary_machine,
             log_dates,
             args.log_query,
-            project_filter=getattr(args, "project", None),
+            project_filter=log_projects,
             topic_filter=getattr(args, "topic", None),
         )
+        if not explicit_window and log_max_entries_default > 0:
+            # Newest first, then back to chronological order: the tail of a
+            # session's operations is what "continue where I left off" means.
+            ordered = sorted(
+                log_entries, key=lambda e: str(e.get("ts") or e.get("date") or "")
+            )
+            if len(ordered) > log_max_entries_default:
+                dropped = len(ordered) - log_max_entries_default
+                kept = ordered[-log_max_entries_default:]
+                log_entries[:] = kept
+                warnings.append(
+                    f"log: kept the most recent {log_max_entries_default} of "
+                    f"{len(ordered)} entries (auto window; pass --log-days to "
+                    f"see the full {dropped} more)"
+                )
     else:
         warnings.append("no primary root configured; read_today and read_yesterday are no-ops")
 
@@ -2658,6 +2715,15 @@ def cmd_load(sub: argparse._SubParsersAction) -> None:
         help="Filter log entries by topic axis (repeatable). Does not affect docs.",
     )
     p.add_argument("--doc-query", type=str, default=None)
+    p.add_argument(
+        "--cwd",
+        type=str,
+        default=None,
+        help=(
+            "Override the working directory used to scope SPEC, MEMORY and the "
+            "auto log window to a repository. Defaults to the real cwd."
+        ),
+    )
     p.add_argument(
         "--brief",
         action="store_true",

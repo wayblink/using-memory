@@ -450,7 +450,22 @@ export default async function umemExtension(pi: ExtensionAPI): Promise<void> {
       gateReason: copy.gateReason,
       sessionSnapshot: async () => {
         if (!config.injectPreferences) return null;
-        const argv = config.briefSnapshot ? ["load", "--json", "--brief"] : ["load", "--json"];
+        // `--cwd` lets the Python side scope SPEC, MEMORY and the auto log
+        // window to this repository, instead of guessing from an inherited
+        // working directory.
+        // `--project` (not just `--cwd`) so the log is narrowed to this repo
+        // *before* the entry cap is applied. With only `--cwd`, Python caps the
+        // window first and the renderer then filters, which kept 20 entries of
+        // which 8 belonged here.
+        const repoName = resolveRepoName();
+        const argv = [
+          "load",
+          "--json",
+          ...(config.briefSnapshot ? ["--brief"] : []),
+          "--cwd",
+          process.cwd(),
+          ...(repoName === null ? [] : ["--project", repoName]),
+        ];
         const { code, output } = await run(argv, undefined);
         if (code !== 0) return null;
         // The repo name narrows the document catalogue; see snapshot.ts.

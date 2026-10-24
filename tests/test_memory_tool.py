@@ -100,6 +100,7 @@ memory_roots:
 {refs}defaults:
   read_today: true
   read_yesterday: true
+  log_days: 0
   load_docs_on_demand: true
 """,
             encoding="utf-8",
@@ -121,6 +122,7 @@ remote:
 defaults:
   read_today: true
   read_yesterday: true
+  log_days: 0
   load_docs_on_demand: true
 """,
             encoding="utf-8",
@@ -349,6 +351,7 @@ memory_roots:
 defaults:
   read_today: true
   read_yesterday: true
+  log_days: 0
   load_docs_on_demand: true
 """,
                 encoding="utf-8",

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import date
 import sys
 import tempfile
 import unittest
@@ -256,3 +257,69 @@ class MemoryProjectTagWriteTests(unittest.TestCase):
         self.assertEqual(out.returncode, 2)
         self.assertIn("invalid project", out.stderr)
         self.assertFalse((self.mem / "main" / "MEMORY.md").exists())
+
+
+class LogWindowCapTests(unittest.TestCase):
+    """The auto log window is capped; an explicit time query is not."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.mem = self.root / "mem"
+        git_init(self.mem)
+        ns = self.mem / "main"
+        (ns / "log").mkdir(parents=True)
+        # 40 entries on one day, newest last.
+        today = date.today()
+        rows = [
+            {"ts": f"{today.isoformat()}T10:{i:02d}:00+08:00", "date": today.isoformat(),
+             "tag": "note", "level": "summary", "source": "user", "text": f"entry {i}"}
+            for i in range(40)
+        ]
+        (ns / "log" / f"{today.isoformat()}.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+        )
+        self.cfg = self.root / "cfg.yaml"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def write_cfg(self, extra: str = "  log_max_entries: 20\n") -> None:
+        self.cfg.write_text(
+            "version: 1\nmemory_roots:\n"
+            f"  - path: {self.mem}\n    role: primary\n    writable: true\n"
+            f"    namespace: main\n    machine_id: test\ndefaults:\n{extra}",
+            encoding="utf-8",
+        )
+
+    def load(self, *extra_args: str) -> dict:
+        args = ["load", "--config", str(self.cfg), "--json", *extra_args]
+        out = run(args, self.root)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def test_auto_window_is_capped(self):
+        self.write_cfg()
+        data = self.load()
+        self.assertEqual(len(data["log_entries"]), 20)
+        # The newest entries survive, not the oldest.
+        self.assertIn("entry 39", json.dumps(data["log_entries"]))
+        self.assertTrue(any("kept the most recent 20" in w for w in data["warnings"]))
+
+    def test_explicit_log_days_is_not_capped(self):
+        """A caller who asks for a window gets the whole window."""
+        self.write_cfg()
+        data = self.load("--log-days", "30")
+        self.assertEqual(len(data["log_entries"]), 40)
+        self.assertFalse(any("kept the most recent" in w for w in data["warnings"]))
+
+    def test_explicit_date_range_is_not_capped(self):
+        self.write_cfg()
+        today = date.today().isoformat()
+        data = self.load("--log-from", today, "--log-to", today)
+        self.assertEqual(len(data["log_entries"]), 40)
+
+    def test_cap_zero_means_no_cap(self):
+        self.write_cfg("  log_max_entries: 0\n")
+        data = self.load()
+        self.assertEqual(len(data["log_entries"]), 40)
