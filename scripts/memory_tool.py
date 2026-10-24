@@ -370,13 +370,43 @@ def append_log_entry(
     return jsonl_target
 
 
-def append_memory_entry(root: Path, when: date, tag: str, text: str) -> Path:
+def append_memory_entry(
+    root: Path, when: date, tag: str, text: str, projects: list[str] | None = None
+) -> Path:
+    """Append one durable knowledge entry, optionally tagged with projects.
+
+    MEMORY is knowledge, so an entry may relate to several repositories at once
+    (a lesson about git worktrees applies to every repo; a decision about the
+    knowledge module applies to civil-forest and anything that embeds it). Hence
+    a comma-separated project list rather than a single value.
+
+    An entry with no projects is cross-cutting and stays visible everywhere.
+    That default is deliberate: an untagged entry is one the writer did not know
+    how to scope, and hiding it from every repo would be worse than showing it in
+    all of them.
+    """
     DENIED = {"pref"}
     if tag.lower() in DENIED:
         sys.stderr.write(f"tag '{tag}' is not allowed for write-memory\n")
         sys.exit(2)
+    scoped: list[str] = []
+    for raw in projects or []:
+        name = raw.strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", name):
+            sys.stderr.write(
+                f"invalid project '{raw}': must match [a-z0-9][a-z0-9._-]{{0,63}} "
+                "(lowercase; e.g. 'dozo', 'civil-forest'). The value is stored "
+                "verbatim, so it is rejected rather than repaired: a silently "
+                "rewritten tag never matches the repository name it meant.\n"
+            )
+            sys.exit(2)
+        if name not in scoped:
+            scoped.append(name)
     mem_path = root / "MEMORY.md"
-    entry = f"- [{tag}|{when:%Y-%m-%d}] {text}\n"
+    marker = f"{tag}|{when:%Y-%m-%d}"
+    if scoped:
+        marker = f"{marker}|{','.join(scoped)}"
+    entry = f"- [{marker}] {text}\n"
     return append_markdown_entry(mem_path, entry)
 
 
@@ -1291,7 +1321,13 @@ def do_write_memory(args: argparse.Namespace) -> dict:
     if tag not in allowed:
         sys.stderr.write(f"tag is not allowed for write-memory\n")
         sys.exit(2)
-    target = append_memory_entry(namespace_root(primary_root, primary_namespace), when, tag, args.text)
+    target = append_memory_entry(
+        namespace_root(primary_root, primary_namespace),
+        when,
+        tag,
+        args.text,
+        projects=getattr(args, "projects", None),
+    )
     return {
         "changed": True,
         "path": str(target),
@@ -2671,6 +2707,17 @@ def cmd_write_memory(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--date", type=str, required=True)
     p.add_argument("--tag", type=str, required=True)
     p.add_argument("--text", type=str, required=True)
+    p.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        default=None,
+        help=(
+            "Project this entry relates to (repeatable). An entry may belong to "
+            "several repositories. Omit for cross-cutting knowledge, which stays "
+            "visible in every repo."
+        ),
+    )
     p.add_argument("--json", action="store_true")
 
 

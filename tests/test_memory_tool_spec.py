@@ -202,3 +202,57 @@ class SpecScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MemoryProjectTagWriteTests(unittest.TestCase):
+    """write-memory --project tags an entry; a bad tag is rejected, not repaired."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.mem = self.root / "mem"
+        git_init(self.mem)
+        (self.mem / "main").mkdir(parents=True, exist_ok=True)
+        self.cfg = self.root / "cfg.yaml"
+        self.cfg.write_text(
+            "version: 1\nmemory_roots:\n"
+            f"  - path: {self.mem}\n    role: primary\n    writable: true\n"
+            "    namespace: main\n    machine_id: test\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def write(self, text: str, *projects: str):
+        args = ["write-memory", "--config", str(self.cfg), "--date", "2026-10-24",
+                "--tag", "fact", "--text", text]
+        for p in projects:
+            args += ["--project", p]
+        return run(args, self.root)
+
+    def test_no_project_writes_a_cross_cutting_entry(self):
+        out = self.write("general")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        body = (self.mem / "main" / "MEMORY.md").read_text(encoding="utf-8")
+        self.assertIn("[fact|2026-10-24] general", body)
+
+    def test_one_project_is_recorded(self):
+        out = self.write("scoped", "dozo")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        body = (self.mem / "main" / "MEMORY.md").read_text(encoding="utf-8")
+        self.assertIn("[fact|2026-10-24|dozo] scoped", body)
+
+    def test_several_projects_are_recorded(self):
+        """One entry may relate to more than one repository."""
+        out = self.write("shared", "dozo", "civil-forest")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        body = (self.mem / "main" / "MEMORY.md").read_text(encoding="utf-8")
+        self.assertIn("[fact|2026-10-24|dozo,civil-forest] shared", body)
+
+    def test_invalid_project_is_rejected_not_rewritten(self):
+        """'Bad Name' must not become 'badname' — a rewritten tag never matches."""
+        out = self.write("nope", "Bad Name")
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("invalid project", out.stderr)
+        self.assertFalse((self.mem / "main" / "MEMORY.md").exists())

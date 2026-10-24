@@ -70,7 +70,7 @@ interface MemoryRow {
   readonly title: string;
 }
 
-const MEMORY_ENTRY_RE = /^- \[([A-Za-z0-9_-]+)(?:\|(\d{4}-\d{2}-\d{2}))?\]\s+(.*)$/;
+const MEMORY_ENTRY_RE = /^- \[([A-Za-z0-9_-]+)(?:\|(\d{4}-\d{2}-\d{2}))?(?:\|([^\]]*))?\]\s+(.*)$/;
 
 /** First clause of an entry, enough to recognise it later. */
 function shortTitle(body: string, limit = 110): string {
@@ -94,19 +94,28 @@ function shortTitle(body: string, limit = 110): string {
  * ordering problem: every title fits in roughly the space six whole entries
  * used to take.
  */
-export function memoryIndex(docs: readonly string[]): string[] {
-  const rows: MemoryRow[] = [];
+export function memoryIndex(docs: readonly string[], project: string | null = null): string[] {
+  const wanted = (project ?? "").toLowerCase();
+  const rows: (MemoryRow & { projects: string[] })[] = [];
   const seen = new Set<string>();
   for (const doc of docs) {
     for (const raw of doc.split("\n")) {
       const m = MEMORY_ENTRY_RE.exec(raw.trim());
       if (m === null) continue;
-      const body = (m[3] ?? "").replace(/\s+/g, " ").trim();
+      const body = (m[4] ?? "").replace(/\s+/g, " ").trim();
       if (body === "") continue;
+      const projects = (m[3] ?? "")
+        .split(",")
+        .map((p) => p.trim().toLowerCase())
+        .filter((p) => p !== "");
+      // Untagged entries are cross-cutting and stay visible everywhere; the
+      // filter is here to keep other repositories' specifics out, not to hide
+      // general knowledge.
+      if (wanted !== "" && projects.length > 0 && !projects.includes(wanted)) continue;
       const key = body.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      rows.push({ tag: m[1] ?? "", date: m[2] ?? "", title: shortTitle(body) });
+      rows.push({ tag: m[1] ?? "", date: m[2] ?? "", title: shortTitle(body), projects });
     }
   }
   rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
@@ -159,7 +168,7 @@ export function renderSnapshot(raw: string, repo: string | null = null): string 
     mode?: string;
     preferences?: string[];
     durable_memory?: string[];
-    log_entries?: { ts?: string; tag?: string; level?: string; text?: string }[];
+    log_entries?: { ts?: string; tag?: string; level?: string; text?: string; project?: string }[];
     docs_index?: { path?: string; title?: string; type?: string; modified?: string; projects?: string[] }[];
     warnings?: string[];
   };
@@ -184,21 +193,22 @@ export function renderSnapshot(raw: string, repo: string | null = null): string 
     );
   }
 
-  const memoryRules = memoryIndex(data.durable_memory ?? []);
+  const memoryRules = memoryIndex(data.durable_memory ?? [], repo);
   if (memoryRules.length > 0) {
     sections.push(
       `## Long-term memory (index)\n\n${memoryRules.length} saved facts, decisions and lessons. These are titles, not the entries themselves: when one could change your answer, fetch the body with \`umem search "<title keywords>"\` before relying on it. Do not guess at the contents of a title you have not read.\n\n${memoryRules.map((r) => `- ${r}`).join("\n")}`,
     );
   }
 
-  const docs = docsIndex(data.docs_index ?? [], repo);
-  if (docs.length > 0) {
-    sections.push(
-      `## Documents (index)\n\n${docs.length} documents. These are titles, not contents: when one matches the task, read it with \`umem load --doc <path>\`. Do not assume what a document says from its title.\n\n${docs.map((d) => `- ${d}`).join("\n")}`,
-    );
-  }
-
-  const entries = data.log_entries ?? [];
+  // The log window is "today and yesterday" across every project. Narrowing it
+  // to the current repo is the difference between a third of the context being
+  // recent work and a third of it being other repositories' deployments.
+  // Untagged entries stay, as everywhere else.
+  const wanted = (repo ?? "").toLowerCase();
+  const entries = (data.log_entries ?? []).filter((entry) => {
+    const p = (entry.project ?? "").toLowerCase();
+    return wanted === "" || p === "" || p === wanted;
+  });
   if (entries.length > 0) {
     const lines = entries.map((entry) => {
       const head = [entry.ts, entry.tag, entry.level].filter(Boolean).join(" ");

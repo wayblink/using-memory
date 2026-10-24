@@ -201,3 +201,45 @@ class DocsIndexTests(unittest.TestCase):
             sp.run(["git", "init", "-q", str(root)], check=True)
             self.assertEqual(hook._repo_name_for(str(nested)), "my-project")
             self.assertIsNone(hook._repo_name_for(tmp))
+
+
+class MemoryProjectFilterTests(unittest.TestCase):
+    """MEMORY entries carry an optional project list, and may carry several."""
+
+    DOC = (
+        "# Memory\n\n"
+        "- [fact|2026-01-01|dozo] dozo specific fact\n"
+        "- [decision|2026-01-02|dozo,iceberg] shared by two repos\n"
+        "- [lesson|2026-01-03] cross-cutting lesson\n"
+        "- [fact|2026-01-04|other-repo] unrelated repo fact\n"
+    )
+
+    def test_project_scoping_keeps_own_and_untagged(self):
+        out = hook.render_memory_index([self.DOC], project="dozo") or ""
+        self.assertIn("dozo specific fact", out)
+        self.assertIn("shared by two repos", out)
+        self.assertIn("cross-cutting lesson", out)
+        self.assertNotIn("unrelated repo fact", out)
+
+    def test_multi_project_entry_visible_in_each(self):
+        """One entry can relate to several repositories."""
+        for repo in ("dozo", "iceberg"):
+            out = hook.render_memory_index([self.DOC], project=repo) or ""
+            self.assertIn("shared by two repos", out, f"missing in {repo}")
+
+    def test_no_project_shows_everything(self):
+        out = hook.render_memory_index([self.DOC]) or ""
+        self.assertIn("unrelated repo fact", out)
+
+    def test_untagged_entries_never_disappear(self):
+        """An untagged entry is cross-cutting; hiding it everywhere is worse."""
+        for repo in ("dozo", "iceberg", "nonexistent"):
+            out = hook.render_memory_index([self.DOC], project=repo) or ""
+            self.assertIn("cross-cutting lesson", out, f"missing in {repo}")
+
+    def test_projects_parse_from_the_third_marker_field(self):
+        rows = hook.memory_index_entries(self.DOC)
+        by_title = {r["title"]: r for r in rows}
+        self.assertEqual(by_title["dozo specific fact"]["projects"], ["dozo"])
+        self.assertEqual(by_title["shared by two repos"]["projects"], ["dozo", "iceberg"])
+        self.assertEqual(by_title["cross-cutting lesson"]["projects"], [])

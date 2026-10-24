@@ -174,7 +174,9 @@ def memory_protocol_reminder(host: str = "generic") -> str:
             "`umem` tool with action=write-log. Do not mirror every tool call or raw transcript. "
             "Rules go to action=write-preference with --scope global (SPEC.md, every project) or "
             "--scope <repo> (spec/<repo>.md, that repo only); stable facts, confirmed decisions, "
-            "and lessons go to action=write-memory."
+            "and lessons go to action=write-memory with --project <repo> (repeatable; omit for "
+            "cross-cutting knowledge). Documents are not injected into context: search for one "
+            "when a task needs prior write-ups."
         )
     return (
         "using-memory hook reminder: consider the using-memory skill for persisted context. "
@@ -182,7 +184,9 @@ def memory_protocol_reminder(host: str = "generic") -> str:
         "concrete operations and key events to <namespace>/log/YYYY-MM-DD.jsonl via "
         "scripts/memory_tool.py write-log. Do not mirror every tool call or raw transcript. "
         "Rules go to write-preference with --scope global (SPEC.md, every project) or --scope <repo> "
-        "(spec/<repo>.md, that repo only); stable facts, confirmed decisions, and lessons go to write-memory."
+        "(spec/<repo>.md, that repo only); stable facts, confirmed decisions, and lessons go to "
+        "write-memory with --project <repo> (repeatable; omit for cross-cutting knowledge). "
+        "Documents are not injected into context: search for one when a task needs prior write-ups."
     )
 
 
@@ -233,11 +237,16 @@ def _rule_lines(doc: str) -> list[str]:
     return out
 
 
-_MEMORY_ENTRY_RE = re.compile(r"^- \[(?P<tag>[A-Za-z0-9_-]+)(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?\]\s+(?P<body>.*)$")
+_MEMORY_ENTRY_RE = re.compile(
+    r"^- \[(?P<tag>[A-Za-z0-9_-]+)"
+    r"(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?"
+    r"(?:\|(?P<projects>[^\]]*))?"
+    r"\]\s+(?P<body>.*)$"
+)
 
 
-def memory_index_entries(doc: str) -> list[dict[str, str]]:
-    """Index one MEMORY.md into `{tag, date, title}` rows.
+def memory_index_entries(doc: str) -> list[dict]:
+    """Index one MEMORY.md into `{tag, date, projects, title}` rows.
 
     MEMORY is knowledge, not rules: it is retrieved on demand, and being wrong or
     absent only costs the turn that needed it. So the index is the right
@@ -247,10 +256,13 @@ def memory_index_entries(doc: str) -> list[dict[str, str]]:
     The whole point is completeness. The previous approach (`_brief_tail`) kept
     the tail of the file and dropped the head, which on a curated decision store
     is exactly backwards: it kept the newest environment snapshots and discarded
-    the oldest product decisions. An index has no such ordering problem — all 51
-    titles fit in roughly the space six whole entries used to take.
+    the oldest product decisions. An index has no such ordering problem.
+
+    `projects` comes from the optional third marker field, `[tag|date|a,b]`.
+    An entry may relate to several repositories, and an entry with no projects
+    is cross-cutting — see `render_memory_index` for how that is filtered.
     """
-    out: list[dict[str, str]] = []
+    out: list[dict] = []
     for raw in doc.splitlines():
         m = _MEMORY_ENTRY_RE.match(raw.strip())
         if not m:
@@ -258,10 +270,12 @@ def memory_index_entries(doc: str) -> list[dict[str, str]]:
         body = re.sub(r"\s+", " ", m.group("body")).strip()
         if not body:
             continue
+        raw_projects = m.group("projects") or ""
         out.append(
             {
                 "tag": m.group("tag"),
                 "date": m.group("date") or "",
+                "projects": [p.strip().lower() for p in raw_projects.split(",") if p.strip()],
                 "title": body,
             }
         )
@@ -282,19 +296,35 @@ def _short_title(body: str, limit: int = 110) -> str:
     return text[:limit].rstrip() + "…"
 
 
-def render_memory_index(durable_memory: list[str]) -> str | None:
+def render_memory_index(durable_memory: list[str], project: str | None = None) -> str | None:
     """Render MEMORY as a title index, with an explicit invitation to search.
 
     The header matters as much as the rows: an index without instructions reads
     like an excerpt, and the model may answer from titles. It is told these are
     pointers and that bodies are one `search` away.
+
+    When a project is known, three kinds of entry are kept and the rest dropped:
+    entries tagged with that project, entries tagged with any project list that
+    contains it, and untagged entries.
+
+    Untagged entries stay because they are the cross-cutting ones — a lesson
+    about worktrees or about how documents are filed applies everywhere. The
+    filter exists to stop other repositories' specifics from crowding the
+    context, not to hide general knowledge.
+
+    With no project resolved, everything is shown: an unrecognisable working
+    directory should cost tokens, not hide decisions.
     """
-    entries: list[dict[str, str]] = []
+    wanted = (project or "").lower()
+    entries: list[dict] = []
     seen: set[str] = set()
     for doc in durable_memory:
         for entry in memory_index_entries(doc):
-            key = entry["title"].casefold()
+            key = str(entry["title"]).casefold()
             if key in seen:
+                continue
+            projects = entry.get("projects") or []
+            if wanted and projects and wanted not in projects:
                 continue
             seen.add(key)
             entries.append(entry)
@@ -962,19 +992,11 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
         durable = data.get("durable_memory")
         if isinstance(durable, list):
             memory_md = render_memory_index(
-                [entry for entry in durable if isinstance(entry, str)]
+                [entry for entry in durable if isinstance(entry, str)],
+                project=_repo_name_for(payload.get("cwd")),
             )
             if memory_md:
                 sections.append(memory_md)
-
-        catalog = data.get("docs_index")
-        if isinstance(catalog, list):
-            docs_md = render_docs_index(
-                [entry for entry in catalog if isinstance(entry, dict)],
-                project=_repo_name_for(payload.get("cwd")),
-            )
-            if docs_md:
-                sections.append(docs_md)
 
         return "\n\n---\n\n".join(sections) if sections else None
     except Exception:

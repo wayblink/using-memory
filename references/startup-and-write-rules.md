@@ -73,7 +73,7 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 - Hook-driven silent summary writes are disabled by default. Set `logging.silent_summary: true` only when a machine deliberately wants best-effort auto summaries for substantial pass-through turns.
 - Only the local primary repo receives appended JSONL log entries, at `<namespace>/log/YYYY-MM-DD.jsonl`; other namespaces are never written.
 - Rules go to `<namespace>/SPEC.md` (`--scope global`) or `<namespace>/spec/<repo>.md` (`--scope <repo>`) through `scripts/memory_tool.py write-preference`.
-- Stable facts, decisions, and lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`, and only `fact`, `decision`, and `lesson` are allowed.
+- Stable facts, decisions, and lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`, and only `fact`, `decision`, and `lesson` are allowed. Pass `--project <repo>` (repeatable) to scope an entry to the repositories it concerns; omit it for cross-cutting knowledge. Untagged entries stay visible in every repo, so tagging is what keeps other repositories' specifics out of context.
 - Unresolved issues, parking points, todo risks, and temporary context are not written to `<namespace>/MEMORY.md` by default; keep short-term content in JSONL log entries, and write structured todo or plan material to `<namespace>/docs/`.
 - Topic, workflow, wiki, SOP, todo, plan, and project context go to `<namespace>/docs/*.md` through `scripts/memory_tool.py upsert-doc`, which keeps the body and `<namespace>/docs/index.json` in sync.
 - Do not manually edit only `<namespace>/docs/*.md` while forgetting `<namespace>/docs/index.json`. The index is the loader's entry point for deciding whether to open document bodies.

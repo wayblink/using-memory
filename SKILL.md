@@ -60,7 +60,7 @@ The skill stores three orthogonal kinds of context. Pick the right one when read
 | Axis | What | File | Lifecycle |
 |---|---|---|---|
 | **Time series (operation)** | What happened, in order | `<namespace>/log/YYYY-MM-DD.jsonl` | Append-only, broad |
-| **Knowledge** | Stable facts / decisions / lessons — things you *retrieve* | `<namespace>/MEMORY.md` | Curated, narrow |
+| **Knowledge** | Stable facts / decisions / lessons — things you *retrieve*; entries may carry a project list | `<namespace>/MEMORY.md` | Curated, narrow |
 | **Rules (global)** | Constraints that apply in every project — things you *obey* | `<namespace>/SPEC.md` | Curated, very narrow |
 | **Rules (project)** | Constraints that apply only inside one repo | `<namespace>/spec/<repo>.md` | Curated, very narrow |
 
@@ -145,7 +145,7 @@ When top-level `remote.endpoint` is configured, `load`, `search`, `write-log`, `
 ### Write
 
 - `write-log` — append one JSONL log entry. Required: `--date --tag --text`. `--project` / `--topic` auto-route from cwd/files/text when omitted. Allowed tags listed in "Log JSONL Format".
-- `write-memory` — append one curated `MEMORY.md` entry. Tags limited to `fact`, `decision`, `lesson`.
+- `write-memory` — append one curated `MEMORY.md` entry. Tags limited to `fact`, `decision`, `lesson`. `--project <repo>` (repeatable) scopes the entry; omit for cross-cutting knowledge.
 - `write-preference` — append one rule entry. Required: `--text`. `--scope global` (default) writes `SPEC.md`; `--scope <repo>` writes `spec/<repo>.md`; `--scope auto` derives the current git repo.
 - `upsert-doc` — write one `docs/*.md` + update `index.json`. Required: `--doc` plus `--text` / `--text-stdin`. `--link-log '[[log:YYYY-MM-DD#L<n>]]'` merges backlinks (repeatable).
 

@@ -135,16 +135,18 @@ test("an unresolved repo shows the whole catalogue", () => {
   assert.equal(docsIndex(CATALOG, null).length, 3);
 });
 
-test("documents appear in the snapshot with a read hint", () => {
-  const raw = JSON.stringify({ docs_index: CATALOG });
-  const out = renderSnapshot(raw, "dozo") ?? "";
-  assert.match(out, /## Documents/);
-  assert.match(out, /umem load --doc/);
-  assert.match(out, /Repo guide/);
-  assert.doesNotMatch(out, /Other repo/);
+test("documents are not injected by default", () => {
+  // Documents used to be listed in the snapshot. They are now found by search:
+  // the catalogue is mostly documents this repository will never open, and a
+  // document that is worth consulting every session belongs in SPEC.md where it
+  // is a rule rather than a hint.
+  const out = renderSnapshot(JSON.stringify({ docs_index: CATALOG }), "dozo") ?? "";
+  assert.doesNotMatch(out, /## Documents/);
+  assert.doesNotMatch(out, /Repo guide/);
 });
 
-test("no catalogue means no Documents section", () => {
-  const out = renderSnapshot(JSON.stringify({ docs_index: [] }), "dozo") ?? "";
-  assert.doesNotMatch(out, /## Documents/);
+test("docsIndex still filters correctly for callers that ask for it", () => {
+  // The function remains available (e.g. /umem load --doc discovery) even
+  // though the snapshot no longer calls it.
+  assert.equal(docsIndex(CATALOG, "dozo").length, 2);
 });

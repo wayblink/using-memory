@@ -26,7 +26,9 @@ GENERIC_REMINDER = (
     "concrete operations and key events to <namespace>/log/YYYY-MM-DD.jsonl via "
     "scripts/memory_tool.py write-log. Do not mirror every tool call or raw transcript. "
     "Rules go to write-preference with --scope global (SPEC.md, every project) or --scope <repo> "
-    "(spec/<repo>.md, that repo only); stable facts, confirmed decisions, and lessons go to write-memory."
+    "(spec/<repo>.md, that repo only); stable facts, confirmed decisions, and lessons go to "
+    "write-memory with --project <repo> (repeatable; omit for cross-cutting knowledge). "
+    "Documents are not injected into context: search for one when a task needs prior write-ups."
 )
 
 
