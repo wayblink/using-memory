@@ -150,7 +150,7 @@ class SpecScopeWebTests(unittest.TestCase):
         """Which file a rule came from decides who has to obey it."""
         resp = self.client.get("/spec")
         import re
-        scopes = re.findall(r'spec-file-scope">\s*([^<]+?)\s*<', resp.text)
+        scopes = re.findall(r'entry-scope-chip[^>]*>\s*([^<]+?)\s*<', resp.text)
         # The global scope is shown by its label, not the internal "global".
         self.assertIn("All projects", scopes)
         self.assertIn("dozo", scopes)
@@ -160,15 +160,27 @@ class SpecScopeWebTests(unittest.TestCase):
         self.assertIn("4", resp.text)  # total entries
         self.assertIn("spec/dozo.md", resp.text)
 
-    def test_the_whole_file_is_editable(self):
-        """The file is the unit: its heading and preamble are part of it."""
+    def test_the_list_links_to_a_per_file_editor(self):
+        """The file is the unit, so editing opens the whole file."""
         resp = self.client.get("/spec")
-        self.assertIn('action="/spec/save"', resp.text)
-        self.assertIn("spec-file-textarea", resp.text)
-        # The heading and preamble are visible in the editor, not stripped.
+        self.assertIn('href="/spec/edit/dozo"', resp.text)
+        # The preview carries the file verbatim, heading and preamble included.
         self.assertIn("Preamble that is not a rule", resp.text)
-        # Rules are no longer rendered as separate cards.
-        self.assertNotIn('class="entry-card"', resp.text)
+
+    def test_the_editor_offers_the_whole_file(self):
+        resp = self.client.get("/spec/edit/dozo")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('action="/spec/save"', resp.text)
+        self.assertIn('name="scope" value="dozo"', resp.text)
+        self.assertIn("Constraints for dozo.", resp.text)
+        self.assertIn("dozo rule one", resp.text)
+        # Write / preview tabs, same as the docs editor.
+        self.assertIn("tab-write", resp.text)
+        self.assertIn("tab-preview", resp.text)
+
+    def test_unknown_scope_404s(self):
+        resp = self.client.get("/spec/edit/nope")
+        self.assertEqual(resp.status_code, 404)
 
 
 if __name__ == "__main__":
@@ -278,7 +290,8 @@ class SpecFileSaveTests(unittest.TestCase):
         body = (self.ns / "spec" / "dozo.md").read_text(encoding="utf-8")
         self.assertTrue(body.endswith("\n"))
 
-    def test_textarea_shows_the_file_verbatim(self):
-        resp = self.client.get("/spec?scope=dozo&mode=file")
+    def test_the_editor_shows_the_file_verbatim(self):
+        resp = self.client.get("/spec/edit/dozo")
+        self.assertEqual(resp.status_code, 200)
         self.assertIn("Constraints for the `dozo` repository.", resp.text)
         self.assertIn("- dozo rule", resp.text)

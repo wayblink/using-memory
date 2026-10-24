@@ -1824,34 +1824,55 @@ a.bar-row:hover .bar-label { color: var(--accent); }
   color: var(--text-dim, inherit);
 }
 
-/* Editable file body — the file is the unit, not the rule row. */
-.spec-file-form { margin-top: 10px; }
-.spec-file-download { margin-left: auto; font-size: 12px; }
+/* ---------------------------- spec file cards ----------------------------- */
+/* One card per file, matching the MEMORY page: head with name, scope, count and
+   actions, then a read-only preview. Editing happens on its own page so the
+   text gets the full width and the Write/Preview tabs the docs editor uses. */
 
-.spec-file-textarea,
-.spec-file-pre {
-  width: 100%;
-  box-sizing: border-box;
+.spec-file-cards { margin-top: 18px; }
+
+.spec-file-card .entry-card-head {
+  align-items: center;
+  gap: 10px;
+}
+
+.spec-file-name {
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 13px;
-  line-height: 1.65;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: inherit;
-  resize: vertical;
-  tab-size: 2;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
-.spec-file-textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--surface-active, var(--surface));
+.spec-file-count {
+  font-size: 12px;
+  color: var(--text-dim, inherit);
+  font-variant-numeric: tabular-nums;
 }
 
-.spec-file-pre {
-  margin: 0;
+.spec-file-preview {
   white-space: pre-wrap;
   word-break: break-word;
+  font-size: 13px;
+  line-height: 1.7;
+  max-height: 240px;
+  overflow: hidden;
+  position: relative;
+  color: var(--text-dim, inherit);
+}
+
+/* Fade the clip so it reads as "there is more", not as the end of the file. */
+.spec-file-preview::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 36px;
+  background: linear-gradient(to bottom, transparent, var(--surface));
+  pointer-events: none;
+}
+
+.spec-edit-title {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 22px;
 }

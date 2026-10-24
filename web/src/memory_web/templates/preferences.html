@@ -59,31 +59,28 @@
 {% if missing %}
   <div class="empty" style="margin-top:24px;">{{ t('pref.empty') }}</div>
 {% else %}
-  {% for f in files %}
-  <section class="spec-file" id="file-{{ f.scope }}">
-    <h2 class="section-label spec-file-head">
-      <span class="spec-file-name">{{ f.relative }}</span>
-      <span class="spec-file-scope">{% if f.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ f.scope }}{% endif %}</span>
-      <span class="spec-file-count">{{ f.count }}</span>
-      {% if ns_writable %}
-      <a class="link-btn spec-file-download" href="/spec/download?scope={{ f.scope }}">{{ t('common.download') }}</a>
-      {% endif %}
-    </h2>
-    {% if ns_writable %}
-    <form method="post" action="/spec/save" class="spec-file-form">
-      <input type="hidden" name="scope" value="{{ f.scope }}">
-      <textarea name="text" class="spec-file-textarea" rows="{{ [f.count + 3, 6]|max }}" spellcheck="false"
-                placeholder="{{ t('spec.file.placeholder') }}">{{ f.text }}</textarea>
-      <div class="row">
-        <button type="submit">{{ t('spec.file.save') }}</button>
-        <span class="small">{{ t('spec.file.hint') }}</span>
+  <div class="entry-cards spec-file-cards">
+    {% for f in files %}
+    <article class="entry-card spec-file-card">
+      <div class="entry-card-view">
+        <div class="entry-card-head">
+          <span class="spec-file-name">{{ f.relative }}</span>
+          <span class="entry-scope-chip{% if f.scope == 'global' %} is-global{% endif %}">
+            {% if f.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ f.scope }}{% endif %}
+          </span>
+          <span class="spec-file-count">{{ f.count }} {{ t('spec.unit.entries') }}</span>
+          <div class="entry-actions">
+            {% if ns_writable %}
+            <a class="link-btn" href="/spec/edit/{{ f.scope }}">{{ t('common.edit') }}</a>
+            {% endif %}
+            <a class="link-btn" href="/spec/download?scope={{ f.scope }}">{{ t('common.download') }}</a>
+          </div>
+        </div>
+        <div class="entry-card-text spec-file-preview">{{ f.text }}</div>
       </div>
-    </form>
-    {% else %}
-    <pre class="spec-file-pre">{{ f.text }}</pre>
-    {% endif %}
-  </section>
-  {% endfor %}
+    </article>
+    {% endfor %}
+  </div>
 {% endif %}
 {% endblock %}
 

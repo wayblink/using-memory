@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ relative }} · {{ t('brand') }}{% endblock %}
+{% block content %}
+<header class="page">
+  <h1 class="spec-edit-title">{{ relative }}</h1>
+  <div class="sub">
+    <a href="/spec?scope={{ scope }}&mode=file">{{ t('spec.file.back') }}</a>
+    <span class="entry-scope-chip{% if scope == 'global' %} is-global{% endif %}" style="margin-left:10px;">
+      {% if scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ scope }}{% endif %}
+    </span>
+  </div>
+</header>
+
+{% if error %}
+  <div class="warning">{{ error }}</div>
+{% endif %}
+
+<form class="entry-form" method="post" action="/spec/save" id="spec-form">
+  <input type="hidden" name="scope" value="{{ scope }}">
+
+  <div class="editor-tabs" id="editor-tabs">
+    <button type="button" id="tab-write" class="tab active">{{ t('doc_edit.tab.write') }}</button>
+    <button type="button" id="tab-preview" class="tab">{{ t('doc_edit.tab.preview') }}</button>
+    <span class="small" style="margin-left:auto;">{{ t('spec.file.hint') }}</span>
+  </div>
+
+  <div id="pane-write">
+    <textarea name="text" id="spec-input" rows="22" required spellcheck="false">{{ text }}</textarea>
+  </div>
+  <div id="pane-preview" class="markdown preview-pane" style="display:none;"></div>
+
+  <div class="row" style="margin-top:14px;">
+    <button type="submit">{{ t('common.save') }}</button>
+    <a href="/spec?scope={{ scope }}&mode=file" class="row" style="align-self:center;">
+      <button type="button" class="secondary">{{ t('common.cancel') }}</button>
+    </a>
+    <span class="small">{{ t('spec.file.save_hint') }}</span>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+(function () {
+  var tabWrite = document.getElementById('tab-write');
+  var tabPreview = document.getElementById('tab-preview');
+  var paneWrite = document.getElementById('pane-write');
+  var panePreview = document.getElementById('pane-preview');
+  var input = document.getElementById('spec-input');
+  if (!tabWrite || !input) return;
+
+  if (window.marked) marked.setOptions({ gfm: true, breaks: false });
+
+  function showWrite() {
+    tabWrite.classList.add('active');
+    tabPreview.classList.remove('active');
+    paneWrite.style.display = '';
+    panePreview.style.display = 'none';
+  }
+  function showPreview() {
+    tabPreview.classList.add('active');
+    tabWrite.classList.remove('active');
+    panePreview.innerHTML = window.marked ? marked.parse(input.value || '') : '';
+    paneWrite.style.display = 'none';
+    panePreview.style.display = '';
+  }
+  tabWrite.addEventListener('click', showWrite);
+  tabPreview.addEventListener('click', showPreview);
+})();
+</script>
+{% endblock %}

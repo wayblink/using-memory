@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ..adapter import MemoryToolError
@@ -75,6 +75,32 @@ def preferences_legacy(request: Request, scope: str | None = None, error: str | 
     qs = urlencode({k: v for k, v in (("scope", scope), ("error", error)) if v})
     target = f"{CANONICAL_ROUTE}?{qs}" if qs else CANONICAL_ROUTE
     return RedirectResponse(target, status_code=301)
+
+
+@router.get(f"{CANONICAL_ROUTE}/edit/{{scope}}", response_class=HTMLResponse, name="spec_edit")
+def spec_edit(request: Request, scope: str, error: str | None = None) -> HTMLResponse:
+    """Edit one spec file as a whole.
+
+    The file is the unit: its heading and its scope sentence cannot be carried
+    by individual rule rows, and a rule list cannot express a new rule that the
+    writer wants to word differently.
+    """
+    adapter = request.state.adapter
+    templates = request.app.state.templates
+    scopes = adapter.list_spec_scopes()
+    if scope not in scopes:
+        raise HTTPException(status_code=404, detail=f"unknown spec scope: {scope}")
+    return templates.TemplateResponse(
+        request,
+        "spec_edit.html",
+        {
+            "page": "spec",
+            "scope": scope,
+            "relative": adapter._spec_relative(scope),
+            "text": adapter.read_text_file(adapter._spec_relative(scope)) or "",
+            "error": error,
+        },
+    )
 
 
 @router.post(f"{CANONICAL_ROUTE}/save")
