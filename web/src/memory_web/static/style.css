@@ -1722,3 +1722,104 @@ a.bar-row:hover .bar-label { color: var(--accent); }
 
   .bar-row { grid-template-columns: minmax(0, 1fr) 72px 36px; }
 }
+
+/* ------------------------------- spec page -------------------------------- */
+/* Rules are grouped by file because a file is a scope: SPEC.md binds every
+   project, spec/<repo>.md binds one. A flat list would hide which of the two a
+   rule came from, and that is the thing that decides who must obey it. */
+
+.spec-counts {
+  margin-left: 8px;
+  color: var(--text-dim, var(--border-strong));
+}
+
+.scope-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 20px 0 8px;
+}
+
+.scope-tab {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-dim, inherit);
+  background: var(--surface);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.scope-tab:hover {
+  background: var(--surface-hover);
+  color: inherit;
+}
+
+.scope-tab.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong, inherit);
+  font-weight: 600;
+}
+
+.spec-file {
+  margin-top: 28px;
+}
+
+.spec-file-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.spec-file-name {
+  font-family: var(--mono, monospace);
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.spec-file-scope {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text-dim, inherit);
+}
+
+.spec-file-count {
+  font-size: 12px;
+  color: var(--text-dim, inherit);
+  font-variant-numeric: tabular-nums;
+}
+
+.entry-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.entry-scope-chip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent-strong, inherit);
+  white-space: nowrap;
+}
+
+/* Global rules are the common case; give them a quieter chip so the
+   project-scoped ones stand out when scanning. */
+.entry-scope-chip.is-global {
+  background: var(--bg-soft);
+  border-color: var(--border);
+  color: var(--text-dim, inherit);
+}

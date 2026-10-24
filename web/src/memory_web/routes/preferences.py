@@ -33,24 +33,36 @@ def _safe_scope(raw: str | None, valid: list[str]) -> str:
 
 
 @router.get(CANONICAL_ROUTE, response_class=HTMLResponse, name="spec")
-def spec(request: Request, scope: str | None = None, error: str | None = None) -> HTMLResponse:
+def spec(
+    request: Request,
+    scope: str | None = None,
+    mode: str = "files",
+    error: str | None = None,
+) -> HTMLResponse:
     adapter = request.state.adapter
     templates = request.app.state.templates
 
     scopes = adapter.list_spec_scopes()
     active = _safe_scope(scope, scopes)
-    entries = adapter.list_preference_entries(active)
+    files = adapter.list_all_spec_files()
+    # `mode=file` narrows to one file; the default shows every file as its own
+    # group, because a file is a scope and flattening hides who a rule binds.
+    if mode == "file":
+        files = [f for f in files if f["scope"] == active]
+    total = sum(len(f["entries"]) for f in files)
     return templates.TemplateResponse(
         request,
         "preferences.html",
         {
             "page": "spec",
-            "entries": entries,
-            "missing": not entries,
+            "files": files,
+            "total": total,
+            "missing": total == 0,
             "today": date.today().isoformat(),
             "error": error,
             "scopes": scopes,
             "active_scope": active,
+            "mode": "file" if mode == "file" else "files",
         },
     )
 

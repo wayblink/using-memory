@@ -6,6 +6,7 @@
     <h1>{{ t('pref.title') }}</h1>
     <div class="sub">
       {{ t('pref.sub') }}
+      <span class="spec-counts">{{ total }} {{ t('spec.unit.entries') }} · {{ files|length }} {{ t('spec.unit.files') }}</span>
       <a href="/spec/download?scope={{ active_scope }}" style="margin-left:8px;">{{ t('common.download') }}</a>
     </div>
   </div>
@@ -16,9 +17,10 @@
 
 {% if scopes and scopes|length > 1 %}
 <nav class="scope-tabs" aria-label="{{ t('spec.scope.label') }}">
+  <a href="/spec" class="scope-tab{% if mode == 'files' %} active{% endif %}">{{ t('spec.scope.all') }}</a>
   {% for s in scopes %}
-    <a href="/spec?scope={{ s }}"
-       class="scope-tab{% if s == active_scope %} active{% endif %}">
+    <a href="/spec?scope={{ s }}&mode=file"
+       class="scope-tab{% if mode == 'file' and s == active_scope %} active{% endif %}">
       {% if s == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ s }}{% endif %}
     </a>
   {% endfor %}
@@ -57,46 +59,61 @@
 {% if missing %}
   <div class="empty" style="margin-top:24px;">{{ t('pref.empty') }}</div>
 {% else %}
-  <h2 class="section-label">{{ t('pref.current') }} · {{ entries|length }}</h2>
-  <div class="entry-cards">
-    {% for e in entries %}
-      <article class="entry-card" data-line="{{ e.line_no }}">
-        <div class="entry-card-view">
-          <div class="entry-card-head">
-            {% if e.date %}<span class="entry-date">{{ e.date }}</span>{% endif %}
-            <div class="entry-actions">
-              {% if ns_writable %}
-              <button type="button" class="link-btn" data-action="edit">{{ t('common.edit') }}</button>
-              <form method="post" action="/spec/delete/{{ e.line_no }}" class="inline-form"
-                    data-confirm="{{ t('common.delete.confirm') }}">
-                <input type="hidden" name="scope" value="{{ active_scope }}">
-                <button type="submit" class="link-btn danger">{{ t('common.delete') }}</button>
-              </form>
-              {% endif %}
+  {% for f in files %}
+    {% if f.entries %}
+    <section class="spec-file" id="file-{{ f.scope }}">
+      <h2 class="section-label spec-file-head">
+        <span class="spec-file-name">{{ f.relative }}</span>
+        <span class="spec-file-scope">{% if f.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ f.scope }}{% endif %}</span>
+        <span class="spec-file-count">{{ f.entries|length }}</span>
+      </h2>
+      <div class="entry-cards">
+        {% for e in f.entries %}
+          <article class="entry-card" data-line="{{ e.line_no }}" data-scope="{{ e.scope }}">
+            <div class="entry-card-view">
+              <div class="entry-card-head">
+                <span class="entry-chips">
+                  {% if e.date %}<span class="entry-date">{{ e.date }}</span>{% endif %}
+                  <span class="entry-scope-chip{% if e.scope == 'global' %} is-global{% endif %}">
+                    {% if e.scope == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ e.scope }}{% endif %}
+                  </span>
+                </span>
+                <div class="entry-actions">
+                  {% if ns_writable %}
+                  <button type="button" class="link-btn" data-action="edit">{{ t('common.edit') }}</button>
+                  <form method="post" action="/spec/delete/{{ e.line_no }}" class="inline-form"
+                        data-confirm="{{ t('common.delete.confirm') }}">
+                    <input type="hidden" name="scope" value="{{ e.scope }}">
+                    <button type="submit" class="link-btn danger">{{ t('common.delete') }}</button>
+                  </form>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="entry-card-text">{{ e.text }}</div>
             </div>
-          </div>
-          <div class="entry-card-text">{{ e.text }}</div>
-        </div>
-        {% if ns_writable %}
-        <form class="entry-card-edit entry-form" method="post" action="/spec/update/{{ e.line_no }}" hidden>
-          <input type="hidden" name="scope" value="{{ active_scope }}">
-          <div class="row">
-            <label>{{ t('memory.form.date') }}
-              <input type="date" name="when" value="{{ e.date }}" required>
-            </label>
-          </div>
-          <label class="full">{{ t('pref.form.text') }}
-            <textarea name="text" rows="3" required>{{ e.text }}</textarea>
-          </label>
-          <div class="row">
-            <button type="submit">{{ t('common.save') }}</button>
-            <button type="button" class="secondary" data-action="cancel">{{ t('common.cancel') }}</button>
-          </div>
-        </form>
-        {% endif %}
-      </article>
-    {% endfor %}
-  </div>
+            {% if ns_writable %}
+            <form class="entry-card-edit entry-form" method="post" action="/spec/update/{{ e.line_no }}" hidden>
+              <input type="hidden" name="scope" value="{{ e.scope }}">
+              <div class="row">
+                <label>{{ t('memory.form.date') }}
+                  <input type="date" name="when" value="{{ e.date }}" required>
+                </label>
+              </div>
+              <label class="full">{{ t('pref.form.text') }}
+                <textarea name="text" rows="3" required>{{ e.text }}</textarea>
+              </label>
+              <div class="row">
+                <button type="submit">{{ t('common.save') }}</button>
+                <button type="button" class="secondary" data-action="cancel">{{ t('common.cancel') }}</button>
+              </div>
+            </form>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  {% endfor %}
 {% endif %}
 {% endblock %}
 

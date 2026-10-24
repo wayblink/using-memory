@@ -582,6 +582,38 @@ class MemoryAdapter:
             entry["scope"] = scope
         return entries
 
+    def list_all_spec_files(self) -> list[dict]:
+        """Every spec file, in the order the loader applies them, with its rules.
+
+        The page groups by file because a file *is* a scope: SPEC.md applies to
+        every project, spec/<repo>.md applies only inside that repo. Flattening
+        them into one list hides that, and an entry's file is the thing that
+        decides who has to obey it.
+
+        Each row carries `scope`, `relative`, `writable` and `entries`. A file
+        that cannot be read is skipped rather than failing the page — a broken
+        spec/ file should not make the whole view unreachable.
+        """
+        files: list[dict] = []
+        for scope in self.list_spec_scopes():
+            relative = self._spec_relative(scope)
+            try:
+                entries = self._parse_entries(relative, _PREF_LINE_RE, with_date=True)
+            except Exception:
+                continue
+            for entry in entries:
+                entry["scope"] = scope
+                entry["relative"] = relative
+            files.append(
+                {
+                    "scope": scope,
+                    "relative": relative,
+                    "exists": self.namespace_file_path(relative) is not None,
+                    "entries": entries,
+                }
+            )
+        return files
+
     def list_spec_scopes(self) -> list[str]:
         """Every scope that has a file, global first.
 

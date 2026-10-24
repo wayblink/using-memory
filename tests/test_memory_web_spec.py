@@ -74,16 +74,19 @@ class SpecScopeWebTests(unittest.TestCase):
         self.client.close()
         self.tmp.cleanup()
 
-    def test_default_page_shows_global_rules(self):
+    def test_default_page_groups_every_file(self):
+        """A file is a scope; the default view shows them all, separately."""
         resp = self.client.get("/spec")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("global rule one", resp.text)
         self.assertIn("global rule two", resp.text)
-        # A project rule must not leak into the global view.
-        self.assertNotIn("dozo rule one", resp.text)
+        self.assertIn("dozo rule one", resp.text)
+        # Grouped by file, not flattened into one list.
+        self.assertIn("SPEC.md", resp.text)
+        self.assertIn("spec/dozo.md", resp.text)
 
-    def test_project_scope_shows_only_its_own_rules(self):
-        resp = self.client.get("/spec?scope=dozo")
+    def test_file_mode_narrows_to_one_file(self):
+        resp = self.client.get("/spec?scope=dozo&mode=file")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("dozo rule one", resp.text)
         self.assertNotIn("global rule one", resp.text)
@@ -91,8 +94,10 @@ class SpecScopeWebTests(unittest.TestCase):
     def test_scope_tabs_are_rendered(self):
         resp = self.client.get("/spec")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn('href="/spec?scope=global"', resp.text)
-        self.assertIn('href="/spec?scope=dozo"', resp.text)
+        self.assertIn('href="/spec?scope=global&mode=file"', resp.text)
+        self.assertIn('href="/spec?scope=dozo&mode=file"', resp.text)
+        # An unfiltered entry so the grouped view is one click away.
+        self.assertIn('<a href="/spec"', resp.text)
 
     def test_append_to_project_scope_writes_that_file(self):
         resp = self.client.post(
@@ -140,6 +145,20 @@ class SpecScopeWebTests(unittest.TestCase):
         resp = self.client.get("/preferences", follow_redirects=False)
         self.assertEqual(resp.status_code, 301)
         self.assertTrue(resp.headers["location"].startswith("/spec"))
+
+    def test_each_card_shows_its_scope(self):
+        """Which file a rule came from decides who has to obey it."""
+        resp = self.client.get("/spec")
+        import re
+        chips = re.findall(r'entry-scope-chip[^"]*">\s*([^<]+?)\s*<', resp.text)
+        # The global scope is shown by its label, not the internal "global".
+        self.assertIn("All projects", chips)
+        self.assertIn("dozo", chips)
+
+    def test_page_reports_file_and_entry_counts(self):
+        resp = self.client.get("/spec")
+        self.assertIn("4", resp.text)  # total entries
+        self.assertIn("spec/dozo.md", resp.text)
 
     def test_preamble_is_not_offered_as_an_editable_rule(self):
         resp = self.client.get("/spec")
