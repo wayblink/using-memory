@@ -85,6 +85,8 @@ export interface UmemParams {
   files?: string[] | undefined;
   project?: string | undefined;
   topic?: string | undefined;
+  /** write-preference: 'global' (SPEC.md), a repo name (spec/<repo>.md), or 'auto'. */
+  scope?: string | undefined;
   confidence?: number | undefined;
   source?: string | undefined;
   /** load: the log window. */
@@ -190,6 +192,7 @@ export function buildArgs(params: UmemParams, defaults?: ArgDefaults): string[] 
     case "write-preference":
       flag("--date", params.date);
       flag("--text", params.text);
+      flag("--scope", params.scope);
       break;
     case "upsert-doc":
       flag("--doc", params.doc);

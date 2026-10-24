@@ -178,7 +178,8 @@ def memory_protocol_reminder(host: str = "generic") -> str:
             "Load memory only when it can change the answer. For writes, default toward recording "
             "concrete operations and key events in <namespace>/log/YYYY-MM-DD.jsonl by calling the "
             "`umem` tool with action=write-log. Do not mirror every tool call or raw transcript. "
-            "Stable preferences go to action=write-preference; stable facts, confirmed decisions, "
+            "Rules go to action=write-preference with --scope global (SPEC.md, every project) or "
+            "--scope <repo> (spec/<repo>.md, that repo only); stable facts, confirmed decisions, "
             "and lessons go to action=write-memory."
         )
     return (
@@ -186,8 +187,8 @@ def memory_protocol_reminder(host: str = "generic") -> str:
         "Load memory only when it can change the answer. For writes, default toward recording "
         "concrete operations and key events to <namespace>/log/YYYY-MM-DD.jsonl via "
         "scripts/memory_tool.py write-log. Do not mirror every tool call or raw transcript. "
-        "Stable preferences go to write-preference; stable facts, confirmed decisions, and lessons "
-        "go to write-memory."
+        "Rules go to write-preference with --scope global (SPEC.md, every project) or --scope <repo> "
+        "(spec/<repo>.md, that repo only); stable facts, confirmed decisions, and lessons go to write-memory."
     )
 
 
@@ -217,7 +218,7 @@ def _score_preference_line(line: str) -> int:
 
 
 def render_preference_summary(preferences: list[str], max_items: int = 4) -> str | None:
-    """Distill loaded PREFERENCES.md content into a compact SessionStart block."""
+    """Distill loaded SPEC.md content into a compact SessionStart block."""
     candidates: list[tuple[int, int, str]] = []
     seen: set[str] = set()
     ordinal = 0

@@ -25,8 +25,8 @@ GENERIC_REMINDER = (
     "Load memory only when it can change the answer. For writes, default toward recording "
     "concrete operations and key events to <namespace>/log/YYYY-MM-DD.jsonl via "
     "scripts/memory_tool.py write-log. Do not mirror every tool call or raw transcript. "
-    "Stable preferences go to write-preference; stable facts, confirmed decisions, and lessons "
-    "go to write-memory."
+    "Rules go to write-preference with --scope global (SPEC.md, every project) or --scope <repo> "
+    "(spec/<repo>.md, that repo only); stable facts, confirmed decisions, and lessons go to write-memory."
 )
 
 

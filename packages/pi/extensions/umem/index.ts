@@ -387,6 +387,12 @@ export default async function umemExtension(pi: ExtensionAPI): Promise<void> {
         }),
       ),
       project: Type.Optional(Type.String({ description: "Project axis slug, e.g. using-memory" })),
+      scope: Type.Optional(
+        Type.String({
+          description:
+            "write-preference only: 'global' (default) writes SPEC.md and applies to every project; a repo name writes spec/<repo>.md and applies only inside that repository; 'auto' derives the current git repo.",
+        }),
+      ),
       topic: Type.Optional(Type.String({ description: "Topic axis slug, e.g. hooks" })),
       confidence: Type.Optional(
         Type.Integer({ minimum: 1, maximum: 10, description: "Optional 1-10 confidence" }),

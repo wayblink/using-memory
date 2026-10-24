@@ -33,6 +33,25 @@ test("without defaults, no --config or --date is invented", () => {
   ]);
 });
 
+test("write-preference forwards --scope so a rule can target one repo", () => {
+  // Scope decides which file the rule lands in, so dropping it would silently
+  // write every repo-specific rule into the global SPEC.md.
+  assert.deepEqual(buildArgs({ action: "write-preference", text: "r", scope: "dozo" }), [
+    "write-preference",
+    "--text", "r",
+    "--scope", "dozo",
+    "--json",
+  ]);
+});
+
+test("write-preference omits --scope when the caller does not set one", () => {
+  assert.deepEqual(buildArgs({ action: "write-preference", text: "r" }), [
+    "write-preference",
+    "--text", "r",
+    "--json",
+  ]);
+});
+
 test("defaults inject the config path and today's date for the write verbs", () => {
   const argv = buildArgs(
     { action: "write-log", tag: "commit", text: "body" },

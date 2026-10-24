@@ -4,7 +4,7 @@
 
 ## Why an extension and not just a skill
 
-A skill alone would put `SKILL.md`'s name and description in the system prompt and leave the body unloaded until the model decided to read it. The routing rules that decide *which file a write goes to* (`PREFERENCES.md` vs `MEMORY.md` vs `log/*.jsonl`) are load-bearing on every turn, so they live in the tool's `promptGuidelines` instead — see `packages/pi/extensions/umem/guidance.ts`.
+A skill alone would put `SKILL.md`'s name and description in the system prompt and leave the body unloaded until the model decided to read it. The routing rules that decide *which file a write goes to* (`SPEC.md` / `spec/<repo>.md` vs `MEMORY.md` vs `log/*.jsonl`) are load-bearing on every turn, so they live in the tool's `promptGuidelines` instead — see `packages/pi/extensions/umem/guidance.ts`.
 
 The extension is also what carries the hooks. Pi has no `settings.json` hook table to edit: an extension registers its own handlers with `pi.on(...)`.
 

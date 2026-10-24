@@ -17,7 +17,7 @@ The desired shape is:
 
 - A Git/Markdown/JSONL storage layout scoped by namespace.
 - Distinct data dimensions:
-  - `PREFERENCES.md` for stable user preferences.
+  - `SPEC.md` (and `spec/<repo>.md`) for rules the agent must obey.
   - `MEMORY.md` for curated durable facts, decisions, and lessons.
   - `docs/` plus `docs/index.json` for structured topic documents.
   - `log/YYYY-MM-DD.jsonl` for operation continuity.

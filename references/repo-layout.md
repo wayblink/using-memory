@@ -10,7 +10,7 @@ memory-repo/
     README.md
     SCHEMA.md
     MEMORY.md
-    PREFERENCES.md
+    SPEC.md
     STATS.json
     docs/
       index.json
@@ -37,7 +37,8 @@ This tree keeps every memory file under one namespace directory. The repo root i
 - `<namespace>/README.md`: user-facing overview, repo migration notes, and sync guidance.
 - `<namespace>/SCHEMA.md`: structure conventions, version, write boundaries, and tag rules for the skill and maintainers.
 - `<namespace>/MEMORY.md`: stable facts, verified decisions, and key lessons only; it no longer acts as a topic document index.
-- `<namespace>/PREFERENCES.md`: communication and working preferences that help agents adjust tone, pace, and format.
+- `<namespace>/SPEC.md`: rules and constraints that apply to every project in this namespace. Loaded whole on every session.
+- `<namespace>/spec/<repo>.md`: rules that apply only inside one repository, keyed by its git repo name. Loaded only when working there.
 - `<namespace>/log/`: newline-delimited JSON (one entry per line), optimized for append-only context, search, and structured queries. Legacy `.md` log files may exist but are no longer written to.
 - `<namespace>/sessions/index.jsonl`: optional cold session pointer index written only when `session_archive.enabled: true`. Each line points at a host transcript path plus minimal metadata; it is never auto-loaded into SessionStart context.
 - `<namespace>/docs/`: on-demand indexed documents such as `workflow.md`, `coding.md`, and other core knowledge.

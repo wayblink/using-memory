@@ -18,7 +18,7 @@ description: Memory protocol for persisted cross-session context and operation c
   - The assistant would otherwise guess about past user choices, project direction, or saved context.
 - Skip this skill for greetings, one-off questions, simple shell commands, isolated coding tasks with enough local context, generic explanations, or tasks where reading memory would not change the answer.
 - When memory loading is needed, load order is strict and must happen in this exact sequence:
-  1. Load all configured `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md` files across configured repos.
+  1. Load all configured `<namespace>/SPEC.md` (plus `<namespace>/spec/<repo>.md` for the current repo) and `<namespace>/MEMORY.md` files across configured repos.
   2. Browse each configured repo's `<namespace>/docs/index.json`; when the user task matches indexed metadata, load only the matching `<namespace>/docs/*.md` files.
   3. Then load only the local primary repo's configured namespace entries at `<namespace>/log/YYYY-MM-DD.jsonl`. The per-machine `<namespace>/STATS.json` accounting file is never auto-loaded.
 - Only the local primary repo is writable by default.
@@ -60,10 +60,18 @@ The skill stores three orthogonal kinds of context. Pick the right one when read
 | Axis | What | File | Lifecycle |
 |---|---|---|---|
 | **Time series (operation)** | What happened, in order | `<namespace>/log/YYYY-MM-DD.jsonl` | Append-only, broad |
-| **Cross-project knowledge** | Stable facts / decisions / lessons | `<namespace>/MEMORY.md` | Curated, narrow |
-| **Stable preferences** | User-level habits / rules | `<namespace>/PREFERENCES.md` | Curated, very narrow |
+| **Knowledge** | Stable facts / decisions / lessons — things you *retrieve* | `<namespace>/MEMORY.md` | Curated, narrow |
+| **Rules (global)** | Constraints that apply in every project — things you *obey* | `<namespace>/SPEC.md` | Curated, very narrow |
+| **Rules (project)** | Constraints that apply only inside one repo | `<namespace>/spec/<repo>.md` | Curated, very narrow |
 
 The log answers "what did I do". Project structure snapshots (anatomy) have been split out into a separate skill, `using-anatomy`; see that skill for the project-snapshot dimension.
+
+The distinction between the last three is **when they must take effect**, not what they are about:
+
+- **A rule** has to be in effect before the question arises. Indexing it away, truncating it, or resolving it only when someone asks all fail silently — the agent simply behaves as if the rule does not exist, with no error to notice. `SPEC.md` and `spec/<repo>.md` are therefore delivered whole, and scoping exists to keep them short enough to deliver whole.
+- **Knowledge** is retrieved on demand. It describes the world, and being wrong or absent only costs the turn that needed it. `MEMORY.md` can be indexed and truncated; a title list is a fair index because the agent knows to open it.
+
+The same axis decides which file a write belongs in: if getting it wrong would corrupt every turn, it is a rule; if it would only mislead one turn, it is knowledge. A repo-specific rule written to `SPEC.md` makes every other project pay for it on every turn.
 
 ## Log JSONL Format
 
@@ -138,7 +146,7 @@ When top-level `remote.endpoint` is configured, `load`, `search`, `write-log`, `
 
 - `write-log` — append one JSONL log entry. Required: `--date --tag --text`. `--project` / `--topic` auto-route from cwd/files/text when omitted. Allowed tags listed in "Log JSONL Format".
 - `write-memory` — append one curated `MEMORY.md` entry. Tags limited to `fact`, `decision`, `lesson`.
-- `write-preference` — append one stable `PREFERENCES.md` entry. Required: `--text`.
+- `write-preference` — append one rule entry. Required: `--text`. `--scope global` (default) writes `SPEC.md`; `--scope <repo>` writes `spec/<repo>.md`; `--scope auto` derives the current git repo.
 - `upsert-doc` — write one `docs/*.md` + update `index.json`. Required: `--doc` plus `--text` / `--text-stdin`. `--link-log '[[log:YYYY-MM-DD#L<n>]]'` merges backlinks (repeatable).
 
 ## Distillation Pipeline
@@ -212,7 +220,7 @@ Routing:
 - When consolidating multiple log entries into one doc (context-heavy synthesis, ~5–30 KB of source material), delegate to a subagent via the Agent tool (`subagent_type=general-purpose`). The subagent's isolated context window keeps the main session lean and returns only the final slug + a one-sentence summary.
 - Stable facts, confirmed decisions, and durable lessons go to `<namespace>/MEMORY.md` through `umem write-memory`.
 - Open issues, parking points, and unresolved risks stay out of `<namespace>/MEMORY.md` unless they become confirmed decisions, durable lessons, or stable facts.
-- Stable user preferences go to `<namespace>/PREFERENCES.md` through `umem write-preference`.
+- Rules go to `<namespace>/SPEC.md` (scope `global`, every project) or `<namespace>/spec/<repo>.md` (scope `<repo>`, that repository only) through `umem write-preference`. A rule is not a preference: it is a constraint the agent must follow, so put it in exactly one scope — a repo-specific rule in `SPEC.md` makes every other project pay for it on every turn.
 
 Never write:
 
