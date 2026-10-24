@@ -29,7 +29,7 @@ Skip memory for greetings, one-off questions, simple shell commands, isolated co
 - The canonical log path is fixed at `<namespace>/log/YYYY-MM-DD.jsonl`; today and yesterday are read from `<namespace>/log/*.jsonl` in the local primary repo.
 - Explicit `load --log-from/--log-to` or `load --log-days` may expand the primary log read window; without those flags, only today and yesterday are read.
 - Explicit `load --log-query` parses `<namespace>/log/*.jsonl` line by line and filters entries by the `text` field; only matching entries appear in `log_entries` and loaded log source content.
-- When retrieval is needed, the read order is strict: first load every repo's `<namespace>/PREFERENCES.md` and `<namespace>/MEMORY.md`, then browse every repo's `<namespace>/docs/index.json`, load matching `<namespace>/docs/*.md` by indexed metadata, and finally read the local primary namespace log window. The per-machine `<namespace>/STATS.json` accounting file is never part of this snapshot.
+- When retrieval is needed, the read order is strict: first load every repo's `<namespace>/SPEC.md` (plus `<namespace>/spec/<repo>.md` when the current repo has one) and `<namespace>/MEMORY.md`, then browse every repo's `<namespace>/docs/index.json`, load matching `<namespace>/docs/*.md` by indexed metadata, and finally read the local primary namespace log window. The per-machine `<namespace>/STATS.json` accounting file is never part of this snapshot.
 - Log entries from other namespaces are ignored by default. The primary repo's configured namespace is the place for today's writable and readable context.
 
 ## Session Snapshot
@@ -72,8 +72,8 @@ Each line in `<namespace>/log/YYYY-MM-DD.jsonl` is a JSON object:
 - Simple reads, pure browsing, repeated identical calls, and raw temporary output do not need one entry per tool call unless they produced a decision, diagnosis, verification result, or state change.
 - Hook-driven silent summary writes are disabled by default. Set `logging.silent_summary: true` only when a machine deliberately wants best-effort auto summaries for substantial pass-through turns.
 - Only the local primary repo receives appended JSONL log entries, at `<namespace>/log/YYYY-MM-DD.jsonl`; other namespaces are never written.
-- Stable preferences go to `<namespace>/PREFERENCES.md` through `scripts/memory_tool.py write-preference`.
-- Stable facts, decisions, and lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`, and only `fact`, `decision`, and `lesson` are allowed.
+- Rules go to `<namespace>/SPEC.md` (`--scope global`) or `<namespace>/spec/<repo>.md` (`--scope <repo>`) through `scripts/memory_tool.py write-preference`.
+- Stable facts, decisions, and lessons go to `<namespace>/MEMORY.md` through `scripts/memory_tool.py write-memory`, and only `fact`, `decision`, and `lesson` are allowed. Pass `--project <repo>` (repeatable) to scope an entry to the repositories it concerns; omit it for cross-cutting knowledge. Untagged entries stay visible in every repo, so tagging is what keeps other repositories' specifics out of context.
 - Unresolved issues, parking points, todo risks, and temporary context are not written to `<namespace>/MEMORY.md` by default; keep short-term content in JSONL log entries, and write structured todo or plan material to `<namespace>/docs/`.
 - Topic, workflow, wiki, SOP, todo, plan, and project context go to `<namespace>/docs/*.md` through `scripts/memory_tool.py upsert-doc`, which keeps the body and `<namespace>/docs/index.json` in sync.
 - Do not manually edit only `<namespace>/docs/*.md` while forgetting `<namespace>/docs/index.json`. The index is the loader's entry point for deciding whether to open document bodies.

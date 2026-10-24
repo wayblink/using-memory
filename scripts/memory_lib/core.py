@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
@@ -157,6 +158,36 @@ def namespace_from_root(root_cfg: dict) -> str:
     return namespace
 def namespace_root(root: Path, namespace: str) -> Path:
     return root / namespace
+def derive_repo_name(start: Path | None = None) -> str | None:
+    """Return the enclosing git repository's directory name, or None.
+
+    Spec scoping is by repository, not by working directory: a spec written for
+    `dozo` must still apply when the agent is three subdirectories deep. Using
+    the cwd basename would silently lose the project spec there and load a
+    nonexistent one, which fails quietly — the worst possible failure mode for a
+    rule file.
+
+    Falls back to the caller's own fallback when the path is not in a git repo;
+    this function does not guess.
+    """
+    base = Path(start) if start else Path.cwd()
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(base), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    top = out.stdout.strip()
+    if not top:
+        return None
+    return Path(top).name or None
+
+
 def read_source(path: Path, source_type: str, role: str, machine_id: str = "") -> dict:
     source = {
         "path": str(path),

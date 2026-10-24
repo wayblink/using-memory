@@ -100,6 +100,7 @@ memory_roots:
 {refs}defaults:
   read_today: true
   read_yesterday: true
+  log_days: 0
   load_docs_on_demand: true
 """,
             encoding="utf-8",
@@ -121,6 +122,7 @@ remote:
 defaults:
   read_today: true
   read_yesterday: true
+  log_days: 0
   load_docs_on_demand: true
 """,
             encoding="utf-8",
@@ -349,6 +351,7 @@ memory_roots:
 defaults:
   read_today: true
   read_yesterday: true
+  log_days: 0
   load_docs_on_demand: true
 """,
                 encoding="utf-8",
@@ -849,11 +852,11 @@ memory_roots:
             )
 
             self.assertEqual(Path(memory_result["path"]), primary / "shaipower" / "MEMORY.md")
-            self.assertEqual(Path(preference_result["path"]), primary / "shaipower" / "PREFERENCES.md")
+            self.assertEqual(Path(preference_result["path"]), primary / "shaipower" / "SPEC.md")
             self.assertEqual(Path(doc_result["path"]), primary / "shaipower" / "docs" / "plans" / "namespace-design.md")
             self.assertEqual(Path(doc_result["index_path"]), primary / "shaipower" / "docs" / "index.json")
             self.assertFalse((primary / "MEMORY.md").exists())
-            self.assertFalse((primary / "PREFERENCES.md").exists())
+            self.assertFalse((primary / "SPEC.md").exists())
             self.assertFalse((primary / "docs" / "plans" / "namespace-design.md").exists())
 
     def test_write_log_records_level(self):
@@ -993,8 +996,8 @@ memory_roots:
             )
 
             self.assertTrue(result["changed"])
-            self.assertEqual(Path(result["path"]), self.namespace_root(primary) / "PREFERENCES.md")
-            primary_text = (self.namespace_root(primary) / "PREFERENCES.md").read_text(encoding="utf-8")
+            self.assertEqual(Path(result["path"]), self.namespace_root(primary) / "SPEC.md")
+            primary_text = (self.namespace_root(primary) / "SPEC.md").read_text(encoding="utf-8")
             self.assertRegex(primary_text, r"- \[\d{4}-\d{2}-\d{2}\] prefer concise Chinese replies")
             self.assertEqual((self.namespace_root(reference) / "PREFERENCES.md").read_text(encoding="utf-8"), reference_before)
 
@@ -1793,7 +1796,7 @@ class MemorySetupTests(unittest.TestCase):
             self.assertEqual(result["git_action"], "initialized")
             self.assertTrue((memory_root / ".git").is_dir())
             self.assertTrue((memory_root / "work" / "MEMORY.md").exists())
-            self.assertTrue((memory_root / "work" / "PREFERENCES.md").exists())
+            self.assertTrue((memory_root / "work" / "SPEC.md").exists())
             self.assertTrue((memory_root / "work" / "docs" / "index.json").exists())
             self.assertTrue(result["next_steps"], "local setup should remind users to add a remote later")
             text = config.read_text(encoding="utf-8")
@@ -1839,7 +1842,7 @@ class MemorySetupTests(unittest.TestCase):
             )
             # Setup seeds the namespace baseline files; local/* was dropped in V2.3.
             self.assertTrue((memory_root / "main" / "MEMORY.md").exists())
-            self.assertTrue((memory_root / "main" / "PREFERENCES.md").exists())
+            self.assertTrue((memory_root / "main" / "SPEC.md").exists())
             self.assertTrue((memory_root / "main" / "docs" / "index.json").exists())
             self.assertFalse((memory_root / "main" / "local").exists())
             self.assertIn("remote:", config.read_text(encoding="utf-8"))

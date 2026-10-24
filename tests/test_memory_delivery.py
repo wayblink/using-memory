@@ -1,0 +1,345 @@
+"""MEMORY delivery: every saved entry is visible as a title.
+
+The bug this covers was silent twice over. On Claude and Codex the MEMORY list
+was loaded and then discarded before rendering, so the model never saw the saved
+decisions at all. On Pi it was tail-kept, which on a curated decision store is
+backwards: it retained the newest environment snapshots and dropped the oldest
+product decisions (51 entries in, 6 out; the 45 dropped ones dated from April to
+September).
+
+Neither failure raised an error. The model simply answered from general
+reasoning, and nothing in the session showed that a body of knowledge existed.
+"""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+from hooks import memory_hook_common as hook  # noqa: E402
+
+MEMORY_DOC = """# Memory
+
+- [fact] Memory repos center on Git so they sync and audit across machines.
+- [decision|2026-04-13] Record daily decisions first, then settle them in MEMORY.md.
+- [decision|2026-09-29] ## Knowledge git engine choice
+
+The Knowledge module uses dulwich as an in-process git engine.
+
+- [lesson|2026-10-16] **macOS app icon standard and the Tauri icon pipeline**
+- [decision|2026-10-23] ## Working rule: isolate each card in a worktree
+"""
+
+
+def index_rows(markdown: str) -> list[str]:
+    return [line for line in markdown.splitlines() if line.startswith("- [")]
+
+
+class MemoryIndexTests(unittest.TestCase):
+    def test_every_entry_appears(self):
+        """The head of the file must not be dropped in favour of the tail."""
+        out = hook.render_memory_index([MEMORY_DOC])
+        self.assertIsNotNone(out)
+        rows = index_rows(out)
+        self.assertEqual(len(rows), 5)
+        # The oldest entry is the one the tail-keeping approach discarded.
+        self.assertIn("center on Git", out)
+        self.assertIn("Knowledge git engine choice", out)
+
+    def test_entries_are_titles_not_bodies(self):
+        """Bodies stay out of the snapshot; only the first clause travels."""
+        out = hook.render_memory_index([MEMORY_DOC])
+        # The multi-paragraph body of the dulwich entry must not be included.
+        self.assertNotIn("in-process git engine", out)
+
+    def test_newest_first(self):
+        out = hook.render_memory_index([MEMORY_DOC])
+        rows = index_rows(out)
+        self.assertIn("2026-10-23", rows[0])
+
+    def test_header_invites_a_search(self):
+        """An index without instructions reads like an excerpt."""
+        out = hook.render_memory_index([MEMORY_DOC])
+        self.assertIn("index", out.lower())
+        self.assertIn("umem search", out)
+        self.assertIn("Do not guess", out)
+
+    def test_tag_and_date_are_kept(self):
+        out = hook.render_memory_index([MEMORY_DOC])
+        self.assertIn("[decision 2026-04-13]", out)
+        self.assertIn("[lesson 2026-10-16]", out)
+        # An entry with no date still renders, without a stray separator.
+        self.assertIn("[fact]", out)
+
+    def test_duplicates_across_roots_collapse(self):
+        doc = "- [fact|2026-01-01] same entry\n"
+        out = hook.render_memory_index([doc, doc])
+        self.assertEqual(index_rows(out or "").__len__(), 1)
+
+    def test_empty_input_renders_nothing(self):
+        self.assertIsNone(hook.render_memory_index([]))
+        self.assertIsNone(hook.render_memory_index(["# Memory\n\nno entries\n"]))
+
+    def test_heading_markup_is_stripped(self):
+        out = hook.render_memory_index(["- [decision|2026-01-01] ## Some Title\n"])
+        self.assertIn("Some Title", out or "")
+        self.assertNotIn("## Some Title", out or "")
+
+
+class SessionStartSnapshotTests(unittest.TestCase):
+    """The Claude/Codex path must render MEMORY, not just SPEC."""
+
+    def test_snapshot_includes_memory_and_spec(self):
+        import json
+        import tempfile
+        from unittest import mock
+
+        payload = {
+            "preferences": ["# Spec\n\n- always reply in Simplified Chinese\n"],
+            "durable_memory": [MEMORY_DOC],
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("version: 1\nmemory_roots:\n  - path: /tmp\n")
+            cfg = fh.name
+        try:
+            completed = mock.Mock(returncode=0, stdout=json.dumps(payload))
+            with mock.patch.object(hook, "_resolve_memory_config", return_value=cfg), \
+                 mock.patch.object(hook.subprocess, "run", return_value=completed), \
+                 mock.patch.object(hook, "_repo_name_for", return_value=None):
+                out = hook.fetch_session_start_snapshot({})
+        finally:
+            Path(cfg).unlink(missing_ok=True)
+
+        self.assertIsNotNone(out)
+        self.assertIn("## Active spec", out)
+        # MEMORY is a whitelist now: without a resolvable repo, everything shows.
+        self.assertIn("## Long-term memory", out)
+        self.assertEqual(len(index_rows(out.split("## Long-term memory")[1])), 5)
+
+    def test_missing_memory_does_not_remove_the_spec(self):
+        import json
+        import tempfile
+        from unittest import mock
+
+        payload = {"preferences": ["# Spec\n\n- a rule\n"]}
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("version: 1\nmemory_roots:\n  - path: /tmp\n")
+            cfg = fh.name
+        try:
+            completed = mock.Mock(returncode=0, stdout=json.dumps(payload))
+            with mock.patch.object(hook, "_resolve_memory_config", return_value=cfg), \
+                 mock.patch.object(hook.subprocess, "run", return_value=completed):
+                out = hook.fetch_session_start_snapshot({})
+        finally:
+            Path(cfg).unlink(missing_ok=True)
+
+        self.assertIn("## Active spec", out or "")
+        self.assertNotIn("## Long-term memory", out or "")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+CATALOG = [
+    {"path": "a.md", "title": "Repo guide", "type": "wiki", "modified": "2026-10-01",
+     "projects": ["dozo"]},
+    {"path": "b.md", "title": "Other repo", "type": "SOP", "modified": "2026-10-02",
+     "projects": ["iceberg"]},
+    {"path": "c.md", "title": "Shared reference", "type": "wiki", "modified": "2026-10-03",
+     "projects": []},
+    {"path": "d.md", "title": "Both repos", "type": "wiki", "modified": "2026-10-04",
+     "projects": ["dozo", "iceberg"]},
+]
+
+
+class DocsIndexTests(unittest.TestCase):
+    def test_filters_to_the_current_repo_and_keeps_shared_docs(self):
+        out = hook.render_docs_index(CATALOG, project="dozo")
+        self.assertIsNotNone(out)
+        self.assertIn("Repo guide", out)
+        self.assertIn("Both repos", out)
+        self.assertIn("Shared reference", out)
+        self.assertNotIn("Other repo", out)
+
+    def test_no_project_shows_everything(self):
+        """An unresolvable cwd costs tokens; hiding a document costs an answer."""
+        out = hook.render_docs_index(CATALOG, project=None)
+        self.assertIn("Repo guide", out or "")
+        self.assertIn("Other repo", out or "")
+
+    def test_titles_only_with_a_read_hint(self):
+        out = hook.render_docs_index(CATALOG, project="dozo") or ""
+        self.assertIn("umem load --doc", out)
+        self.assertIn("Do not assume", out)
+
+    def test_newest_first(self):
+        out = hook.render_docs_index(CATALOG, project="dozo") or ""
+        rows = [line for line in out.splitlines() if line.startswith("- [")]
+        self.assertIn("Both repos", rows[0])
+
+    def test_unmatched_repo_still_gets_the_shared_docs(self):
+        """Shared documents apply anywhere; only other repos' docs are dropped."""
+        out = hook.render_docs_index(CATALOG, project="nonexistent-repo") or ""
+        self.assertIn("Shared reference", out)
+        self.assertNotIn("Repo guide", out)
+        self.assertNotIn("Other repo", out)
+
+    def test_empty_catalogue_renders_nothing(self):
+        self.assertIsNone(hook.render_docs_index([]))
+        self.assertIsNone(hook.render_docs_index([CATALOG[0]], project="nonexistent-repo"))
+
+    def test_repo_name_resolution_uses_the_repository_root(self):
+        import subprocess as sp
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "my-project"
+            nested = root / "src" / "api"
+            nested.mkdir(parents=True)
+            sp.run(["git", "init", "-q", str(root)], check=True)
+            self.assertEqual(hook._repo_name_for(str(nested)), "my-project")
+            self.assertIsNone(hook._repo_name_for(tmp))
+
+
+class MemoryProjectFilterTests(unittest.TestCase):
+    """MEMORY entries carry an optional project list, and may carry several."""
+
+    DOC = (
+        "# Memory\n\n"
+        "- [fact|2026-01-01|dozo] dozo specific fact\n"
+        "- [decision|2026-01-02|dozo,iceberg] shared by two repos\n"
+        "- [lesson|2026-01-03] cross-cutting lesson\n"
+        "- [fact|2026-01-04|other-repo] unrelated repo fact\n"
+    )
+
+    def test_project_scoping_is_a_whitelist(self):
+        """Only entries naming this repository; untagged ones are NOT shown."""
+        out = hook.render_memory_index([self.DOC], project="dozo") or ""
+        self.assertIn("dozo specific fact", out)
+        self.assertIn("shared by two repos", out)
+        self.assertNotIn("cross-cutting lesson", out)
+        self.assertNotIn("unrelated repo fact", out)
+
+    def test_multi_project_entry_visible_in_each(self):
+        """One entry can relate to several repositories."""
+        for repo in ("dozo", "iceberg"):
+            out = hook.render_memory_index([self.DOC], project=repo) or ""
+            self.assertIn("shared by two repos", out, f"missing in {repo}")
+
+    def test_no_project_shows_everything(self):
+        out = hook.render_memory_index([self.DOC]) or ""
+        self.assertIn("unrelated repo fact", out)
+
+    def test_untagged_entries_are_excluded_once_a_repo_is_known(self):
+        """An untagged entry is one nobody scoped, so it is not shown.
+
+        Showing untagged entries everywhere is how most of the visible index
+        ended up describing other projects. Cross-cutting knowledge stays
+        reachable by tagging it with every repository it applies to.
+        """
+        for repo in ("dozo", "iceberg", "nonexistent"):
+            out = hook.render_memory_index([self.DOC], project=repo) or ""
+            self.assertNotIn("cross-cutting lesson", out, f"leaked in {repo}")
+
+    def test_projects_parse_from_the_third_marker_field(self):
+        rows = hook.memory_index_entries(self.DOC)
+        by_title = {r["title"]: r for r in rows}
+        self.assertEqual(by_title["dozo specific fact"]["projects"], ["dozo"])
+        self.assertEqual(by_title["shared by two repos"]["projects"], ["dozo", "iceberg"])
+        self.assertEqual(by_title["cross-cutting lesson"]["projects"], [])
+
+
+class RecentLogTests(unittest.TestCase):
+    """The log window is what "continue where I left off" depends on."""
+
+    def test_renders_one_line_per_entry(self):
+        entries = [
+            {"ts": "2026-10-24T10:00:00+08:00", "tag": "fix", "level": "detail",
+             "text": "did a thing"},
+        ]
+        out = hook.render_recent_log(entries)
+        self.assertIn("## Recent operations", out)
+        self.assertIn("did a thing", out)
+        self.assertEqual(len([l for l in out.splitlines() if l.startswith("- ")]), 1)
+
+    def test_long_bodies_are_clipped_with_a_visible_marker(self):
+        """An entry cut mid-sentence reads as a complete entry."""
+        entries = [{"ts": "2026-10-24T10:00:00+08:00", "tag": "fix",
+                    "level": "detail", "text": "x" * 600}]
+        out = hook.render_recent_log(entries)
+        line = [l for l in out.splitlines() if l.startswith("- ")][0]
+        self.assertTrue(line.endswith("…"), "clipping must be visible")
+        self.assertLess(len(line), 300)
+
+    def test_newlines_are_collapsed(self):
+        entries = [{"ts": "t", "tag": "fix", "level": "detail",
+                    "text": "line one\nline two"}]
+        out = hook.render_recent_log(entries)
+        self.assertIn("line one line two", out)
+        self.assertEqual(len([l for l in out.splitlines() if l.startswith("- ")]), 1)
+
+    def test_empty_input_renders_nothing(self):
+        self.assertIsNone(hook.render_recent_log([]))
+        self.assertIsNone(hook.render_recent_log([{"ts": "t", "text": ""}]))
+
+
+class SessionStartIncludesLogTests(unittest.TestCase):
+    def test_the_snapshot_carries_the_log_window(self):
+        """Claude/Codex used to get SPEC and MEMORY but no log at all."""
+        import json
+        import tempfile
+        from unittest import mock
+
+        payload = {
+            "preferences": ["# Spec\n\n- a rule\n"],
+            "durable_memory": ["- [fact|2026-01-01|dozo] scoped\n"],
+            "log_entries": [{"ts": "2026-10-24T10:00:00+08:00", "tag": "fix",
+                             "level": "detail", "text": "an operation"}],
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("version: 1\nmemory_roots:\n  - path: /tmp\n")
+            cfg = fh.name
+        try:
+            completed = mock.Mock(returncode=0, stdout=json.dumps(payload))
+            with mock.patch.object(hook, "_resolve_memory_config", return_value=cfg), \
+                 mock.patch.object(hook.subprocess, "run", return_value=completed), \
+                 mock.patch.object(hook, "_repo_name_for", return_value="dozo"):
+                out = hook.fetch_session_start_snapshot({})
+        finally:
+            Path(cfg).unlink(missing_ok=True)
+
+        self.assertIn("## Active spec", out or "")
+        self.assertIn("## Long-term memory", out or "")
+        self.assertIn("## Recent operations", out or "")
+        self.assertIn("an operation", out or "")
+
+    def test_the_load_call_is_scoped_to_the_repo(self):
+        """Without --project the entry cap keeps other repos' newest entries."""
+        import json
+        import tempfile
+        from unittest import mock
+
+        payload = {"preferences": ["# Spec\n\n- a rule\n"]}
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("version: 1\nmemory_roots:\n  - path: /tmp\n")
+            cfg = fh.name
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return mock.Mock(returncode=0, stdout=json.dumps(payload))
+
+        try:
+            with mock.patch.object(hook, "_resolve_memory_config", return_value=cfg), \
+                 mock.patch.object(hook.subprocess, "run", side_effect=fake_run), \
+                 mock.patch.object(hook, "_repo_name_for", return_value="dozo"):
+                hook.fetch_session_start_snapshot({})
+        finally:
+            Path(cfg).unlink(missing_ok=True)
+
+        self.assertIn("--project", seen["cmd"])
+        self.assertIn("dozo", seen["cmd"])

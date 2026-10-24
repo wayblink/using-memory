@@ -22,7 +22,12 @@ class SkillDocTests(unittest.TestCase):
             match.group(0),
             (
                 "---\n"
-                "name: using-memory\n"
+                # The skill was renamed to `umem` in a8ac923; this assertion was
+                # left behind on the old name. `umem` is also what Pi requires:
+                # it treats the containing directory name as the skill name, and
+                # the Pi install points <agent-dir>/skills/umem at this checkout.
+                # See references/pi-integration.md.
+                "name: umem\n"
                 "description: Memory protocol for persisted cross-session context and operation continuity. Use when a task mentions memory, remember, forget, preference, prior context, previous work, continue, resume, project history, saved decisions, logs, operations, commits, pushes, builds, tests, deploys, hooks, or equivalent non-English memory/logging triggers; also use whenever persisted memory could change the answer or the turn may create operation history that should survive restart.\n"
                 "---\n"
             ),
@@ -101,7 +106,8 @@ class SkillDocTests(unittest.TestCase):
             "references/repo-layout.md",
             "references/startup-and-write-rules.md",
             "references/machine-setup.md",
-            "exposing the skill to Codex or Claude Code",
+            "exposing the skill to Codex, Claude Code or Pi",
+            "references/pi-integration.md",
             "on-demand context retrieval",
             "Host skill exposure",
             "USING_MEMORY_CONFIG",

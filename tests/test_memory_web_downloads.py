@@ -30,8 +30,8 @@ class MemoryWebDownloadTests(unittest.TestCase):
             "# Memory\n\n- [fact|2026-06-29] Download support matters.\n",
             encoding="utf-8",
         )
-        (ns_root / "PREFERENCES.md").write_text(
-            "# Preferences\n\n- [2026-06-29] Prefer file downloads from the web UI.\n",
+        (ns_root / "SPEC.md").write_text(
+            "# Spec\n\nRules for every project.\n\n- [2026-06-29] Prefer file downloads from the web UI.\n",
             encoding="utf-8",
         )
         (ns_root / "docs" / "workflow.md").write_text(
@@ -88,10 +88,15 @@ class MemoryWebDownloadTests(unittest.TestCase):
         self.assertIn('attachment; filename="MEMORY.md"', memory_resp.headers.get("content-disposition", ""))
         self.assertIn("Download support matters", memory_resp.text)
 
-        pref_resp = self.client.get("/preferences/download")
+        pref_resp = self.client.get("/spec/download")
         self.assertEqual(pref_resp.status_code, 200)
-        self.assertIn('attachment; filename="PREFERENCES.md"', pref_resp.headers.get("content-disposition", ""))
+        self.assertIn('attachment; filename="SPEC.md"', pref_resp.headers.get("content-disposition", ""))
         self.assertIn("Prefer file downloads", pref_resp.text)
+
+        # The old address still resolves, but only as a redirect to the new one.
+        legacy = self.client.get("/preferences/download", follow_redirects=False)
+        self.assertEqual(legacy.status_code, 301)
+        self.assertTrue(legacy.headers["location"].startswith("/spec/download"))
 
     def test_doc_download_rejects_path_traversal(self):
         resp = self.client.get("/docs/../../secret/download")

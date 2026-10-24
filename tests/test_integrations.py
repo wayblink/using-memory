@@ -109,6 +109,6 @@ class IntegrationDocTests(unittest.TestCase):
         for needle in [
             "/docs/<rel>/download",
             "/memory/download",
-            "/preferences/download",
+            "/spec/download",
         ]:
             self.assertIn(needle, text)

@@ -6,13 +6,24 @@
     <h1>{{ t('pref.title') }}</h1>
     <div class="sub">
       {{ t('pref.sub') }}
-      <a href="/preferences/download" style="margin-left:8px;">{{ t('common.download') }}</a>
+      <a href="/spec/download?scope={{ active_scope }}" style="margin-left:8px;">{{ t('common.download') }}</a>
     </div>
   </div>
   {% if ns_writable %}
   <button type="button" class="btn page-actions" data-open-modal="preference-add-dialog">{{ t('pref.add') }}</button>
   {% endif %}
 </header>
+
+{% if scopes and scopes|length > 1 %}
+<nav class="scope-tabs" aria-label="{{ t('spec.scope.label') }}">
+  {% for s in scopes %}
+    <a href="/spec?scope={{ s }}"
+       class="scope-tab{% if s == active_scope %} active{% endif %}">
+      {% if s == 'global' %}{{ t('spec.scope.global') }}{% else %}{{ s }}{% endif %}
+    </a>
+  {% endfor %}
+</nav>
+{% endif %}
 
 {% if error %}
   <div class="warning">{{ error }}</div>
@@ -24,7 +35,8 @@
     <h2 class="card-title" id="preference-add-title">{{ t('pref.form.title') }}</h2>
     <button type="button" class="modal-close" data-close-modal aria-label="{{ t('common.cancel') }}">&times;</button>
   </div>
-  <form class="entry-form" method="post" action="/preferences/append">
+  <form class="entry-form" method="post" action="/spec/append">
+    <input type="hidden" name="scope" value="{{ active_scope }}">
     <div class="row">
       <label>{{ t('memory.form.date') }}
         <input type="date" name="when" value="{{ today }}">
@@ -55,8 +67,9 @@
             <div class="entry-actions">
               {% if ns_writable %}
               <button type="button" class="link-btn" data-action="edit">{{ t('common.edit') }}</button>
-              <form method="post" action="/preferences/delete/{{ e.line_no }}" class="inline-form"
+              <form method="post" action="/spec/delete/{{ e.line_no }}" class="inline-form"
                     data-confirm="{{ t('common.delete.confirm') }}">
+                <input type="hidden" name="scope" value="{{ active_scope }}">
                 <button type="submit" class="link-btn danger">{{ t('common.delete') }}</button>
               </form>
               {% endif %}
@@ -65,7 +78,8 @@
           <div class="entry-card-text">{{ e.text }}</div>
         </div>
         {% if ns_writable %}
-        <form class="entry-card-edit entry-form" method="post" action="/preferences/update/{{ e.line_no }}" hidden>
+        <form class="entry-card-edit entry-form" method="post" action="/spec/update/{{ e.line_no }}" hidden>
+          <input type="hidden" name="scope" value="{{ active_scope }}">
           <div class="row">
             <label>{{ t('memory.form.date') }}
               <input type="date" name="when" value="{{ e.date }}" required>

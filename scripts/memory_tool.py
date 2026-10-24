@@ -38,6 +38,7 @@ from memory_lib.core import (
     no_memory_config, load_config, collect_roots, root_priority, expand_path,
     remote_api_from_config,
     namespace_from_root, namespace_root, read_source, validate_single_primary,
+    derive_repo_name,
     normalize_index_doc_path, read_json_source, validate_doc_entry,
     validate_doc_index, sha256_file, lock_path_for, exclusive_file_lock,
     atomic_write_text, append_markdown_entry, looks_like_memory_namespace_root,
@@ -369,28 +370,84 @@ def append_log_entry(
     return jsonl_target
 
 
-def append_memory_entry(root: Path, when: date, tag: str, text: str) -> Path:
+def append_memory_entry(
+    root: Path, when: date, tag: str, text: str, projects: list[str] | None = None
+) -> Path:
+    """Append one durable knowledge entry, optionally tagged with projects.
+
+    MEMORY is knowledge, so an entry may relate to several repositories at once
+    (a lesson about git worktrees applies to every repo; a decision about the
+    knowledge module applies to civil-forest and anything that embeds it). Hence
+    a comma-separated project list rather than a single value.
+
+    An entry with no projects is cross-cutting and stays visible everywhere.
+    That default is deliberate: an untagged entry is one the writer did not know
+    how to scope, and hiding it from every repo would be worse than showing it in
+    all of them.
+    """
     DENIED = {"pref"}
     if tag.lower() in DENIED:
         sys.stderr.write(f"tag '{tag}' is not allowed for write-memory\n")
         sys.exit(2)
+    scoped: list[str] = []
+    for raw in projects or []:
+        name = raw.strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", name):
+            sys.stderr.write(
+                f"invalid project '{raw}': must match [a-z0-9][a-z0-9._-]{{0,63}} "
+                "(lowercase; e.g. 'dozo', 'civil-forest'). The value is stored "
+                "verbatim, so it is rejected rather than repaired: a silently "
+                "rewritten tag never matches the repository name it meant.\n"
+            )
+            sys.exit(2)
+        if name not in scoped:
+            scoped.append(name)
     mem_path = root / "MEMORY.md"
-    entry = f"- [{tag}|{when:%Y-%m-%d}] {text}\n"
+    marker = f"{tag}|{when:%Y-%m-%d}"
+    if scoped:
+        marker = f"{marker}|{','.join(scoped)}"
+    entry = f"- [{marker}] {text}\n"
     return append_markdown_entry(mem_path, entry)
 
 
-def append_preference_entry(root: Path, when: date, text: str) -> Path:
-    pref_path = root / "PREFERENCES.md"
+def append_preference_entry(root: Path, when: date, text: str, scope: str = "global") -> Path:
+    """Append one rule to SPEC.md (scope=global) or spec/<repo>.md.
+
+    A rule belongs to exactly one scope. Writing a repo-specific constraint to
+    the global file makes every other project pay for it on every turn, which is
+    what made the old single PREFERENCES.md balloon to 21 mixed entries.
+    """
+    if scope == "global":
+        pref_path = root / "SPEC.md"
+        header = (
+            "# Spec\n\n"
+            "Rules and constraints that apply to every project in this namespace.\n"
+            "Project-specific specs live in `spec/<repo>.md`.\n\n"
+        )
+    else:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", scope):
+            sys.stderr.write(
+                f"invalid --scope '{scope}': use 'global', 'auto', or a repo name "
+                "matching [a-z0-9][a-z0-9._-]{0,63} (lowercase; e.g. 'dozo', 'civil-forest')\n"
+            )
+            sys.exit(2)
+        pref_path = root / "spec" / f"{scope}.md"
+        header = (
+            f"# Spec — {scope}\n\n"
+            f"Constraints for the `{scope}` repository. "
+            "Loaded only when working in that repo.\n\n"
+        )
     entry = f"- [{when:%Y-%m-%d}] {text}\n"
+    pref_path.parent.mkdir(parents=True, exist_ok=True)
     with exclusive_file_lock(lock_path_for(pref_path)):
         existing = pref_path.read_text(encoding="utf-8") if pref_path.exists() else ""
-        if existing:
-            # One blank line between entries — preferences are often multi-paragraph
+        if not existing.strip():
+            atomic_write_text(pref_path, header + entry)
+        else:
+            # One blank line between entries — a spec entry is often multi-paragraph
             # (Why: / How to apply:), so a clear separator improves readability.
             existing = existing.rstrip("\n") + "\n\n"
             atomic_write_text(pref_path, existing + entry)
-        else:
-            atomic_write_text(pref_path, entry)
     return pref_path
 
 
@@ -577,7 +634,13 @@ def date_range(start: date, end: date) -> list[date]:
     return [start + timedelta(days=offset) for offset in range(days + 1)]
 
 
-def log_dates_for_load(args: argparse.Namespace, target: date, read_today: bool, read_yesterday: bool) -> list[date]:
+def log_dates_for_load(
+    args: argparse.Namespace,
+    target: date,
+    read_today: bool,
+    read_yesterday: bool,
+    default_days: int = 30,
+) -> list[date]:
     has_range = bool(args.log_from or args.log_to)
     has_days = args.log_days is not None
     if has_range and has_days:
@@ -596,6 +659,17 @@ def log_dates_for_load(args: argparse.Namespace, target: date, read_today: bool,
             sys.stderr.write("--log-days must be >= 1\n")
             sys.exit(2)
         start = target - timedelta(days=args.log_days - 1)
+        return date_range(start, target)
+
+    # Default window. `read_today` / `read_yesterday` are the legacy way of
+    # saying "the last two days"; a positive `default_days` supersedes them with
+    # a rolling window, which is what the injected snapshot actually wants —
+    # operations older than a month are history, not continuity.
+    #
+    # Setting `read_today: false` and `read_yesterday: false` with no
+    # `log_days` keeps the old behaviour of loading no log at all.
+    if default_days > 0:
+        start = target - timedelta(days=default_days - 1)
         return date_range(start, target)
 
     dates = []
@@ -679,6 +753,99 @@ def _normalize_axis_filter(values: list[str] | None) -> set[str] | None:
     return out or None
 
 
+BRIEF_SOURCE_CONTENT_LIMIT = 1200
+# Two things in the injected snapshot are deliberately NOT budgeted:
+#
+#   SPEC rules   — a rule cut mid-sentence reads as a complete rule and gets
+#                  followed literally, and a rule dropped for budget silently
+#                  stops applying. Length is bounded by the SPEC split (global
+#                  vs per-repo), not by a character count.
+#   MEMORY index — consumers render one title per entry, so the input is parsed
+#                  whole and only the titles are sent. Truncating the input
+#                  first is what hid 45 of 51 entries behind the newest six.
+#
+# `_brief_tail` remains for single-source trimming but is no longer applied to
+# durable memory.
+BRIEF_LOG_TEXT_LIMIT = 350
+
+
+def _brief_tail(text: str, limit: int) -> str:
+    """Tail-keep a bullet list, expanding backwards to a whole bullet start.
+
+    Cutting mid-bullet would hand the model half a fact, so the window is
+    widened to the next line boundary; the marker records what was removed.
+
+    A single-line file has no boundary to widen to. Rather than return it whole
+    (which would blow the budget and look to the model like a complete file),
+    that case is hard-cut at the limit with the same marker: a visibly truncated
+    line is honest, an over-budget one is not.
+    """
+    if len(text) <= limit:
+        return text
+    cut = len(text) - limit
+    nl = text.find("\n", cut)
+    if nl != -1 and nl + 1 < len(text):
+        kept = text[nl + 1 :]
+        return f"… [{cut} earlier chars omitted — search or read the file for them]\n\n{kept}"
+    kept = text[cut:]
+    return f"… [{cut} earlier chars omitted — search or read the file for them]\n\n{kept}"
+
+
+def _brief_log_entries(entries: list[dict]) -> list[dict]:
+    """Cap each injected log entry's body, keeping the fields that identify it."""
+    out: list[dict] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            out.append(entry)
+            continue
+        trimmed = dict(entry)
+        text = trimmed.get("text")
+        if isinstance(text, str) and len(text) > BRIEF_LOG_TEXT_LIMIT:
+            trimmed["text"] = (
+                f"{text[:BRIEF_LOG_TEXT_LIMIT]}… [truncated, "
+                f"{len(text) - BRIEF_LOG_TEXT_LIMIT} more chars]"
+            )
+            trimmed["truncated"] = True
+        out.append(trimmed)
+    return out
+
+
+def brief_sources(sources: list[dict]) -> list[dict]:
+    """Shrink a load snapshot for injection into an LLM's context.
+
+    The Pi extension posts the snapshot as a message, so the size is a token
+    cost on every session start. Two things dominate it: the docs index
+    (pure metadata the model cannot act on without also reading a doc) and long
+    PREFERENCES/MEMORY bodies. The index source is dropped entirely and each
+    remaining content is truncated with an explicit marker, because a silently
+    shortened file reads like a short file.
+
+    Rules are never truncated. A rule that is cut mid-sentence is worse than a
+    missing one: it reads as a complete rule and gets followed literally. Both
+    `preferences` (which the Pi extension posts) and the `preferences`/
+    `spec:<repo>` sources (which a caller may read directly) are therefore left
+    whole; their length is bounded by the SPEC split, not by a character budget.
+    """
+    out: list[dict] = []
+    for source in sources:
+        if source.get("type") == "docs_index":
+            continue
+        entry = dict(source)
+        if str(entry.get("type", "")).startswith(("preferences", "spec:")):
+            out.append(entry)
+            continue
+        content = entry.get("content")
+        if isinstance(content, str) and len(content) > BRIEF_SOURCE_CONTENT_LIMIT:
+            kept = content[:BRIEF_SOURCE_CONTENT_LIMIT]
+            entry["content"] = (
+                f"{kept}\n\n… [truncated: {len(content) - BRIEF_SOURCE_CONTENT_LIMIT} "
+                "more chars — read the file for the rest]"
+            )
+            entry["truncated"] = True
+        out.append(entry)
+    return out
+
+
 def do_load(args: argparse.Namespace) -> dict:
     config = load_config(Path(args.config) if args.config else None, os.environ.get("USING_MEMORY_CONFIG"))
     if not config:
@@ -703,13 +870,44 @@ def do_load(args: argparse.Namespace) -> dict:
     defaults = config.get("defaults", {}) if config else {}
     read_today = defaults.get("read_today", True)
     read_yesterday = defaults.get("read_yesterday", True)
+    # Rolling window for the injected log; 30 days by default.
+    log_days_default = defaults.get("log_days", 30)
+    try:
+        log_days_default = int(log_days_default)
+    except (TypeError, ValueError):
+        log_days_default = 30
+    # Cap on the *automatically* injected log window. An explicit time query
+    # (`--log-days` / `--log-from` / `--log-to`) means the caller asked for a
+    # specific slice and is never truncated — the cap exists to stop a busy
+    # month from crowding out the rules in a snapshot nobody requested.
+    log_max_entries_default = defaults.get("log_max_entries", 20)
+    try:
+        log_max_entries_default = int(log_max_entries_default)
+    except (TypeError, ValueError):
+        log_max_entries_default = 20
     load_docs = defaults.get("load_docs_on_demand", True)
     target = parse_iso_date(args.date, "--date") if args.date else date.today()
     sources_list = []
-    preferences, durable_memory, doc_set = [], [], []
+    preferences, durable_memory, doc_set, docs_catalog = [], [], [], []
     log_entries = []
     if roots_exist:
         ordered_roots = primary_list + ref_list
+        # Spec scoping is by repository. Resolve once: every root is probed for
+        # the same project's spec file, and a repo without a spec file is the
+        # normal case, not an error.
+        spec_project = None
+        raw_project = getattr(args, "project", None)
+        if isinstance(raw_project, list):
+            raw_project = raw_project[0] if raw_project else None
+        if raw_project:
+            spec_project = _normalize_axis_value(raw_project)
+        if spec_project is None:
+            cwd_arg = getattr(args, "cwd", None)
+            spec_project = _normalize_axis_value(derive_repo_name(Path(cwd_arg).expanduser() if cwd_arg else None))
+        if spec_project is None:
+            cwd_arg = getattr(args, "cwd", None)
+            candidate_cwd = Path(cwd_arg).expanduser() if cwd_arg else Path.cwd()
+            spec_project = _normalize_axis_value(candidate_cwd.name)
 
         for root_cfg in ordered_roots:
             raw_path = root_cfg.get("path", "")
@@ -717,10 +915,26 @@ def do_load(args: argparse.Namespace) -> dict:
             scoped_root = namespace_root(r_path, namespace_from_root(root_cfg))
             role = root_cfg.get("role", "reference")
             machine_id = root_cfg.get("machine_id", "")
-            pref_source = read_source(scoped_root / "PREFERENCES.md", "preferences", role, machine_id)
+            spec_path = scoped_root / "SPEC.md"
+            # Migration fallback: a namespace that has not been split yet still
+            # keeps its rules in PREFERENCES.md. Read exactly one of the two —
+            # reading both would resurrect the double-source problem that the
+            # SPEC split exists to remove.
+            if not spec_path.is_file() and (scoped_root / "PREFERENCES.md").is_file():
+                spec_path = scoped_root / "PREFERENCES.md"
+            pref_source = read_source(spec_path, "preferences", role, machine_id)
             sources_list.append(pref_source)
             if pref_source["loaded"]:
                 preferences.append(pref_source["content"])
+
+            if spec_project:
+                project_spec = scoped_root / "spec" / f"{spec_project}.md"
+                proj_source = read_source(project_spec, f"spec:{spec_project}", role, machine_id)
+                # A missing project spec is the ordinary case: most repos never
+                # get one. Do not surface it as a warning or a source row.
+                if proj_source["loaded"]:
+                    sources_list.append(proj_source)
+                    preferences.append(proj_source["content"])
 
         for root_cfg in ordered_roots:
             raw_path = root_cfg.get("path", "")
@@ -745,6 +959,23 @@ def do_load(args: argparse.Namespace) -> dict:
                     continue
 
                 index_entries = normalize_doc_index(index_source.get("json"))
+                # The whole index (titles + type + projects) is exposed separately
+                # from `doc_hits`. Hits are bodies the caller asked for; this is
+                # the catalogue, and a session-start renderer needs the catalogue
+                # to tell the model which documents exist. Without it the model
+                # knows documents exist as a category but not which ones, so it
+                # never thinks to open any.
+                for entry in index_entries:
+                    docs_catalog.append(
+                        {
+                            "path": str(entry.get("path") or entry.get("id") or ""),
+                            "title": str(entry.get("title") or ""),
+                            "type": str(entry.get("type") or ""),
+                            "modified": str(entry.get("modified") or "")[:10],
+                            "projects": [str(p) for p in (entry.get("projects") or [])],
+                            "summary": str(entry.get("summary") or ""),
+                        }
+                    )
                 matched_entries = [
                     entry for entry in index_entries if doc_entry_matches(entry, doc_selectors)
                 ]
@@ -782,7 +1013,17 @@ def do_load(args: argparse.Namespace) -> dict:
         primary_root = expand_path(primary_cfg.get("path", ""))
         primary_namespace = namespace_from_root(primary_cfg)
         primary_machine = primary_cfg.get("machine_id", "")
-        log_dates = log_dates_for_load(args, target, read_today, read_yesterday)
+        log_dates = log_dates_for_load(
+                args, target, read_today, read_yesterday, default_days=log_days_default
+            )
+        explicit_window = bool(
+            args.log_from or args.log_to or args.log_days is not None
+        )
+        # The cap applies to the auto window only. Narrowing by project is the
+        # caller's job (the Pi extension passes `--project`), because `load` is a
+        # general read API: filtering here by an inferred cwd would make "load
+        # everything" impossible to ask for.
+        log_projects = getattr(args, "project", None)
         append_log_jsonl_sources(
             sources_list,
             log_entries,
@@ -792,9 +1033,24 @@ def do_load(args: argparse.Namespace) -> dict:
             primary_machine,
             log_dates,
             args.log_query,
-            project_filter=getattr(args, "project", None),
+            project_filter=log_projects,
             topic_filter=getattr(args, "topic", None),
         )
+        if not explicit_window and log_max_entries_default > 0:
+            # Newest first, then back to chronological order: the tail of a
+            # session's operations is what "continue where I left off" means.
+            ordered = sorted(
+                log_entries, key=lambda e: str(e.get("ts") or e.get("date") or "")
+            )
+            if len(ordered) > log_max_entries_default:
+                dropped = len(ordered) - log_max_entries_default
+                kept = ordered[-log_max_entries_default:]
+                log_entries[:] = kept
+                warnings.append(
+                    f"log: kept the most recent {log_max_entries_default} of "
+                    f"{len(ordered)} entries (auto window; pass --log-days to "
+                    f"see the full {dropped} more)"
+                )
     else:
         warnings.append("no primary root configured; read_today and read_yesterday are no-ops")
 
@@ -806,8 +1062,19 @@ def do_load(args: argparse.Namespace) -> dict:
         "durable_memory": durable_memory,
         "log_entries": log_entries,
         "doc_hits": doc_set,
+        "docs_index": docs_catalog,
         "warnings": warnings,
     }
+    if getattr(args, "brief", False):
+        result["sources"] = brief_sources(result["sources"])
+        # `durable_memory` is NOT tail-kept in brief mode. Consumers index it down
+        # to one title per entry, and titles are cheap — truncating the input
+        # first would silently hide the oldest decisions, which is precisely the
+        # bug this replaced: 51 entries came through as 6, and the 45 that
+        # vanished were the product-level ones. Callers that want bodies use
+        # `search`.
+        result["brief"] = True
+        result["log_entries"] = _brief_log_entries(result["log_entries"])
     return result
 
 
@@ -1111,7 +1378,13 @@ def do_write_memory(args: argparse.Namespace) -> dict:
     if tag not in allowed:
         sys.stderr.write(f"tag is not allowed for write-memory\n")
         sys.exit(2)
-    target = append_memory_entry(namespace_root(primary_root, primary_namespace), when, tag, args.text)
+    target = append_memory_entry(
+        namespace_root(primary_root, primary_namespace),
+        when,
+        tag,
+        args.text,
+        projects=getattr(args, "projects", None),
+    )
     return {
         "changed": True,
         "path": str(target),
@@ -1122,10 +1395,19 @@ def do_write_memory(args: argparse.Namespace) -> dict:
 def do_write_preference(args: argparse.Namespace) -> dict:
     primary_root, primary_namespace = load_primary_for_write(args)
     when = parse_iso_date(args.date, "--date") if args.date else date.today()
-    target = append_preference_entry(namespace_root(primary_root, primary_namespace), when, args.text)
+    scope = getattr(args, "scope", None) or "global"
+    if scope == "auto":
+        # Opt-in convenience: derive the current repo instead of demanding the
+        # caller pass --scope on every write.
+        cwd_arg = getattr(args, "cwd", None)
+        scope = _normalize_axis_value(derive_repo_name(Path(cwd_arg).expanduser() if cwd_arg else None)) or "global"
+    target = append_preference_entry(
+        namespace_root(primary_root, primary_namespace), when, args.text, scope=scope
+    )
     return {
         "changed": True,
         "path": str(target),
+        "scope": scope,
         "sha256": sha256_file(target),
     }
 
@@ -2088,7 +2370,11 @@ def initialize_namespace(memory_root: Path, namespace: str, machine_id: str) -> 
             changed.append(str(target))
 
     seed_files = {
-        scoped_root / "PREFERENCES.md": "# Preferences\n\n",
+        scoped_root / "SPEC.md": (
+            "# Spec\n\n"
+            "Rules and constraints that apply to every project in this namespace.\n"
+            "Project-specific specs live in `spec/<repo>.md`.\n\n"
+        ),
         scoped_root / "MEMORY.md": "# Memory\n\n",
         scoped_root / "docs" / "index.json": json.dumps(
             {"version": 1, "documents": []}, ensure_ascii=False, indent=2
@@ -2429,6 +2715,24 @@ def cmd_load(sub: argparse._SubParsersAction) -> None:
         help="Filter log entries by topic axis (repeatable). Does not affect docs.",
     )
     p.add_argument("--doc-query", type=str, default=None)
+    p.add_argument(
+        "--cwd",
+        type=str,
+        default=None,
+        help=(
+            "Override the working directory used to scope SPEC, MEMORY and the "
+            "auto log window to a repository. Defaults to the real cwd."
+        ),
+    )
+    p.add_argument(
+        "--brief",
+        action="store_true",
+        help=(
+            "Compact snapshot for hosts that inject the result into conversation "
+            "context (the Pi extension). Drops the docs index source and truncates "
+            "each source's content. Without --brief the output is unchanged."
+        ),
+    )
     p.add_argument("--json", action="store_true")
 
 
@@ -2469,16 +2773,35 @@ def cmd_write_memory(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--date", type=str, required=True)
     p.add_argument("--tag", type=str, required=True)
     p.add_argument("--text", type=str, required=True)
+    p.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        default=None,
+        help=(
+            "Project this entry relates to (repeatable). An entry may belong to "
+            "several repositories. Omit for cross-cutting knowledge, which stays "
+            "visible in every repo."
+        ),
+    )
     p.add_argument("--json", action="store_true")
 
 
 def cmd_write_preference(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("write-preference", help="Append one stable preference to the configured namespace PREFERENCES.md")
+    p = sub.add_parser("write-preference", help="Append one rule to the namespace SPEC.md (scope=global) or spec/<repo>.md (scope=<repo>)")
     p.add_argument("--config", type=str, required=True)
     p.add_argument("--date", type=str, default=None,
-                   help="YYYY-MM-DD; defaults to today. Recorded as the preference's effective date.")
+                   help="YYYY-MM-DD; defaults to today. Recorded as the rule's effective date.")
     p.add_argument("--text", type=str, required=True)
+    p.add_argument(
+        "--scope",
+        type=str,
+        default="global",
+        help="'global' writes SPEC.md (applies to every project); a repo name writes spec/<repo>.md (applies only there). Defaults to global.",
+    )
     p.add_argument("--json", action="store_true")
+    p.add_argument("--cwd", type=str, default=None,
+                   help="Override cwd used when --scope is omitted and should follow the current repo.")
 
 
 def cmd_upsert_doc(sub: argparse._SubParsersAction) -> None:
@@ -2518,6 +2841,48 @@ def cmd_status(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--json", action="store_true", help="Emit raw JSON instead of the human-readable dashboard.")
 
 
+def do_hook_context(args: argparse.Namespace) -> dict:
+    """Emit the host-aware hook copy so a host without a hook runner can inject it.
+
+    Codex and Claude Code get these strings from `scripts/hooks/*.py` printing
+    `hookSpecificOutput`. The Pi extension is a long-lived process that needs the
+    same words at *runtime*, not at hook-fire time, so it asks for them here.
+
+    Keeping the copy in one place is the point: a wording change must not land
+    in two languages. `host` selects the phrasing (a tool call on Pi, a shell
+    invocation elsewhere).
+    """
+    import sys as _sys
+
+    hooks_dir = str(Path(__file__).resolve().parent / "hooks")
+    if hooks_dir not in _sys.path:
+        _sys.path.insert(0, hooks_dir)
+    import memory_hook_common as hook  # local import: only this path needs it
+
+    host = (args.host or "generic").strip().lower()
+    events = list(args.events or [])
+    return {
+        "host": host,
+        "reminder": hook.memory_protocol_reminder(host),
+        "gate_reason": hook.stop_gate_reason(events, "", None, host),
+        # The instruction sentence without the event count, so a caller that
+        # renders the reason synchronously can append its own list instead of
+        # re-implementing the copy in another language.
+        "gate_instruction": hook.stop_gate_instruction(host),
+        "pi": hook.pi_settings(),
+    }
+
+
+def cmd_hook_context(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "hook-context",
+        help="Print the host-aware hook reminder and gate copy (used by the Pi extension)",
+    )
+    p.add_argument("--host", type=str, default="generic", help="pi | codex | claude | generic")
+    p.add_argument("--events", action="append", default=None, help="Repeatable event summary for the gate copy")
+    p.add_argument("--json", action="store_true")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
         prog="umem",
@@ -2542,6 +2907,7 @@ def main(argv=None) -> None:
     cmd_write_preference(sub)
     cmd_upsert_doc(sub)
     cmd_status(sub)
+    cmd_hook_context(sub)
     args = parser.parse_args(argv)
     if not args.cmd:
         parser.print_help()
@@ -2571,6 +2937,8 @@ def main(argv=None) -> None:
         result = do_upsert_doc(args)
     elif args.cmd == "status":
         result = do_status(args)
+    elif args.cmd == "hook-context":
+        result = do_hook_context(args)
     else:
         parser.print_help()
         sys.exit(2)

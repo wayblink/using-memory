@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 
 router = APIRouter()
@@ -26,13 +26,22 @@ def memory_download(request: Request) -> FileResponse:
     return _attachment(path, "MEMORY.md")
 
 
-@router.get("/preferences/download", name="preferences_download")
-def preferences_download(request: Request) -> FileResponse:
+@router.get("/spec/download", name="spec_download")
+def spec_download(request: Request, scope: str = "global") -> FileResponse:
     adapter = request.state.adapter
-    path = adapter.namespace_file_path("PREFERENCES.md")
+    try:
+        relative = adapter._spec_relative(scope)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"invalid scope: {scope}") from None
+    path = adapter.namespace_file_path(relative)
     if path is None:
-        raise HTTPException(status_code=404, detail="PREFERENCES.md not found")
-    return _attachment(path, "PREFERENCES.md")
+        raise HTTPException(status_code=404, detail=f"{relative} not found")
+    return _attachment(path, relative.replace("/", "-"))
+
+
+@router.get("/preferences/download", name="preferences_download", include_in_schema=False)
+def preferences_download(request: Request) -> RedirectResponse:
+    return RedirectResponse("/spec/download?scope=global", status_code=301)
 
 
 @router.get("/docs/{slug:path}/download", name="doc_download")

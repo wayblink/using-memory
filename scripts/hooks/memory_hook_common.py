@@ -56,12 +56,6 @@ IMPORTANT_OPERATION_RE = re.compile(
     re.IGNORECASE,
 )
 
-PREFERENCE_SIGNAL_RE = re.compile(
-    r"(reply|respond|response|language|style|tone|format|always|never|must|"
-    r"中文|简体中文|日语|日文|日本语|日本語|英语|英文|回复|回答|语言|风格|格式|始终|不要|必须|优先)",
-    re.IGNORECASE,
-)
-
 
 def load_payload() -> dict[str, Any]:
     try:
@@ -161,14 +155,38 @@ def additional_context(event: str, text: str) -> dict[str, Any]:
     }
 
 
-def memory_protocol_reminder() -> str:
+def memory_protocol_reminder(host: str = "generic") -> str:
+    """The per-turn memory protocol nudge.
+
+    Host-aware because the *way* the model writes differs: on Codex and Claude
+    Code there is no memory tool, so the instruction has to name the Python
+    entry point; on Pi the same write is a first-class tool call. Naming a
+    shell invocation there would teach the model the wrong door.
+
+    The default is "generic" and its output is byte-identical to the pre-Pi
+    version — the Codex and Claude adapters rely on that.
+    """
+    if host == "pi":
+        return (
+            "using-memory hook reminder: consider the using-memory skill for persisted context. "
+            "Load memory only when it can change the answer. For writes, default toward recording "
+            "concrete operations and key events in <namespace>/log/YYYY-MM-DD.jsonl by calling the "
+            "`umem` tool with action=write-log. Do not mirror every tool call or raw transcript. "
+            "Rules go to action=write-preference with --scope global (SPEC.md, every project) or "
+            "--scope <repo> (spec/<repo>.md, that repo only); stable facts, confirmed decisions, "
+            "and lessons go to action=write-memory with --project <repo> (repeatable; omit for "
+            "cross-cutting knowledge). Documents are not injected into context: search for one "
+            "when a task needs prior write-ups."
+        )
     return (
         "using-memory hook reminder: consider the using-memory skill for persisted context. "
         "Load memory only when it can change the answer. For writes, default toward recording "
         "concrete operations and key events to <namespace>/log/YYYY-MM-DD.jsonl via "
         "scripts/memory_tool.py write-log. Do not mirror every tool call or raw transcript. "
-        "Stable preferences go to write-preference; stable facts, confirmed decisions, and lessons "
-        "go to write-memory."
+        "Rules go to write-preference with --scope global (SPEC.md, every project) or --scope <repo> "
+        "(spec/<repo>.md, that repo only); stable facts, confirmed decisions, and lessons go to "
+        "write-memory with --project <repo> (repeatable; omit for cross-cutting knowledge). "
+        "Documents are not injected into context: search for one when a task needs prior write-ups."
     )
 
 
@@ -183,57 +201,290 @@ def _clean_preference_line(raw: str) -> str:
     return line
 
 
-def _score_preference_line(line: str) -> int:
-    score = 0
-    if PREFERENCE_SIGNAL_RE.search(line):
-        score += 4
-    if any(token in line for token in ("中文", "简体中文", "日语", "日本語", "日本语", "回复", "回答", "语言")):
-        score += 4
-    lower = line.lower()
-    if any(token in lower for token in ("reply", "respond", "language", "style", "format", "always", "never")):
-        score += 3
-    if len(line) <= 120:
-        score += 1
-    return score
+def _rule_lines(doc: str) -> list[str]:
+    """Return only the actual rule entries from one SPEC file.
 
+    A SPEC file also carries a heading and a one-line preamble explaining what
+    the file is and where the project specs live. Those explain the format; they
+    are not constraints, and rendering them as bullets makes the model treat
+    documentation as instructions. Only content from the first list item onward
+    counts — a file with no list items contributes nothing.
 
-def render_preference_summary(preferences: list[str], max_items: int = 4) -> str | None:
-    """Distill loaded PREFERENCES.md content into a compact SessionStart block."""
-    candidates: list[tuple[int, int, str]] = []
-    seen: set[str] = set()
-    ordinal = 0
-    for doc in preferences:
-        for raw_line in doc.splitlines():
-            line = _clean_preference_line(raw_line)
-            if not line:
+    From there, plain lines are treated as continuation of the preceding bullet
+    (multi-paragraph rules use `Why:` / `How to apply:` blocks) and are joined
+    onto it rather than dropped.
+    """
+    out: list[str] = []
+    started = False
+    for raw in doc.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        is_bullet = bool(re.match(r"^([-*+]|\d+\.)\s", stripped))
+        if not is_bullet:
+            if not started:
+                continue  # heading / preamble before the first rule
+            if stripped.startswith("#"):
                 continue
+            line = _clean_preference_line(stripped)
+            if line and out:
+                out[-1] = f"{out[-1]} {line}"
+            continue
+        started = True
+        line = _clean_preference_line(stripped)
+        if line:
+            out.append(line)
+    return out
+
+
+_MEMORY_ENTRY_RE = re.compile(
+    r"^- \[(?P<tag>[A-Za-z0-9_-]+)"
+    r"(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?"
+    r"(?:\|(?P<projects>[^\]]*))?"
+    r"\]\s+(?P<body>.*)$"
+)
+
+
+def memory_index_entries(doc: str) -> list[dict]:
+    """Index one MEMORY.md into `{tag, date, projects, title}` rows.
+
+    MEMORY is knowledge, not rules: it is retrieved on demand, and being wrong or
+    absent only costs the turn that needed it. So the index is the right
+    delivery — the model needs to know *that* a fact exists, not to carry every
+    body in context.
+
+    The whole point is completeness. The previous approach (`_brief_tail`) kept
+    the tail of the file and dropped the head, which on a curated decision store
+    is exactly backwards: it kept the newest environment snapshots and discarded
+    the oldest product decisions. An index has no such ordering problem.
+
+    `projects` comes from the optional third marker field, `[tag|date|a,b]`.
+    An entry may relate to several repositories, and an entry with no projects
+    is cross-cutting — see `render_memory_index` for how that is filtered.
+    """
+    out: list[dict] = []
+    for raw in doc.splitlines():
+        m = _MEMORY_ENTRY_RE.match(raw.strip())
+        if not m:
+            continue
+        body = re.sub(r"\s+", " ", m.group("body")).strip()
+        if not body:
+            continue
+        raw_projects = m.group("projects") or ""
+        out.append(
+            {
+                "tag": m.group("tag"),
+                "date": m.group("date") or "",
+                "projects": [p.strip().lower() for p in raw_projects.split(",") if p.strip()],
+                "title": body,
+            }
+        )
+    return out
+
+
+def _short_title(body: str, limit: int = 110) -> str:
+    """First clause of an entry, enough to recognise it later."""
+    # A heading-style entry (`## Foo`) carries no extra meaning in an index.
+    text = re.sub(r"^#+\s*", "", body)
+    text = re.sub(r"\*\*|`", "", text)
+    if len(text) <= limit:
+        return text
+    for sep in ("。", "；", ". ", "; "):
+        idx = text.find(sep)
+        if 0 < idx <= limit:
+            return text[:idx]
+    return text[:limit].rstrip() + "…"
+
+
+def render_memory_index(durable_memory: list[str], project: str | None = None) -> str | None:
+    """Render MEMORY as a title index, with an explicit invitation to search.
+
+    The header matters as much as the rows: an index without instructions reads
+    like an excerpt, and the model may answer from titles. It is told these are
+    pointers and that bodies are one `search` away.
+
+    This is a whitelist: an entry is shown only when its project list contains
+    the current repository. Untagged entries are NOT shown. That is deliberate —
+    an untagged entry is one whose owner never said which repository it belongs
+    to, and showing it everywhere is how 28 of 31 visible entries turned out to
+    be about other projects entirely. Cross-cutting knowledge still needs a home,
+    so it gets tagged with every repository it applies to.
+
+    With no project resolved (not a git directory, git missing) everything is
+    shown: an unrecognisable working directory should cost tokens, not hide
+    knowledge the agent cannot then discover.
+    """
+    wanted = (project or "").lower()
+    entries: list[dict] = []
+    seen: set[str] = set()
+    for doc in durable_memory:
+        for entry in memory_index_entries(doc):
+            key = str(entry["title"]).casefold()
+            if key in seen:
+                continue
+            projects = entry.get("projects") or []
+            if wanted and wanted not in projects:
+                continue
+            seen.add(key)
+            entries.append(entry)
+
+    if not entries:
+        return None
+
+    entries.sort(key=lambda e: e["date"], reverse=True)
+    lines = [
+        "## Long-term memory (index)",
+        "",
+        f"{len(entries)} saved facts, decisions and lessons. These are titles, not the "
+        "entries themselves: when one could change your answer, fetch the body with "
+        "`umem search \"<title keywords>\"` before relying on it. Do not guess at the "
+        "contents of a title you have not read.",
+        "",
+    ]
+    for entry in entries:
+        date = f" {entry['date']}" if entry["date"] else ""
+        lines.append(f"- [{entry['tag']}{date}] {_short_title(entry['title'])}")
+    return "\n".join(lines)
+
+
+def render_recent_log(entries: list[dict], limit: int = 240) -> str | None:
+    """Render the auto log window as one line per operation.
+
+    This is the "continue where I left off" section: what was done, in order,
+    recently enough to still be in progress. It carries the same weight as the
+    MEMORY index — a bare list of titles tells the agent what exists, this tells
+    it what it was doing.
+
+    Bodies are clipped hard. A `detail` entry runs 800-3000 characters and the
+    heading plus first sentence is what identifies it; the full text is one
+    `umem search` away.
+    """
+    rows: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        head = " ".join(
+            str(entry.get(k) or "").strip() for k in ("ts", "tag", "level")
+        ).strip()
+        body = " ".join(str(entry.get("text") or "").split())
+        if not body:
+            continue
+        if len(body) > limit:
+            body = body[:limit].rstrip() + "…"
+        rows.append(f"- {head}: {body}".replace("- : ", "- "))
+    if not rows:
+        return None
+    return "## Recent operations\n\n" + "\n".join(rows)
+
+
+def render_docs_index(entries: list[dict], project: str | None = None) -> str | None:
+    """Render the documents catalogue, narrowed to the current repository.
+
+    Documents are knowledge like MEMORY: retrieved on demand, so titles are what
+    the context needs. The catalogue is 66 entries on this machine and most of
+    them belong to other repositories; sending all of them would spend tokens on
+    documents the model will never open in this session. Two kinds are kept:
+
+      - documents tagged with the current repo
+      - documents tagged with no project at all (cross-cutting guides, references)
+
+    Everything else belongs to a different repository and is dropped. With no
+    project resolved, the whole catalogue is shown — better to spend tokens than
+    to hide a document because the working directory was unrecognisable.
+    """
+    if not entries:
+        return None
+
+    project_norm = (project or "").lower()
+    chosen: list[dict] = []
+    for entry in entries:
+        projects = [str(p).lower() for p in (entry.get("projects") or [])]
+        if project_norm and projects and project_norm not in projects:
+            continue
+        chosen.append(entry)
+
+    if not chosen:
+        return None
+
+    chosen.sort(key=lambda e: str(e.get("modified") or ""), reverse=True)
+    scope = f" for `{project_norm}`" if project_norm else ""
+    lines = [
+        "## Documents (index)",
+        "",
+        f"{len(chosen)} documents{scope}. These are titles, not contents: when one matches "
+        'the task, read it with `umem load --doc <path>` or via the docs index. Do not '
+        "assume what a document says from its title.",
+        "",
+    ]
+    for entry in chosen:
+        kind = str(entry.get("type") or "doc")
+        path = str(entry.get("path") or "")
+        lines.append(f"- [{kind}] {entry.get('title') or path} ({path})")
+    return "\n".join(lines)
+
+
+def render_preference_summary(preferences: list[str]) -> str | None:
+    """Render every loaded SPEC rule for SessionStart.
+
+    Rules are delivered whole and unabridged. An earlier version scored the
+    lines with `_score_preference_line` and kept only the top `max_items=4`,
+    which silently dropped any rule that did not happen to contain words like
+    "reply" or "always" — the worktree-isolation rule and most operational
+    discipline vanished that way, with no error and no way for the model to
+    notice the absence. A rule that is not delivered is a rule that does not
+    exist, so there is no budget to trade here: the scoping (SPEC.md vs
+    spec/<repo>.md) is what keeps the list short enough to send whole.
+
+    Duplicate lines across roots are collapsed; a rule appearing twice in the
+    context is noise, not emphasis.
+    """
+    picked: list[str] = []
+    seen: set[str] = set()
+    for doc in preferences:
+        for line in _rule_lines(doc):
             key = line.casefold()
             if key in seen:
                 continue
             seen.add(key)
-            candidates.append((_score_preference_line(line), ordinal, line))
-            ordinal += 1
+            picked.append(line)
 
-    if not candidates:
-        return None
-
-    priority = [item for item in candidates if item[0] > 0]
-    ordered = sorted(priority or candidates, key=lambda item: (-item[0], item[1]))
-    picked = [line for _, _, line in ordered[:max_items]]
     if not picked:
         return None
 
     lines = [
-        "## Active preferences",
+        "## Active spec",
         "",
-        "Apply these saved preferences unless the current user turn overrides them:",
+        "Rules for this project. They are constraints, not suggestions — apply them unless "
+        "the user explicitly overrides one in the current turn:",
         "",
     ]
     lines.extend(f"- {line}" for line in picked)
     return "\n".join(lines)
 
 
-def stop_gate_reason(events: list[str], last_message: str, distill_md: str | None = None) -> str:
+def stop_gate_instruction(host: str = "generic") -> str:
+    """The instruction sentence alone, with no event list appended.
+
+    Split out so a host that builds the reason synchronously (the Pi extension,
+    which cannot await a subprocess inside a gate decision) appends its own
+    event list without re-implementing the wording. The wording itself stays
+    here, in one language.
+    """
+    if host == "pi":
+        return (
+            "Before stopping, call the `umem` tool with action=write-log to record this turn"
+        )
+    return (
+        "Before stopping, run scripts/memory_tool.py write-log to record this turn"
+    )
+
+
+def stop_gate_reason(
+    events: list[str],
+    last_message: str,
+    distill_md: str | None = None,
+    host: str = "generic",
+) -> str:
     """Block reason for the Stop gate.
 
     Kept short on purpose. The model already has the full operation history
@@ -245,7 +496,12 @@ def stop_gate_reason(events: list[str], last_message: str, distill_md: str | Non
     When ``distill_md`` is provided, the distillation-candidate summary is
     appended below the write-log instruction so a single block can carry
     both signals.
+
+    ``host`` selects the phrasing of the write instruction: Pi calls a tool,
+    the other hosts shell out. The default stays "generic" so an un-parameterised
+    caller (including the existing tests) gets the original string.
     """
+    instruction = stop_gate_instruction(host)
     count = len(events)
     if count:
         kinds = []
@@ -262,13 +518,13 @@ def stop_gate_reason(events: list[str], last_message: str, distill_md: str | Non
                 break
         kinds_label = ", ".join(kinds) if kinds else "operation"
         base = (
-            f"Before stopping, run scripts/memory_tool.py write-log to record this turn: "
+            f"{instruction}: "
             f"{count} important event(s) [{kinds_label}]. Include affected files, result, "
             f"identifiers (commit/PR/deploy), verification, and unresolved risks."
         )
     else:
         base = (
-            "Before stopping, run scripts/memory_tool.py write-log to record this turn's "
+            f"{instruction}'s "
             "concrete operations, result, identifiers, verification, and unresolved risks."
         )
     if distill_md:
@@ -505,8 +761,83 @@ def hook_settings() -> dict[str, Any]:
     }
 
 
+PI_DEFAULT_DETAIL_TURN_INTERVAL = 30
+
+
+def pi_settings() -> dict[str, Any]:
+    """Return the `pi:` config block with Pi-specific conservative defaults.
+
+    Pi differs from Codex and Claude Code in one way that matters to these
+    numbers: it has no blocking Stop hook. The gate is implemented as an
+    injected message plus one extra model request, which is a real cost, so the
+    default threshold is looser (30 turns) than the hook hosts' 20. A missing
+    `pi:` block means every default here applies.
+    """
+    cfg = _read_memory_config()
+    pi_cfg = _as_dict(cfg.get("pi"))
+    gate = str(pi_cfg.get("gate") or "message").strip().lower()
+    if gate not in {"message", "off"}:
+        gate = "message"
+    return {
+        "gate": gate,
+        "detail_turn_interval": _as_int(
+            pi_cfg.get("detail_turn_interval"), PI_DEFAULT_DETAIL_TURN_INTERVAL
+        ),
+        "silent_summary": _as_bool(pi_cfg.get("silent_summary"), False),
+        "inject_preferences": _as_bool(pi_cfg.get("inject_preferences"), True),
+        "brief_snapshot": _as_bool(pi_cfg.get("brief_snapshot"), True),
+        "memory_tool_path": str(pi_cfg.get("memory_tool_path") or "").strip() or None,
+    }
+
+
+def resolve_memory_tool_path(explicit: str | None = None) -> str:
+    """Resolve `scripts/memory_tool.py` the same way from every caller.
+
+    Order: an explicit path (the extension's `pi.memory_tool_path`), then the
+    skill directory implied by `USING_MEMORY_CONFIG` (its config lives in the
+    skill dir, so `../scripts/` is the sibling), then the conventional
+    install locations, then this file's own tree. The Pi extension and the
+    Python hooks must agree on one answer, so both go through here.
+    """
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(os.path.expanduser(os.path.expandvars(explicit))))
+
+    env_config = os.environ.get("USING_MEMORY_CONFIG")
+    if env_config:
+        candidates.append(
+            Path(os.path.expanduser(env_config)).parent / "scripts" / "memory_tool.py"
+        )
+
+    home = Path.home()
+    candidates.extend(
+        [
+            home / ".skills" / "using-memory" / "scripts" / "memory_tool.py",
+            Path(os.environ.get("CODEX_HOME", home / ".codex"))
+            / "skills"
+            / "using-memory"
+            / "scripts"
+            / "memory_tool.py",
+            Path(os.environ.get("CLAUDE_HOME", home / ".claude"))
+            / "skills"
+            / "using-memory"
+            / "scripts"
+            / "memory_tool.py",
+            # <skill>/scripts/hooks/memory_hook_common.py -> <skill>/scripts/
+            Path(__file__).resolve().parent.parent / "memory_tool.py",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    # Nothing found: return the conventional location so the caller's error
+    # message names a path the user can act on.
+    return str(candidates[0] if explicit else candidates[2])
+
+
 def _memory_tool_path() -> str:
-    return str(Path.home() / ".claude" / "skills" / "using-memory" / "scripts" / "memory_tool.py")
+    return resolve_memory_tool_path(pi_settings().get("memory_tool_path"))
 
 
 _MACHINE_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
@@ -620,13 +951,50 @@ def bump_stats(deltas: dict[str, Any], sets: dict[str, Any] | None = None) -> No
 
 
 
+def _repo_name_for(cwd: str | None) -> str | None:
+    """Resolve the enclosing git repository's name, or None.
+
+    Scoping documents by repository means `git rev-parse --show-toplevel`, not
+    the directory name: a session started in `dozo/src/api/` should still narrow
+    to dozo's documents rather than to a project called `api` that has none.
+    A non-repo directory (or a missing git binary) yields None, which makes the
+    caller show the whole catalogue.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd or os.getcwd(), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    top = out.stdout.strip()
+    if not top:
+        return None
+    return os.path.basename(top) or None
+
+
 def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
-    """Best-effort: call `memory_tool.py load --json` and return the rendered
-    saved-preferences summary markdown for SessionStart (or None on failure)."""
+    """Build SessionStart context: SPEC rules, a MEMORY index, and the log window.
+
+    Claude and Codex used to receive only `preferences` from here. `load` returns
+    `durable_memory` too, and this function dropped it, so on those hosts the
+    model never saw the saved decisions — not even their titles — while Pi
+    showed them. Knowledge that is listed nowhere is knowledge the model cannot
+    know to look up, so the failure was silent: it answered from general
+    reasoning and nothing in the session revealed the gap.
+
+    Everything here is best-effort. A broken CLI must degrade to "no memory this
+    session", never block the session from starting.
+    """
     try:
         config = _resolve_memory_config()
         if not config:
             return None
+        repo = _repo_name_for(payload.get("cwd"))
         cmd = [
             sys.executable or "python3",
             _memory_tool_path(),
@@ -634,17 +1002,44 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
             "--config", config,
             "--json",
         ]
+        if repo:
+            # Narrow the log to this repository *before* the entry cap applies.
+            # Without it the cap keeps the newest 20 entries overall, most of
+            # which belong to whatever else was busy.
+            cmd += ["--project", repo]
         result = subprocess.run(cmd, capture_output=True, timeout=20, text=True)
         if result.returncode != 0:
             return None
         data = json.loads(result.stdout or "{}")
-        if isinstance(data, dict):
-            preferences = data.get("preferences")
-            if isinstance(preferences, list):
-                return render_preference_summary(
-                    [entry for entry in preferences if isinstance(entry, str)]
-                )
-        return None
+        if not isinstance(data, dict):
+            return None
+
+        sections: list[str] = []
+
+        preferences = data.get("preferences")
+        if isinstance(preferences, list):
+            spec_md = render_preference_summary(
+                [entry for entry in preferences if isinstance(entry, str)]
+            )
+            if spec_md:
+                sections.append(spec_md)
+
+        durable = data.get("durable_memory")
+        if isinstance(durable, list):
+            memory_md = render_memory_index(
+                [entry for entry in durable if isinstance(entry, str)],
+                project=_repo_name_for(payload.get("cwd")),
+            )
+            if memory_md:
+                sections.append(memory_md)
+
+        logs = data.get("log_entries")
+        if isinstance(logs, list):
+            log_md = render_recent_log([e for e in logs if isinstance(e, dict)])
+            if log_md:
+                sections.append(log_md)
+
+        return "\n\n---\n\n".join(sections) if sections else None
     except Exception:
         return None
 
@@ -892,7 +1287,7 @@ def _run_impl(host: str) -> int:
         state.setdefault("memory_written", False)
         state.setdefault("important_events", [])
         save_state(payload, host, state)
-        reminder = memory_protocol_reminder()
+        reminder = memory_protocol_reminder(host)
         preference_md = fetch_session_start_snapshot(payload)
         distill_md, distill_deltas = fetch_distillation_candidates()
         sections = [reminder]
@@ -918,7 +1313,7 @@ def _run_impl(host: str) -> int:
         # here. Those track lifetime-of-session counters used by the Stop throttle.
         save_state(payload, host, state)
         if state["prompt_mentions_memory"]:
-            print(json.dumps(additional_context(event, memory_protocol_reminder()), ensure_ascii=False))
+            print(json.dumps(additional_context(event, memory_protocol_reminder(host)), ensure_ascii=False))
         return 0
 
     if event in {"PostToolUse", "PostToolBatch", "PostToolUseFailure", "PermissionDenied", "ConfigChange"}:
@@ -998,7 +1393,7 @@ def _run_impl(host: str) -> int:
             distill_md, distill_deltas = fetch_distillation_candidates()
             _apply_distill_inject_stats(distill_deltas)
             print(json.dumps(
-                {"decision": "block", "reason": stop_gate_reason(events, last_message, distill_md)},
+                {"decision": "block", "reason": stop_gate_reason(events, last_message, distill_md, host)},
                 ensure_ascii=False,
             ))
             return 0

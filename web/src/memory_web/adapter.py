@@ -331,10 +331,10 @@ class MemoryAdapter:
         ns = self._ns(date=when_str, tag=tag, text=text, json=True)
         return self._call_capturing_exits(self._mt.do_write_memory, ns)
 
-    def write_preference(self, *, when: str | None, text: str) -> dict:
+    def write_preference(self, *, when: str | None, text: str, scope: str = "global") -> dict:
         self._require_writable()
         when_str = when or date.today().isoformat()
-        ns = self._ns(date=when_str, text=text, json=True)
+        ns = self._ns(date=when_str, text=text, json=True, scope=scope)
         return self._call_capturing_exits(self._mt.do_write_preference, ns)
 
     def write_log(
@@ -557,7 +557,7 @@ class MemoryAdapter:
             return None
         return path.read_text(encoding="utf-8")
 
-    # --- MEMORY.md / PREFERENCES.md card helpers ---------------------------
+    # --- MEMORY.md / SPEC.md card helpers ---------------------------------
 
     def list_memory_entries(self) -> list[dict]:
         """Parse MEMORY.md into per-entry cards keyed by 1-based line number.
@@ -569,8 +569,43 @@ class MemoryAdapter:
         """
         return self._parse_entries("MEMORY.md", _MEMORY_LINE_RE, with_date=True)
 
-    def list_preference_entries(self) -> list[dict]:
-        return self._parse_entries("PREFERENCES.md", _PREF_LINE_RE, with_date=True)
+    def list_preference_entries(self, scope: str = "global") -> list[dict]:
+        """Rules from SPEC.md (scope=global) or spec/<scope>.md.
+
+        Each entry carries the `scope` it came from so the page can show which
+        file an edit will touch — the two scopes live in different files and an
+        entry moved between them changes who has to obey it.
+        """
+        relative = self._spec_relative(scope)
+        entries = self._parse_entries(relative, _PREF_LINE_RE, with_date=True)
+        for entry in entries:
+            entry["scope"] = scope
+        return entries
+
+    def list_spec_scopes(self) -> list[str]:
+        """Every scope that has a file, global first.
+
+        Project scopes are whatever `spec/*.md` files exist; there is no
+        registry, so a scope disappears from the UI when its last entry's file
+        is removed. That is intentional — a stale scope list would offer edits
+        to files nobody can see.
+        """
+        scopes = ["global"]
+        root = self.primary_root()
+        if root is not None:
+            spec_dir = root / "spec"
+            if spec_dir.is_dir():
+                for path in sorted(spec_dir.glob("*.md")):
+                    scopes.append(path.stem)
+        return scopes
+
+    @staticmethod
+    def _spec_relative(scope: str) -> str:
+        if scope == "global":
+            return "SPEC.md"
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", scope):
+            raise MemoryToolError(f"invalid spec scope: {scope!r}")
+        return f"spec/{scope}.md"
 
     def _parse_entries(
         self, relative: str, pattern: re.Pattern[str], *, with_date: bool
@@ -620,7 +655,9 @@ class MemoryAdapter:
         self._require_writable()
         self._delete_line("MEMORY.md", line_no, _MEMORY_LINE_RE)
 
-    def update_preference_line(self, *, line_no: int, when: str | None, text: str) -> None:
+    def update_preference_line(
+        self, *, line_no: int, when: str | None, text: str, scope: str = "global"
+    ) -> None:
         self._require_writable()
         when_str = (when or "").strip()
         if not when_str:
@@ -633,11 +670,11 @@ class MemoryAdapter:
         if not text:
             raise MemoryToolError("text must not be empty")
         new_line = f"- [{when_str}] {text}"
-        self._replace_line("PREFERENCES.md", line_no, new_line, _PREF_LINE_RE)
+        self._replace_line(self._spec_relative(scope), line_no, new_line, _PREF_LINE_RE)
 
-    def delete_preference_line(self, *, line_no: int) -> None:
+    def delete_preference_line(self, *, line_no: int, scope: str = "global") -> None:
         self._require_writable()
-        self._delete_line("PREFERENCES.md", line_no, _PREF_LINE_RE)
+        self._delete_line(self._spec_relative(scope), line_no, _PREF_LINE_RE)
 
     def _resolve_path(self, relative: str) -> Path:
         root = self.primary_root()
@@ -746,7 +783,7 @@ def _fallback_type(ext: str) -> str:
 # any of them; the default — read from config — is writable, the rest are not.
 
 
-_NAMESPACE_MARKERS = ("MEMORY.md", "PREFERENCES.md", "log", "docs")
+_NAMESPACE_MARKERS = ("MEMORY.md", "SPEC.md", "PREFERENCES.md", "log", "docs")
 
 
 def _looks_like_namespace_dir(p: Path) -> bool:

@@ -34,8 +34,10 @@ def dashboard(request: Request) -> HTMLResponse:
     docs_txt = sum(1 for it in docs_items if it.get("ext") == "txt")
 
     # Preferences entry count: each line beginning with "- [" counts as an
-    # entry. PREFERENCES.md is append-only with this single-format shape.
-    prefs_text = adapter.read_text_file("PREFERENCES.md") or ""
+    # entry. Rules are append-only with this single-format shape; the count is
+    # global-scope only, because a project spec belongs to one repo and would
+    # make the dashboard number depend on which page you came from.
+    prefs_text = adapter.read_text_file("SPEC.md") or ""
     prefs_total = sum(1 for line in prefs_text.splitlines() if line.lstrip().startswith("- ["))
 
     # Distillation snapshot — read-only, cheap.

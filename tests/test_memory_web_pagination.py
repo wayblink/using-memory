@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -49,8 +50,21 @@ class MemoryWebPaginationTests(unittest.TestCase):
         (docs_dir / "index.json").write_text(json.dumps(doc_index), encoding="utf-8")
 
         log_entries = []
-        for i in range(1, 26):
-            day = f"2026-06-{(i % 28) + 1:02d}"
+        # Dates are generated relative to today on purpose. `days=30` on the logs
+        # page is a window ending today, so a fixture with hard-coded dates stops
+        # matching as the clock advances — this test silently turned into a
+        # guaranteed failure once the calendar moved past its fixed month.
+        #
+        # The 25 entries occupy [today-24, today-0] rather than the full 30-day
+        # window: if the clock crosses midnight between building this fixture and
+        # issuing the request, the window slides forward one day and an entry at
+        # `today-29` would fall out of it, leaving 24 entries and breaking the
+        # pagination assertions. Keeping a 5-day margin at the older end makes the
+        # test independent of when in the day it runs.
+        today = date.today()
+        day_numbers = [today - timedelta(days=24 - (i - 1)) for i in range(1, 26)]
+        for i, day_date in enumerate(day_numbers, start=1):
+            day = day_date.isoformat()
             log_entries.append(
                 {
                     "ts": f"{day}T12:{i:02d}:00+08:00",
@@ -61,10 +75,11 @@ class MemoryWebPaginationTests(unittest.TestCase):
                     "text": f"Log entry {i:02d}",
                 }
             )
-        (log_dir / "2026-06-30.jsonl").write_text(
-            "\n".join(json.dumps(entry, ensure_ascii=False) for entry in log_entries) + "\n",
-            encoding="utf-8",
-        )
+        # One file per day keeps the filename consistent with each entry's date.
+        for entry in log_entries:
+            path = log_dir / f"{entry['date']}.jsonl"
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
         self.config_path = base / "config.yaml"
         self.config_path.write_text(

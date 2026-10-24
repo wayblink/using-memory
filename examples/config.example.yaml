@@ -19,6 +19,16 @@ memory_roots:
 defaults:
   read_today: true
   read_yesterday: true
+  # Rolling window for the log entries included in the injected snapshot.
+  # Operations older than a month are history rather than continuity. Set to 0
+  # to fall back to the legacy `read_today` / `read_yesterday` two-day window,
+  # or a negative value alongside both flags false to inject no log at all.
+  log_days: 30
+  # Cap on the *auto-injected* log entries, newest kept first. An explicit
+  # `--log-days` / `--log-from` / `--log-to` query is never capped: the cap
+  # exists so a busy month cannot crowd the rules out of a snapshot nobody asked
+  # for, not to limit what you can read on request.
+  log_max_entries: 20
   load_docs_on_demand: true
 
 logging:
@@ -33,6 +43,18 @@ session_archive:
   mode: pointer
   auto_load: false
   index_events: true
+
+# Pi extension settings. All optional; the defaults below apply when this block
+# is absent. `detail_turn_interval` is deliberately looser than the hook hosts'
+# 20 because Pi has no blocking Stop hook: the gate costs one extra model
+# request, so it should fire less often. Set `gate: off` to disable it entirely.
+# pi:
+#   gate: message            # message | off
+#   detail_turn_interval: 30
+#   silent_summary: false
+#   inject_preferences: true
+#   brief_snapshot: true
+#   memory_tool_path: ~/.skills/using-memory/scripts/memory_tool.py
 
 # This config lives outside the memory repo and records this machine's namespace and checkout path.
 # If namespace is omitted, using-memory defaults it to main.
