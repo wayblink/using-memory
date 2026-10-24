@@ -18,7 +18,13 @@ import yaml
 
 
 _MEMORY_LINE_RE = re.compile(
-    r"^- \[(?P<tag>[A-Za-z0-9_-]+)(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?\]\s+(?P<text>.*)$"
+    # `[tag|date|projects]` — the project list is optional, may hold several
+    # repositories, and must be parsed or every tagged entry silently disappears
+    # from the UI (which is exactly what happened when the tag was introduced).
+    r"^- \[(?P<tag>[A-Za-z0-9_-]+)"
+    r"(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?"
+    r"(?:\|(?P<projects>[^\]]*))?"
+    r"\]\s+(?P<text>.*)$"
 )
 _PREF_LINE_RE = re.compile(
     r"^- \[(?P<date>\d{4}-\d{2}-\d{2})\]\s+(?P<text>.+)$"

@@ -167,3 +167,53 @@ class SpecScopeWebTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MemoryPageParsingTests(unittest.TestCase):
+    """MEMORY entries carry an optional project list; the UI must still see them.
+
+    When the project tag was introduced the web regex was not extended, so every
+    tagged entry failed to match and the page reported "MEMORY.md is empty" with
+    51 entries on disk. A whole page going blank because a field was added is
+    the failure mode this covers.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.memory_root = base / "memories"
+        subprocess.run(["git", "init", "-q", str(self.memory_root)], check=True)
+        ns = self.memory_root / "main"
+        (ns / "docs").mkdir(parents=True)
+        (ns / "log").mkdir()
+        (ns / "MEMORY.md").write_text(
+            "# Memory\n\n"
+            "- [fact] untagged entry\n"
+            "- [decision|2026-01-01] dated, no project\n"
+            "- [lesson|2026-01-02|dozo] project tagged\n"
+            "- [decision|2026-01-03|dozo,iceberg] two projects\n",
+            encoding="utf-8",
+        )
+        (ns / "SPEC.md").write_text("# Spec\n\n- a rule\n", encoding="utf-8")
+        (ns / "docs" / "index.json").write_text(json.dumps([]), encoding="utf-8")
+        cfg = base / "config.yaml"
+        cfg.write_text(
+            yaml.safe_dump({"memory_roots": [{"path": str(self.memory_root),
+                            "role": "primary", "writable": True,
+                            "namespace": "main", "machine_id": "t"}]}),
+            encoding="utf-8",
+        )
+        self.client = TestClient(create_app(config_path=str(cfg)))
+
+    def tearDown(self) -> None:
+        self.client.close()
+        self.tmp.cleanup()
+
+    def test_every_tag_shape_is_rendered(self):
+        resp = self.client.get("/memory")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("untagged entry", resp.text)
+        self.assertIn("dated, no project", resp.text)
+        self.assertIn("project tagged", resp.text)
+        self.assertIn("two projects", resp.text)
+        self.assertNotIn("MEMORY.md is empty", resp.text)
