@@ -318,6 +318,52 @@ def render_memory_index(durable_memory: list[str]) -> str | None:
     return "\n".join(lines)
 
 
+def render_docs_index(entries: list[dict], project: str | None = None) -> str | None:
+    """Render the documents catalogue, narrowed to the current repository.
+
+    Documents are knowledge like MEMORY: retrieved on demand, so titles are what
+    the context needs. The catalogue is 66 entries on this machine and most of
+    them belong to other repositories; sending all of them would spend tokens on
+    documents the model will never open in this session. Two kinds are kept:
+
+      - documents tagged with the current repo
+      - documents tagged with no project at all (cross-cutting guides, references)
+
+    Everything else belongs to a different repository and is dropped. With no
+    project resolved, the whole catalogue is shown — better to spend tokens than
+    to hide a document because the working directory was unrecognisable.
+    """
+    if not entries:
+        return None
+
+    project_norm = (project or "").lower()
+    chosen: list[dict] = []
+    for entry in entries:
+        projects = [str(p).lower() for p in (entry.get("projects") or [])]
+        if project_norm and projects and project_norm not in projects:
+            continue
+        chosen.append(entry)
+
+    if not chosen:
+        return None
+
+    chosen.sort(key=lambda e: str(e.get("modified") or ""), reverse=True)
+    scope = f" for `{project_norm}`" if project_norm else ""
+    lines = [
+        "## Documents (index)",
+        "",
+        f"{len(chosen)} documents{scope}. These are titles, not contents: when one matches "
+        'the task, read it with `umem load --doc <path>` or via the docs index. Do not '
+        "assume what a document says from its title.",
+        "",
+    ]
+    for entry in chosen:
+        kind = str(entry.get("type") or "doc")
+        path = str(entry.get("path") or "")
+        lines.append(f"- [{kind}] {entry.get('title') or path} ({path})")
+    return "\n".join(lines)
+
+
 def render_preference_summary(preferences: list[str]) -> str | None:
     """Render every loaded SPEC rule for SessionStart.
 
@@ -846,6 +892,32 @@ def bump_stats(deltas: dict[str, Any], sets: dict[str, Any] | None = None) -> No
 
 
 
+def _repo_name_for(cwd: str | None) -> str | None:
+    """Resolve the enclosing git repository's name, or None.
+
+    Scoping documents by repository means `git rev-parse --show-toplevel`, not
+    the directory name: a session started in `dozo/src/api/` should still narrow
+    to dozo's documents rather than to a project called `api` that has none.
+    A non-repo directory (or a missing git binary) yields None, which makes the
+    caller show the whole catalogue.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd or os.getcwd(), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    top = out.stdout.strip()
+    if not top:
+        return None
+    return os.path.basename(top) or None
+
+
 def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
     """Build SessionStart context: SPEC rules, a MEMORY index, and doc titles.
 
@@ -894,6 +966,15 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
             )
             if memory_md:
                 sections.append(memory_md)
+
+        catalog = data.get("docs_index")
+        if isinstance(catalog, list):
+            docs_md = render_docs_index(
+                [entry for entry in catalog if isinstance(entry, dict)],
+                project=_repo_name_for(payload.get("cwd")),
+            )
+            if docs_md:
+                sections.append(docs_md)
 
         return "\n\n---\n\n".join(sections) if sections else None
     except Exception:

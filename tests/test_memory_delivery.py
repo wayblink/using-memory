@@ -140,3 +140,64 @@ class SessionStartSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+CATALOG = [
+    {"path": "a.md", "title": "Repo guide", "type": "wiki", "modified": "2026-10-01",
+     "projects": ["dozo"]},
+    {"path": "b.md", "title": "Other repo", "type": "SOP", "modified": "2026-10-02",
+     "projects": ["iceberg"]},
+    {"path": "c.md", "title": "Shared reference", "type": "wiki", "modified": "2026-10-03",
+     "projects": []},
+    {"path": "d.md", "title": "Both repos", "type": "wiki", "modified": "2026-10-04",
+     "projects": ["dozo", "iceberg"]},
+]
+
+
+class DocsIndexTests(unittest.TestCase):
+    def test_filters_to_the_current_repo_and_keeps_shared_docs(self):
+        out = hook.render_docs_index(CATALOG, project="dozo")
+        self.assertIsNotNone(out)
+        self.assertIn("Repo guide", out)
+        self.assertIn("Both repos", out)
+        self.assertIn("Shared reference", out)
+        self.assertNotIn("Other repo", out)
+
+    def test_no_project_shows_everything(self):
+        """An unresolvable cwd costs tokens; hiding a document costs an answer."""
+        out = hook.render_docs_index(CATALOG, project=None)
+        self.assertIn("Repo guide", out or "")
+        self.assertIn("Other repo", out or "")
+
+    def test_titles_only_with_a_read_hint(self):
+        out = hook.render_docs_index(CATALOG, project="dozo") or ""
+        self.assertIn("umem load --doc", out)
+        self.assertIn("Do not assume", out)
+
+    def test_newest_first(self):
+        out = hook.render_docs_index(CATALOG, project="dozo") or ""
+        rows = [line for line in out.splitlines() if line.startswith("- [")]
+        self.assertIn("Both repos", rows[0])
+
+    def test_unmatched_repo_still_gets_the_shared_docs(self):
+        """Shared documents apply anywhere; only other repos' docs are dropped."""
+        out = hook.render_docs_index(CATALOG, project="nonexistent-repo") or ""
+        self.assertIn("Shared reference", out)
+        self.assertNotIn("Repo guide", out)
+        self.assertNotIn("Other repo", out)
+
+    def test_empty_catalogue_renders_nothing(self):
+        self.assertIsNone(hook.render_docs_index([]))
+        self.assertIsNone(hook.render_docs_index([CATALOG[0]], project="nonexistent-repo"))
+
+    def test_repo_name_resolution_uses_the_repository_root(self):
+        import subprocess as sp
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "my-project"
+            nested = root / "src" / "api"
+            nested.mkdir(parents=True)
+            sp.run(["git", "init", "-q", str(root)], check=True)
+            self.assertEqual(hook._repo_name_for(str(nested)), "my-project")
+            self.assertIsNone(hook._repo_name_for(tmp))

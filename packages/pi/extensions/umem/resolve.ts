@@ -14,9 +14,10 @@
  * test asserts the two agree on the obvious cases.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** `~/.pi/agent/extensions/umem/index.ts` → the extension directory. */
@@ -108,4 +109,29 @@ export function resolveMemoryWeb(explicit?: string): string | null {
 /** `python3`, unless the environment names something better. */
 export function pythonExecutable(): string {
   return process.env.UMEM_PYTHON?.trim() || "python3";
+}
+
+/**
+ * The enclosing git repository's name, or null when not in a repo.
+ *
+ * Used to narrow the document catalogue to the current project. It must be the
+ * repository root's name, not the working directory's: a session started in
+ * `dozo/src/api/` should narrow to dozo's documents, and using `basename(cwd)`
+ * there would look for a project called `api` that has none.
+ *
+ * Returns null on any failure — a missing git binary, a bare directory, a
+ * timeout — because the caller's fallback (show everything) is always safe.
+ */
+export function resolveRepoName(cwd?: string): string | null {
+  const dir = cwd ?? process.cwd();
+  try {
+    const out = execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      timeout: 5000,
+    }).trim();
+    if (out === "") return null;
+    return basename(out) || null;
+  } catch {
+    return null;
+  }
 }

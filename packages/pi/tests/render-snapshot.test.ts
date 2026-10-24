@@ -11,7 +11,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { renderSnapshot, ruleLines } from "../extensions/umem/snapshot.ts";
+import { docsIndex, renderSnapshot, ruleLines } from "../extensions/umem/snapshot.ts";
 
 test("rules are rendered under the Active spec heading", () => {
   const raw = JSON.stringify({
@@ -112,4 +112,39 @@ test("one document's preamble is not absorbed by the previous document's last ru
   assert.match(out, /^- global rule$/m);
   assert.doesNotMatch(out, /global rule .*Constraints for the/);
   assert.match(out, /^- dozo rule$/m);
+});
+
+/* ------------------------------ document index ------------------------------ */
+
+const CATALOG = [
+  { path: "a.md", title: "Repo guide", type: "wiki", modified: "2026-10-01", projects: ["dozo"] },
+  { path: "b.md", title: "Other repo", type: "SOP", modified: "2026-10-02", projects: ["iceberg"] },
+  { path: "c.md", title: "Shared reference", type: "wiki", modified: "2026-10-03", projects: [] },
+];
+
+test("the document catalogue narrows to the current repo", () => {
+  const rows = docsIndex(CATALOG, "dozo");
+  assert.equal(rows.length, 2);
+  assert.ok(rows.some((r) => r.includes("Repo guide")));
+  assert.ok(rows.some((r) => r.includes("Shared reference")));
+  assert.ok(!rows.some((r) => r.includes("Other repo")));
+});
+
+test("an unresolved repo shows the whole catalogue", () => {
+  // Spending tokens beats hiding a document because the cwd was unrecognisable.
+  assert.equal(docsIndex(CATALOG, null).length, 3);
+});
+
+test("documents appear in the snapshot with a read hint", () => {
+  const raw = JSON.stringify({ docs_index: CATALOG });
+  const out = renderSnapshot(raw, "dozo") ?? "";
+  assert.match(out, /## Documents/);
+  assert.match(out, /umem load --doc/);
+  assert.match(out, /Repo guide/);
+  assert.doesNotMatch(out, /Other repo/);
+});
+
+test("no catalogue means no Documents section", () => {
+  const out = renderSnapshot(JSON.stringify({ docs_index: [] }), "dozo") ?? "";
+  assert.doesNotMatch(out, /## Documents/);
 });

@@ -34,7 +34,7 @@ import {
 import { loadPiConfig, resolveConfigPath, type UmemPiConfig } from "./config.js";
 import { resolveGuidance } from "./guidance.js";
 import { registerMemoryHooks } from "./hooks.js";
-import { pythonExecutable, resolveMemoryTool, resolveMemoryWeb } from "./resolve.js";
+import { pythonExecutable, resolveMemoryTool, resolveMemoryWeb, resolveRepoName } from "./resolve.js";
 import {
   createDetachedWebSpawner,
   launchWebServer,
@@ -453,7 +453,8 @@ export default async function umemExtension(pi: ExtensionAPI): Promise<void> {
         const argv = config.briefSnapshot ? ["load", "--json", "--brief"] : ["load", "--json"];
         const { code, output } = await run(argv, undefined);
         if (code !== 0) return null;
-        return renderSnapshot(output);
+        // The repo name narrows the document catalogue; see snapshot.ts.
+        return renderSnapshot(output, resolveRepoName());
       },
       bumpStats: () => {
         // Stats are maintained by the Python side; the extension has no

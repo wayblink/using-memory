@@ -826,7 +826,7 @@ def do_load(args: argparse.Namespace) -> dict:
     load_docs = defaults.get("load_docs_on_demand", True)
     target = parse_iso_date(args.date, "--date") if args.date else date.today()
     sources_list = []
-    preferences, durable_memory, doc_set = [], [], []
+    preferences, durable_memory, doc_set, docs_catalog = [], [], [], []
     log_entries = []
     if roots_exist:
         ordered_roots = primary_list + ref_list
@@ -897,6 +897,23 @@ def do_load(args: argparse.Namespace) -> dict:
                     continue
 
                 index_entries = normalize_doc_index(index_source.get("json"))
+                # The whole index (titles + type + projects) is exposed separately
+                # from `doc_hits`. Hits are bodies the caller asked for; this is
+                # the catalogue, and a session-start renderer needs the catalogue
+                # to tell the model which documents exist. Without it the model
+                # knows documents exist as a category but not which ones, so it
+                # never thinks to open any.
+                for entry in index_entries:
+                    docs_catalog.append(
+                        {
+                            "path": str(entry.get("path") or entry.get("id") or ""),
+                            "title": str(entry.get("title") or ""),
+                            "type": str(entry.get("type") or ""),
+                            "modified": str(entry.get("modified") or "")[:10],
+                            "projects": [str(p) for p in (entry.get("projects") or [])],
+                            "summary": str(entry.get("summary") or ""),
+                        }
+                    )
                 matched_entries = [
                     entry for entry in index_entries if doc_entry_matches(entry, doc_selectors)
                 ]
@@ -958,6 +975,7 @@ def do_load(args: argparse.Namespace) -> dict:
         "durable_memory": durable_memory,
         "log_entries": log_entries,
         "doc_hits": doc_set,
+        "docs_index": docs_catalog,
         "warnings": warnings,
     }
     if getattr(args, "brief", False):

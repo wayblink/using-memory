@@ -113,7 +113,41 @@ export function memoryIndex(docs: readonly string[]): string[] {
   return rows.map((r) => `[${r.tag}${r.date === "" ? "" : ` ${r.date}`}] ${r.title}`);
 }
 
-export function renderSnapshot(raw: string): string | null {
+/** One document catalogue row. */
+interface DocRow {
+  readonly path: string;
+  readonly title: string;
+  readonly type: string;
+  readonly modified: string;
+  readonly projects: string[];
+}
+
+/**
+ * Narrow the document catalogue to the current repository.
+ *
+ * Documents are knowledge, retrieved on demand, so titles are what the context
+ * needs. The catalogue is 66 entries on this machine and most belong to other
+ * repositories; sending all of them spends tokens on documents the model will
+ * never open here. Two kinds survive: entries tagged with the current repo, and
+ * entries tagged with no project at all (cross-cutting guides). With no repo
+ * resolved the whole catalogue is shown — the Python side does the same.
+ */
+export function docsIndex(entries: readonly DocRow[], repo: string | null): string[] {
+  const wanted = (repo ?? "").toLowerCase();
+  const chosen = entries.filter((e) => {
+    const projects = (e.projects ?? []).map((p) => p.toLowerCase());
+    if (wanted === "" || projects.length === 0) return true;
+    return projects.includes(wanted);
+  });
+  chosen.sort((a, b) => ((a.modified ?? "") < (b.modified ?? "") ? 1 : -1));
+  return chosen.map((e) => {
+    const kind = e.type === "" ? "doc" : e.type;
+    const path = e.path === "" ? "?" : e.path;
+    return `[${kind}] ${e.title === "" ? path : e.title} (${path})`;
+  });
+}
+
+export function renderSnapshot(raw: string, repo: string | null = null): string | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -126,6 +160,7 @@ export function renderSnapshot(raw: string): string | null {
     preferences?: string[];
     durable_memory?: string[];
     log_entries?: { ts?: string; tag?: string; level?: string; text?: string }[];
+    docs_index?: { path?: string; title?: string; type?: string; modified?: string; projects?: string[] }[];
     warnings?: string[];
   };
 
@@ -153,6 +188,13 @@ export function renderSnapshot(raw: string): string | null {
   if (memoryRules.length > 0) {
     sections.push(
       `## Long-term memory (index)\n\n${memoryRules.length} saved facts, decisions and lessons. These are titles, not the entries themselves: when one could change your answer, fetch the body with \`umem search "<title keywords>"\` before relying on it. Do not guess at the contents of a title you have not read.\n\n${memoryRules.map((r) => `- ${r}`).join("\n")}`,
+    );
+  }
+
+  const docs = docsIndex(data.docs_index ?? [], repo);
+  if (docs.length > 0) {
+    sections.push(
+      `## Documents (index)\n\n${docs.length} documents. These are titles, not contents: when one matches the task, read it with \`umem load --doc <path>\`. Do not assume what a document says from its title.\n\n${docs.map((d) => `- ${d}`).join("\n")}`,
     );
   }
 
