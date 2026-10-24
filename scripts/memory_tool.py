@@ -707,15 +707,15 @@ def _normalize_axis_filter(values: list[str] | None) -> set[str] | None:
 
 
 BRIEF_SOURCE_CONTENT_LIMIT = 1200
-# MEMORY.md is a bullet list, and its new entries are the ones most likely to
-# matter to the current task; PREFERENCES.md is short and rule-shaped, where the
-# oldest lines are as valid as the newest. So MEMORY is tail-kept and PREFERENCES
-# is head-kept.
 BRIEF_DURABLE_MEMORY_LIMIT = 4000
-# Per-entry text cap for the injected log window. A `detail` entry is meant to
-# run 800–3000 chars and several of them would dominate the message on their
-# own; the head of the body carries the heading and Context, which is what the
-# model needs to decide whether to read further.
+# MEMORY.md is a bullet list and its new entries are the ones most likely to
+# matter to the current task, so the injected window keeps the tail.
+#
+# There is no equivalent limit for SPEC.md. Rules are delivered whole: a rule cut
+# mid-sentence reads as a complete rule and gets followed literally, and a rule
+# dropped for budget silently stops applying. Their length is bounded by the
+# SPEC split (global vs per-repo), not by a character budget — see
+# `brief_sources`, which exempts the `preferences` and `spec:<repo>` sources.
 BRIEF_LOG_TEXT_LIMIT = 350
 
 
