@@ -707,15 +707,18 @@ def _normalize_axis_filter(values: list[str] | None) -> set[str] | None:
 
 
 BRIEF_SOURCE_CONTENT_LIMIT = 1200
-BRIEF_DURABLE_MEMORY_LIMIT = 4000
-# MEMORY.md is a bullet list and its new entries are the ones most likely to
-# matter to the current task, so the injected window keeps the tail.
+# Two things in the injected snapshot are deliberately NOT budgeted:
 #
-# There is no equivalent limit for SPEC.md. Rules are delivered whole: a rule cut
-# mid-sentence reads as a complete rule and gets followed literally, and a rule
-# dropped for budget silently stops applying. Their length is bounded by the
-# SPEC split (global vs per-repo), not by a character budget — see
-# `brief_sources`, which exempts the `preferences` and `spec:<repo>` sources.
+#   SPEC rules   — a rule cut mid-sentence reads as a complete rule and gets
+#                  followed literally, and a rule dropped for budget silently
+#                  stops applying. Length is bounded by the SPEC split (global
+#                  vs per-repo), not by a character count.
+#   MEMORY index — consumers render one title per entry, so the input is parsed
+#                  whole and only the titles are sent. Truncating the input
+#                  first is what hid 45 of 51 entries behind the newest six.
+#
+# `_brief_tail` remains for single-source trimming but is no longer applied to
+# durable memory.
 BRIEF_LOG_TEXT_LIMIT = 350
 
 
@@ -959,13 +962,12 @@ def do_load(args: argparse.Namespace) -> dict:
     }
     if getattr(args, "brief", False):
         result["sources"] = brief_sources(result["sources"])
-        # `durable_memory` is what the model actually reads, so it is kept — but
-        # bounded. Anything dropped is reachable through `load --doc`/`search`,
-        # and the marker says so rather than pretending the file ends there.
-        result["durable_memory"] = [
-            _brief_tail(doc, BRIEF_DURABLE_MEMORY_LIMIT)
-            for doc in result["durable_memory"]
-        ]
+        # `durable_memory` is NOT tail-kept in brief mode. Consumers index it down
+        # to one title per entry, and titles are cheap — truncating the input
+        # first would silently hide the oldest decisions, which is precisely the
+        # bug this replaced: 51 entries came through as 6, and the 45 that
+        # vanished were the product-level ones. Callers that want bodies use
+        # `search`.
         result["brief"] = True
         result["log_entries"] = _brief_log_entries(result["log_entries"])
     return result

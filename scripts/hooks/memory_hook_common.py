@@ -233,6 +233,91 @@ def _rule_lines(doc: str) -> list[str]:
     return out
 
 
+_MEMORY_ENTRY_RE = re.compile(r"^- \[(?P<tag>[A-Za-z0-9_-]+)(?:\|(?P<date>\d{4}-\d{2}-\d{2}))?\]\s+(?P<body>.*)$")
+
+
+def memory_index_entries(doc: str) -> list[dict[str, str]]:
+    """Index one MEMORY.md into `{tag, date, title}` rows.
+
+    MEMORY is knowledge, not rules: it is retrieved on demand, and being wrong or
+    absent only costs the turn that needed it. So the index is the right
+    delivery — the model needs to know *that* a fact exists, not to carry every
+    body in context.
+
+    The whole point is completeness. The previous approach (`_brief_tail`) kept
+    the tail of the file and dropped the head, which on a curated decision store
+    is exactly backwards: it kept the newest environment snapshots and discarded
+    the oldest product decisions. An index has no such ordering problem — all 51
+    titles fit in roughly the space six whole entries used to take.
+    """
+    out: list[dict[str, str]] = []
+    for raw in doc.splitlines():
+        m = _MEMORY_ENTRY_RE.match(raw.strip())
+        if not m:
+            continue
+        body = re.sub(r"\s+", " ", m.group("body")).strip()
+        if not body:
+            continue
+        out.append(
+            {
+                "tag": m.group("tag"),
+                "date": m.group("date") or "",
+                "title": body,
+            }
+        )
+    return out
+
+
+def _short_title(body: str, limit: int = 110) -> str:
+    """First clause of an entry, enough to recognise it later."""
+    # A heading-style entry (`## Foo`) carries no extra meaning in an index.
+    text = re.sub(r"^#+\s*", "", body)
+    text = re.sub(r"\*\*|`", "", text)
+    if len(text) <= limit:
+        return text
+    for sep in ("。", "；", ". ", "; "):
+        idx = text.find(sep)
+        if 0 < idx <= limit:
+            return text[:idx]
+    return text[:limit].rstrip() + "…"
+
+
+def render_memory_index(durable_memory: list[str]) -> str | None:
+    """Render MEMORY as a title index, with an explicit invitation to search.
+
+    The header matters as much as the rows: an index without instructions reads
+    like an excerpt, and the model may answer from titles. It is told these are
+    pointers and that bodies are one `search` away.
+    """
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for doc in durable_memory:
+        for entry in memory_index_entries(doc):
+            key = entry["title"].casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(entry)
+
+    if not entries:
+        return None
+
+    entries.sort(key=lambda e: e["date"], reverse=True)
+    lines = [
+        "## Long-term memory (index)",
+        "",
+        f"{len(entries)} saved facts, decisions and lessons. These are titles, not the "
+        "entries themselves: when one could change your answer, fetch the body with "
+        "`umem search \"<title keywords>\"` before relying on it. Do not guess at the "
+        "contents of a title you have not read.",
+        "",
+    ]
+    for entry in entries:
+        date = f" {entry['date']}" if entry["date"] else ""
+        lines.append(f"- [{entry['tag']}{date}] {_short_title(entry['title'])}")
+    return "\n".join(lines)
+
+
 def render_preference_summary(preferences: list[str]) -> str | None:
     """Render every loaded SPEC rule for SessionStart.
 
@@ -762,8 +847,18 @@ def bump_stats(deltas: dict[str, Any], sets: dict[str, Any] | None = None) -> No
 
 
 def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
-    """Best-effort: call `memory_tool.py load --json` and return the rendered
-    saved-preferences summary markdown for SessionStart (or None on failure)."""
+    """Build SessionStart context: SPEC rules, a MEMORY index, and doc titles.
+
+    Claude and Codex used to receive only `preferences` from here. `load` returns
+    `durable_memory` too, and this function dropped it, so on those hosts the
+    model never saw the saved decisions — not even their titles — while Pi
+    showed them. Knowledge that is listed nowhere is knowledge the model cannot
+    know to look up, so the failure was silent: it answered from general
+    reasoning and nothing in the session revealed the gap.
+
+    Everything here is best-effort. A broken CLI must degrade to "no memory this
+    session", never block the session from starting.
+    """
     try:
         config = _resolve_memory_config()
         if not config:
@@ -779,13 +874,28 @@ def fetch_session_start_snapshot(payload: dict[str, Any]) -> str | None:
         if result.returncode != 0:
             return None
         data = json.loads(result.stdout or "{}")
-        if isinstance(data, dict):
-            preferences = data.get("preferences")
-            if isinstance(preferences, list):
-                return render_preference_summary(
-                    [entry for entry in preferences if isinstance(entry, str)]
-                )
-        return None
+        if not isinstance(data, dict):
+            return None
+
+        sections: list[str] = []
+
+        preferences = data.get("preferences")
+        if isinstance(preferences, list):
+            spec_md = render_preference_summary(
+                [entry for entry in preferences if isinstance(entry, str)]
+            )
+            if spec_md:
+                sections.append(spec_md)
+
+        durable = data.get("durable_memory")
+        if isinstance(durable, list):
+            memory_md = render_memory_index(
+                [entry for entry in durable if isinstance(entry, str)]
+            )
+            if memory_md:
+                sections.append(memory_md)
+
+        return "\n\n---\n\n".join(sections) if sections else None
     except Exception:
         return None
 

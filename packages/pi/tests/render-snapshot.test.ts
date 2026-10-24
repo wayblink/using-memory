@@ -38,7 +38,7 @@ test("rules come before memory and log entries", () => {
   // Rules must be in effect before the first answer, so they lead.
   const raw = JSON.stringify({
     preferences: ["RULE_TEXT"],
-    durable_memory: ["MEMORY_TEXT"],
+    durable_memory: ["- [fact|2026-01-01] MEMORY_TEXT"],
     log_entries: [{ ts: "2026-10-24T00:00:00Z", tag: "note", text: "LOG_TEXT" }],
   });
   const out = renderSnapshot(raw) ?? "";
@@ -47,7 +47,7 @@ test("rules come before memory and log entries", () => {
 });
 
 test("a snapshot with no preferences omits the section entirely", () => {
-  const out = renderSnapshot(JSON.stringify({ durable_memory: ["MEMORY_TEXT"] })) ?? "";
+  const out = renderSnapshot(JSON.stringify({ durable_memory: ["- [fact|2026-01-01] MEMORY_TEXT"] })) ?? "";
   assert.doesNotMatch(out, /## Active spec/);
   assert.match(out, /MEMORY_TEXT/);
 });

@@ -63,6 +63,56 @@ export function ruleLines(doc: string): string[] {
   return out;
 }
 
+/** One MEMORY.md entry as `[tag date] title`. */
+interface MemoryRow {
+  readonly tag: string;
+  readonly date: string;
+  readonly title: string;
+}
+
+const MEMORY_ENTRY_RE = /^- \[([A-Za-z0-9_-]+)(?:\|(\d{4}-\d{2}-\d{2}))?\]\s+(.*)$/;
+
+/** First clause of an entry, enough to recognise it later. */
+function shortTitle(body: string, limit = 110): string {
+  let text = body.replace(/^#+\s*/, "").replace(/\*\*|`/g, "").trim();
+  if (text.length <= limit) return text;
+  for (const sep of ["。", "；", ". ", "; "]) {
+    const idx = text.indexOf(sep);
+    if (idx > 0 && idx <= limit) return text.slice(0, idx);
+  }
+  return `${text.slice(0, limit).trimEnd()}…`;
+}
+
+/**
+ * Index MEMORY as `[tag date] title` rows, newest first, de-duplicated.
+ *
+ * MEMORY is knowledge, not rules: it is retrieved on demand, so the model needs
+ * to know *that* a fact exists rather than to carry every body in context. The
+ * previous approach kept the file's tail and dropped its head, which on a
+ * curated decision store is backwards — it retained the newest environment
+ * snapshots and discarded the oldest product decisions. An index has no such
+ * ordering problem: every title fits in roughly the space six whole entries
+ * used to take.
+ */
+export function memoryIndex(docs: readonly string[]): string[] {
+  const rows: MemoryRow[] = [];
+  const seen = new Set<string>();
+  for (const doc of docs) {
+    for (const raw of doc.split("\n")) {
+      const m = MEMORY_ENTRY_RE.exec(raw.trim());
+      if (m === null) continue;
+      const body = (m[3] ?? "").replace(/\s+/g, " ").trim();
+      if (body === "") continue;
+      const key = body.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ tag: m[1] ?? "", date: m[2] ?? "", title: shortTitle(body) });
+    }
+  }
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return rows.map((r) => `[${r.tag}${r.date === "" ? "" : ` ${r.date}`}] ${r.title}`);
+}
+
 export function renderSnapshot(raw: string): string | null {
   let parsed: unknown;
   try {
@@ -99,8 +149,12 @@ export function renderSnapshot(raw: string): string | null {
     );
   }
 
-  const memory = (data.durable_memory ?? []).join("\n\n").trim();
-  if (memory !== "") sections.push(`## Long-term memory\n\n${memory}`);
+  const memoryRules = memoryIndex(data.durable_memory ?? []);
+  if (memoryRules.length > 0) {
+    sections.push(
+      `## Long-term memory (index)\n\n${memoryRules.length} saved facts, decisions and lessons. These are titles, not the entries themselves: when one could change your answer, fetch the body with \`umem search "<title keywords>"\` before relying on it. Do not guess at the contents of a title you have not read.\n\n${memoryRules.map((r) => `- ${r}`).join("\n")}`,
+    );
+  }
 
   const entries = data.log_entries ?? [];
   if (entries.length > 0) {
