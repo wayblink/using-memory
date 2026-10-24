@@ -557,7 +557,7 @@ class MemoryAdapter:
             return None
         return path.read_text(encoding="utf-8")
 
-    # --- MEMORY.md / PREFERENCES.md card helpers ---------------------------
+    # --- MEMORY.md / SPEC.md card helpers ---------------------------------
 
     def list_memory_entries(self) -> list[dict]:
         """Parse MEMORY.md into per-entry cards keyed by 1-based line number.

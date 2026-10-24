@@ -65,9 +65,10 @@ paths (`~/.skills/using-memory/`, `~/.claude/skills/using-memory/`,
 | `/spec` | Rules rendered, with a scope switcher (all projects + one tab per `spec/*.md`) + append form |
 | `/spec/download?scope=<global\|repo>` | Download that scope's file |
 | `/preferences` | 301 redirect to `/spec` (legacy address) |
-| `POST /preferences/append` | Append via `memory_tool.write-preference` |
-| `POST /preferences/update/{line_no}` | Replace one rendered preference line |
-| `POST /preferences/delete/{line_no}` | Delete one rendered preference line |
+| `POST /spec/append` | Append via `memory_tool.write-preference` (scope taken from the active tab) |
+| `POST /spec/update/{line_no}` | Replace one rule in the active scope |
+| `POST /spec/delete/{line_no}` | Delete one rule from the active scope |
+| `/preferences/download` | 301 redirect to `/spec/download?scope=global` (legacy address) |
 | `/api/v1/health` | JSON health endpoint for remote CLI forwarding |
 | `GET /api/v1/load`, `GET /api/v1/search` | JSON read endpoints matching the CLI read commands |
 | `POST /api/v1/log`, `POST /api/v1/memory`, `POST /api/v1/preference`, `POST /api/v1/doc` | JSON write endpoints matching the CLI write commands |
@@ -158,7 +159,7 @@ memory_web.app       ── FastAPI factory; lang middleware; /lang/{code};
                        router mounts
         ▲
 memory_web.routes.*  ── one router per page (dashboard, logs, search,
-                       docs, memory, preferences)
+                       docs, memory, spec)
         ▲
 templates/*.html     ── Jinja2, all UI strings via t('key')
 static/style.css     ── single stylesheet, no JS framework
