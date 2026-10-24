@@ -1811,21 +1811,26 @@ a.bar-row:hover .bar-label { color: var(--accent); }
 .spec-scope-pill {
   display: inline-flex;
   align-items: center;
-  padding: 4px 14px;
+  padding: 6px 16px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 1.45;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent);
-  color: var(--accent-strong, inherit);
+  /* Same treatment as the namespace switcher in the sidebar: solid accent fill
+     with the on-accent foreground. It is a label the eye should land on first,
+     not an outline competing with the filename beside it. */
+  background: var(--ns-bg);
+  border: 1px solid var(--ns-bg);
+  color: var(--ns-fg);
 }
 
+/* Global is the common case, so it gets the quieter surface treatment instead
+   of shouting on every card. */
 .spec-scope-pill.is-global {
   background: var(--bg-soft);
-  border-color: var(--border-strong, var(--border));
+  border-color: var(--border);
   color: var(--text-dim, inherit);
 }
 
