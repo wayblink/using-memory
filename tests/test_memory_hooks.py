@@ -197,7 +197,7 @@ class MemoryHookTests(unittest.TestCase):
             hook_output = output["hookSpecificOutput"]
             self.assertEqual(hook_output["hookEventName"], "SessionStart")
             self.assertIn("using-memory hook reminder", hook_output["additionalContext"])
-            self.assertIn("## Active preferences", hook_output["additionalContext"])
+            self.assertIn("## Active spec", hook_output["additionalContext"])
             self.assertIn("始终使用简体中文回复", hook_output["additionalContext"])
             self.assertIn("不要使用日语", hook_output["additionalContext"])
             self.assertNotIn("## Anatomy", hook_output["additionalContext"])

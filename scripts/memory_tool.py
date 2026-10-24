@@ -770,14 +770,20 @@ def brief_sources(sources: list[dict]) -> list[dict]:
     remaining content is truncated with an explicit marker, because a silently
     shortened file reads like a short file.
 
-    `preferences` and `durable_memory` (the top-level lists) stay complete: they
-    are what the model actually reads, and they are already the curated subset.
+    Rules are never truncated. A rule that is cut mid-sentence is worse than a
+    missing one: it reads as a complete rule and gets followed literally. Both
+    `preferences` (which the Pi extension posts) and the `preferences`/
+    `spec:<repo>` sources (which a caller may read directly) are therefore left
+    whole; their length is bounded by the SPEC split, not by a character budget.
     """
     out: list[dict] = []
     for source in sources:
         if source.get("type") == "docs_index":
             continue
         entry = dict(source)
+        if str(entry.get("type", "")).startswith(("preferences", "spec:")):
+            out.append(entry)
+            continue
         content = entry.get("content")
         if isinstance(content, str) and len(content) > BRIEF_SOURCE_CONTENT_LIMIT:
             kept = content[:BRIEF_SOURCE_CONTENT_LIMIT]

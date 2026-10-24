@@ -56,12 +56,6 @@ IMPORTANT_OPERATION_RE = re.compile(
     re.IGNORECASE,
 )
 
-PREFERENCE_SIGNAL_RE = re.compile(
-    r"(reply|respond|response|language|style|tone|format|always|never|must|"
-    r"中文|简体中文|日语|日文|日本语|日本語|英语|英文|回复|回答|语言|风格|格式|始终|不要|必须|优先)",
-    re.IGNORECASE,
-)
-
 
 def load_payload() -> dict[str, Any]:
     try:
@@ -203,50 +197,75 @@ def _clean_preference_line(raw: str) -> str:
     return line
 
 
-def _score_preference_line(line: str) -> int:
-    score = 0
-    if PREFERENCE_SIGNAL_RE.search(line):
-        score += 4
-    if any(token in line for token in ("中文", "简体中文", "日语", "日本語", "日本语", "回复", "回答", "语言")):
-        score += 4
-    lower = line.lower()
-    if any(token in lower for token in ("reply", "respond", "language", "style", "format", "always", "never")):
-        score += 3
-    if len(line) <= 120:
-        score += 1
-    return score
+def _rule_lines(doc: str) -> list[str]:
+    """Return only the actual rule entries from one SPEC file.
 
+    A SPEC file also carries a heading and a one-line preamble explaining what
+    the file is and where the project specs live. Those explain the format; they
+    are not constraints, and rendering them as bullets makes the model treat
+    documentation as instructions. Only content from the first list item onward
+    counts — a file with no list items contributes nothing.
 
-def render_preference_summary(preferences: list[str], max_items: int = 4) -> str | None:
-    """Distill loaded SPEC.md content into a compact SessionStart block."""
-    candidates: list[tuple[int, int, str]] = []
-    seen: set[str] = set()
-    ordinal = 0
-    for doc in preferences:
-        for raw_line in doc.splitlines():
-            line = _clean_preference_line(raw_line)
-            if not line:
+    From there, plain lines are treated as continuation of the preceding bullet
+    (multi-paragraph rules use `Why:` / `How to apply:` blocks) and are joined
+    onto it rather than dropped.
+    """
+    out: list[str] = []
+    started = False
+    for raw in doc.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        is_bullet = bool(re.match(r"^([-*+]|\d+\.)\s", stripped))
+        if not is_bullet:
+            if not started:
+                continue  # heading / preamble before the first rule
+            if stripped.startswith("#"):
                 continue
+            line = _clean_preference_line(stripped)
+            if line and out:
+                out[-1] = f"{out[-1]} {line}"
+            continue
+        started = True
+        line = _clean_preference_line(stripped)
+        if line:
+            out.append(line)
+    return out
+
+
+def render_preference_summary(preferences: list[str]) -> str | None:
+    """Render every loaded SPEC rule for SessionStart.
+
+    Rules are delivered whole and unabridged. An earlier version scored the
+    lines with `_score_preference_line` and kept only the top `max_items=4`,
+    which silently dropped any rule that did not happen to contain words like
+    "reply" or "always" — the worktree-isolation rule and most operational
+    discipline vanished that way, with no error and no way for the model to
+    notice the absence. A rule that is not delivered is a rule that does not
+    exist, so there is no budget to trade here: the scoping (SPEC.md vs
+    spec/<repo>.md) is what keeps the list short enough to send whole.
+
+    Duplicate lines across roots are collapsed; a rule appearing twice in the
+    context is noise, not emphasis.
+    """
+    picked: list[str] = []
+    seen: set[str] = set()
+    for doc in preferences:
+        for line in _rule_lines(doc):
             key = line.casefold()
             if key in seen:
                 continue
             seen.add(key)
-            candidates.append((_score_preference_line(line), ordinal, line))
-            ordinal += 1
+            picked.append(line)
 
-    if not candidates:
-        return None
-
-    priority = [item for item in candidates if item[0] > 0]
-    ordered = sorted(priority or candidates, key=lambda item: (-item[0], item[1]))
-    picked = [line for _, _, line in ordered[:max_items]]
     if not picked:
         return None
 
     lines = [
-        "## Active preferences",
+        "## Active spec",
         "",
-        "Apply these saved preferences unless the current user turn overrides them:",
+        "Rules for this project. They are constraints, not suggestions — apply them unless "
+        "the user explicitly overrides one in the current turn:",
         "",
     ]
     lines.extend(f"- {line}" for line in picked)

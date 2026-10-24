@@ -82,8 +82,15 @@ export function renderSnapshot(raw: string): string | null {
   };
 
   const sections: string[] = [];
+  // Rules go first and go whole: they must be in effect before the first answer.
+  // Nothing here truncates them — a rule shown partially reads as a complete
+  // rule and gets followed literally.
   const prefs = (data.preferences ?? []).join("\n\n").trim();
-  if (prefs !== "") sections.push(`## Saved preferences\n\n${prefs}`);
+  if (prefs !== "") {
+    sections.push(
+      `## Active spec\n\nRules for this project. They are constraints, not suggestions — apply them unless the user explicitly overrides one in the current turn:\n\n${prefs}`,
+    );
+  }
 
   const memory = (data.durable_memory ?? []).join("\n\n").trim();
   if (memory !== "") sections.push(`## Long-term memory\n\n${memory}`);
