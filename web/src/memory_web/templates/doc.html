@@ -60,7 +60,9 @@
 
 {% if ext == 'md' %}
   <div class="markdown" id="doc-body"></div>
-  <script id="doc-source" type="text/markdown">{{ content }}</script>
+  {# Raw-text element: the payload must be JSON, not HTML-escaped markdown,
+     because <script> content is never entity-decoded. See _json_payload(). #}
+  <script id="doc-source" type="application/json">{{ content_json|safe }}</script>
 {% elif ext == 'txt' %}
   <pre class="txt-doc">{{ content }}</pre>
 {% else %}
@@ -73,7 +75,7 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
 (function() {
-  const src = document.getElementById('doc-source').textContent;
+  const src = JSON.parse(document.getElementById('doc-source').textContent);
   marked.setOptions({ gfm: true, breaks: false });
   document.getElementById('doc-body').innerHTML = marked.parse(src);
 })();

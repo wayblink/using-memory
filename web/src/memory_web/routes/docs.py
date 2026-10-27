@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -29,6 +30,18 @@ GROUP_OPTIONS = ("none", "type", "project")
 SORT_OPTIONS = ("name", "modified", "created")
 NO_PROJECT_KEY = "__no_project__"
 ALL_DOCS_KEY = "__all_docs__"
+
+
+def _json_payload(text: str) -> str:
+    """Encode text for embedding inside a ``<script>`` raw-text element.
+
+    Jinja autoescape cannot be used here: a ``<script>`` element never decodes
+    character references, so ``=> 'x'`` would reach the markdown parser as
+    ``=&gt; &#39;x&#39;`` and render as literal entities inside code blocks.
+    JSON keeps the payload intact, and ``<`` is escaped to ``\\u003c`` so a
+    document containing ``</script>`` cannot terminate the element early.
+    """
+    return json.dumps(text).replace("<", "\\u003c")
 
 
 def _to_minute(value: str | None) -> str:
@@ -385,5 +398,6 @@ def doc_view(
             "entry": doc.get("entry") or {},
             "in_index": doc["in_index"],
             "content": doc["content"],
+            "content_json": _json_payload(doc["content"]),
         },
     )
